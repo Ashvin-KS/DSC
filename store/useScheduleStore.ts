@@ -7,9 +7,11 @@ export interface Task {
     title: string;
     description?: string;
     dueDate?: string; // YYYY-MM-DD
+    dueTime?: string; // HH:MM (24h)
     tag: 'Work' | 'Health' | 'Study' | 'Life';
     color: 'blue' | 'orange' | 'emerald' | 'gray';
     googleId?: string;
+    googleCalendarEventId?: string;
     googleTaskListId?: string;
 }
 
@@ -27,6 +29,7 @@ interface ScheduleState {
     tasks: Task[];
     events: ScheduleEvent[];
     isGoogleConnected: boolean;
+    googleStatusMessage: string;
 
     // Task actions
     addTask: (task: Omit<Task, 'id'>) => void;
@@ -69,16 +72,36 @@ const defaultEvents: ScheduleEvent[] = [
     { id: 104, title: "Code Review", date: getTodayString(), timeStart: "15:30", duration: 90, type: "work" },
 ];
 
+const toGoogleTaskDue = (dueDate?: string, dueTime?: string): string | undefined => {
+    if (!dueDate) return undefined;
+    if (!dueTime) return `${dueDate}T00:00:00.000Z`;
+    return `${dueDate}T${dueTime}:00.000Z`;
+};
+
+const buildTaskCalendarRange = (dueDate?: string, dueTime?: string): { start: string; end: string } | null => {
+    if (!dueDate) return null;
+    const [year, month, day] = dueDate.split('-').map(Number);
+    const [h, m] = (dueTime || '09:00').split(':').map(Number);
+    const start = new Date(year, month - 1, day, h, m, 0, 0);
+    const end = new Date(start.getTime() + 30 * 60000);
+    return {
+        start: start.toISOString(),
+        end: end.toISOString(),
+    };
+};
+
 export const useScheduleStore = create<ScheduleState>()(
     persist(
         (set, get) => ({
             tasks: defaultTasks,
             events: defaultEvents,
             isGoogleConnected: false,
+            googleStatusMessage: '',
 
             addTask: async (task) => {
                 const id = Date.now();
                 let googleId: string | undefined;
+                let googleCalendarEventId: string | undefined;
 
                 console.log('addTask called. isGoogleConnected:', get().isGoogleConnected);
                 console.log('Task data:', task);
@@ -90,13 +113,27 @@ export const useScheduleStore = create<ScheduleState>()(
                         const result = await window.nexusAPI.google.tasks.add(undefined, {
                             title: task.title,
                             notes: task.description,
-                            due: task.dueDate
+                            due: toGoogleTaskDue(task.dueDate, task.dueTime)
                         });
                         console.log('Google Tasks API result:', result);
                         if (typeof result === 'string') {
                             googleId = result;
                         } else if (result && (result as any).error) {
                             console.error('Google Tasks API Error:', (result as any).error);
+                        }
+
+                        const calendarRange = buildTaskCalendarRange(task.dueDate, task.dueTime);
+                        if (calendarRange) {
+                            // @ts-ignore
+                            const eventResult = await window.nexusAPI.google.addEvent({
+                                title: `[Task] ${task.title}`,
+                                description: task.description || '',
+                                start: calendarRange.start,
+                                end: calendarRange.end,
+                            });
+                            if (typeof eventResult === 'string') {
+                                googleCalendarEventId = eventResult;
+                            }
                         }
                     } catch (e) {
                         console.error("Failed to add Google Task:", e);
@@ -106,7 +143,7 @@ export const useScheduleStore = create<ScheduleState>()(
                 }
 
                 set((state) => ({
-                    tasks: [...state.tasks, { ...task, id, googleId }],
+                    tasks: [...state.tasks, { ...task, id, googleId, googleCalendarEventId }],
                 }));
             },
 
@@ -122,7 +159,50 @@ export const useScheduleStore = create<ScheduleState>()(
                 if (task && task.googleId && get().isGoogleConnected) {
                     try {
                         // @ts-ignore
-                        await window.nexusAPI.google.tasks.update(undefined, task.googleId, { title: updates.title });
+                        await window.nexusAPI.google.tasks.update(undefined, task.googleId, {
+                            title: updates.title ?? task.title,
+                            notes: updates.description ?? task.description,
+                            due: toGoogleTaskDue(updates.dueDate ?? task.dueDate, updates.dueTime ?? task.dueTime),
+                        });
+
+                        const nextTitle = updates.title ?? task.title;
+                        const nextDescription = updates.description ?? task.description;
+                        const nextDueDate = updates.dueDate ?? task.dueDate;
+                        const nextDueTime = updates.dueTime ?? task.dueTime;
+                        const calendarRange = buildTaskCalendarRange(nextDueDate, nextDueTime);
+
+                        if (task.googleCalendarEventId && calendarRange) {
+                            // @ts-ignore
+                            await window.nexusAPI.google.updateEvent(task.googleCalendarEventId, {
+                                title: `[Task] ${nextTitle}`,
+                                description: nextDescription || '',
+                                start: calendarRange.start,
+                                end: calendarRange.end,
+                            });
+                        } else if (task.googleCalendarEventId && !calendarRange) {
+                            // @ts-ignore
+                            await window.nexusAPI.google.deleteEvent(task.googleCalendarEventId);
+                            set((state) => ({
+                                tasks: state.tasks.map((t) =>
+                                    t.id === id ? { ...t, googleCalendarEventId: undefined } : t
+                                ),
+                            }));
+                        } else if (!task.googleCalendarEventId && calendarRange) {
+                            // @ts-ignore
+                            const eventResult = await window.nexusAPI.google.addEvent({
+                                title: `[Task] ${nextTitle}`,
+                                description: nextDescription || '',
+                                start: calendarRange.start,
+                                end: calendarRange.end,
+                            });
+                            if (typeof eventResult === 'string') {
+                                set((state) => ({
+                                    tasks: state.tasks.map((t) =>
+                                        t.id === id ? { ...t, googleCalendarEventId: eventResult } : t
+                                    ),
+                                }));
+                            }
+                        }
                     } catch (e) {
                         console.error("Failed to update Google Task:", e);
                     }
@@ -140,6 +220,10 @@ export const useScheduleStore = create<ScheduleState>()(
                     try {
                         // @ts-ignore
                         await window.nexusAPI.google.tasks.delete(undefined, task.googleId);
+                        if (task.googleCalendarEventId) {
+                            // @ts-ignore
+                            await window.nexusAPI.google.deleteEvent(task.googleCalendarEventId);
+                        }
                     } catch (e) {
                         console.error("Failed to delete Google Task:", e);
                     }
@@ -162,6 +246,10 @@ export const useScheduleStore = create<ScheduleState>()(
                         await window.nexusAPI.google.tasks.update(undefined, task.googleId, {
                             status: 'completed'
                         });
+                        if (task.googleCalendarEventId) {
+                            // @ts-ignore
+                            await window.nexusAPI.google.deleteEvent(task.googleCalendarEventId);
+                        }
                         console.log('Store: Google Task marked completed');
                     } catch (e) {
                         console.error("Failed to complete Google Task:", e);
@@ -191,10 +279,15 @@ export const useScheduleStore = create<ScheduleState>()(
 
                         if (typeof result === 'string') {
                             googleId = result;
+                            set({ googleStatusMessage: 'Event saved to Google Calendar.' });
                         }
                     } catch (e) {
                         console.error("Failed to sync to Google:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to save event to Google Calendar: ${message}` });
                     }
+                } else if (syncToGoogle && !get().isGoogleConnected) {
+                    set({ googleStatusMessage: 'Google is not connected. Event saved locally only.' });
                 }
 
                 set((state) => ({
@@ -226,8 +319,11 @@ export const useScheduleStore = create<ScheduleState>()(
                             start: start.toISOString(),
                             end: end.toISOString()
                         });
+                        set({ googleStatusMessage: 'Google Calendar event updated.' });
                     } catch (e) {
                         console.error("Failed to update Google event:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to update Google Calendar event: ${message}` });
                     }
                 }
             },
@@ -243,8 +339,11 @@ export const useScheduleStore = create<ScheduleState>()(
                     try {
                         // @ts-ignore
                         await window.nexusAPI.google.deleteEvent(event.googleId);
+                        set({ googleStatusMessage: 'Google Calendar event deleted.' });
                     } catch (e) {
                         console.error("Failed to delete Google event:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to delete Google Calendar event: ${message}` });
                     }
                 }
             },
@@ -253,9 +352,10 @@ export const useScheduleStore = create<ScheduleState>()(
                 try {
                     // @ts-ignore
                     const isConnected = await window.nexusAPI.google.checkAuth();
-                    set({ isGoogleConnected: isConnected });
+                    set({ isGoogleConnected: isConnected, googleStatusMessage: '' });
                 } catch (e) {
                     console.error("Check auth failed:", e);
+                    set({ googleStatusMessage: 'Unable to check Google auth status.' });
                 }
             },
 
@@ -264,12 +364,16 @@ export const useScheduleStore = create<ScheduleState>()(
                     // @ts-ignore
                     const success = await window.nexusAPI.google.signIn();
                     if (success) {
-                        set({ isGoogleConnected: true });
+                        set({ isGoogleConnected: true, googleStatusMessage: 'Google Calendar connected.' });
                         get().syncWithGoogle();
                         get().syncTasksWithGoogle();
+                    } else {
+                        set({ googleStatusMessage: 'Google sign-in was cancelled or failed.' });
                     }
                 } catch (e) {
                     console.error("Connect google failed:", e);
+                    const message = e instanceof Error ? e.message : 'Google sign-in failed.';
+                    set({ isGoogleConnected: false, googleStatusMessage: message });
                 }
             },
 
@@ -277,9 +381,10 @@ export const useScheduleStore = create<ScheduleState>()(
                 try {
                     // @ts-ignore
                     await window.nexusAPI.google.signOut();
-                    set({ isGoogleConnected: false });
+                    set({ isGoogleConnected: false, googleStatusMessage: 'Google account disconnected.' });
                 } catch (e) {
                     console.error("Disconnect google failed:", e);
+                    set({ googleStatusMessage: 'Failed to disconnect Google account.' });
                 }
             },
 
@@ -336,8 +441,11 @@ export const useScheduleStore = create<ScheduleState>()(
 
                         set({ events: [...mergedEvents, ...mappedGoogleEvents] });
                     }
+                    set({ googleStatusMessage: '' });
                 } catch (e) {
                     console.error("Sync failed:", e);
+                    const message = e instanceof Error ? e.message : String(e);
+                    set({ googleStatusMessage: `Google Calendar sync failed: ${message}` });
                 }
             },
 
@@ -359,6 +467,11 @@ export const useScheduleStore = create<ScheduleState>()(
                                 id: existing ? existing.id : Date.now() + Math.random(),
                                 title: gt.title,
                                 googleId: gt.id,
+                                dueDate: typeof gt.due === 'string' ? gt.due.slice(0, 10) : undefined,
+                                dueTime: typeof gt.due === 'string' && gt.due.length >= 16 && gt.due.slice(11, 16) !== '00:00'
+                                    ? gt.due.slice(11, 16)
+                                    : undefined,
+                                googleCalendarEventId: existing?.googleCalendarEventId,
                                 tag: existing ? existing.tag : 'Work',
                                 color: existing ? existing.color : 'gray'
                             };
@@ -368,6 +481,8 @@ export const useScheduleStore = create<ScheduleState>()(
                     }
                 } catch (e) {
                     console.error("Task sync failed:", e);
+                    const message = e instanceof Error ? e.message : String(e);
+                    set({ googleStatusMessage: `Google Tasks sync failed: ${message}` });
                 }
             }
         }),

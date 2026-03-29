@@ -81,7 +81,7 @@ const calculateEventPositions = (events: ScheduleEvent[]): PositionedEvent[] => 
 export const ScheduleView: React.FC = () => {
   // Get state and actions from the store
   const {
-    tasks, events, isGoogleConnected,
+    tasks, events, isGoogleConnected, googleStatusMessage,
     addTask, updateTask, deleteTask, completeTask,
     addEvent, updateEvent, deleteEvent,
     checkGoogleAuth, connectGoogle, disconnectGoogle, syncWithGoogle, syncTasksWithGoogle
@@ -420,6 +420,11 @@ export const ScheduleView: React.FC = () => {
                 <ChevronRight size={16} />
               </button>
             </div>
+            {googleStatusMessage && (
+              <span className="text-[11px] text-amber-400/90 max-w-[380px] truncate" title={googleStatusMessage}>
+                {googleStatusMessage}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {isGoogleConnected ? (
@@ -460,7 +465,7 @@ export const ScheduleView: React.FC = () => {
               Add Event
             </button>
             <span className="text-xs font-mono text-gray-500">
-              {isToday ? 'Today' : selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}
+              {isToday ? 'Today' : selectedDate.toLocaleDateString('en-US', { weekday: 'long' })} {currentTimeStr}
             </span>
           </div>
         </div>

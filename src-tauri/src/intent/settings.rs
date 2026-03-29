@@ -19,6 +19,7 @@ pub struct AppSettings {
     #[serde(rename = "trackScreenOcr",    default)] pub track_screen_ocr: bool,
     #[serde(rename = "trackMedia",        default = "default_true")] pub track_media: bool,
     #[serde(rename = "trackBrowser",      default)] pub track_browser:     bool,
+    #[serde(rename = "excludedApps",      default)] pub excluded_apps: Vec<String>,
     #[serde(rename = "dataRetentionDays", default = "default_30")]   pub data_retention_days: i64,
     #[serde(rename = "enableStartup",     default = "default_true")] pub enable_startup: bool,
     #[serde(rename = "startupBehavior",   default = "default_startup_behavior")] pub startup_behavior: String,
@@ -45,6 +46,25 @@ fn default_font_scale() -> f32 { 1.0 }
 fn default_color_scheme() -> String { "dark".to_string() }
 fn default_locale() -> String { "en-US".to_string() }
 fn default_date_format() -> String { "YYYY-MM-DD".to_string() }
+
+fn parse_excluded_apps(raw: &str) -> Vec<String> {
+    if raw.trim().is_empty() {
+        return vec![];
+    }
+
+    if let Ok(list) = serde_json::from_str::<Vec<String>>(raw) {
+        return list
+            .into_iter()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .collect();
+    }
+
+    raw.split([',', '\n', ';'])
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+        .collect()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -106,6 +126,7 @@ fn load_settings_inner(conn: &rusqlite::Connection) -> AppSettings {
     s.track_screen_ocr = get_bool("track_screen_ocr", false);
     s.track_media = get_bool("track_media", true);
     s.track_browser = get_bool("track_browser", false);
+    s.excluded_apps = parse_excluded_apps(&get_str("excluded_apps", ""));
     s.data_retention_days = get_i64("data_retention_days", 30);
     s.enable_startup = get_bool("enable_startup", true);
     s.minimize_to_tray = get_bool("minimize_to_tray", true);
@@ -150,6 +171,7 @@ pub async fn settings_save(
         ("track_screen_ocr",     settings.track_screen_ocr.to_string()),
         ("track_media",          settings.track_media.to_string()),
         ("track_browser",        settings.track_browser.to_string()),
+        ("excluded_apps",        serde_json::to_string(&settings.excluded_apps).unwrap_or_else(|_| "[]".to_string())),
         ("data_retention_days",  settings.data_retention_days.to_string()),
         ("enable_startup",       settings.enable_startup.to_string()),
         ("startup_behavior",     settings.startup_behavior.clone()),
@@ -187,6 +209,11 @@ pub async fn settings_save(
             let _ = app_handle.autolaunch().disable();
         }
     }
+
+    crate::intent::activity_tracker::set_track_media_enabled(settings.track_media);
+    crate::intent::activity_tracker::set_track_browser_enabled(settings.track_browser);
+    crate::intent::activity_tracker::set_excluded_apps(settings.excluded_apps.clone());
+    crate::refresh_monitoring_state(&app_handle);
 
     Ok(true)
 }

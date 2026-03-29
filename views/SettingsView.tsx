@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   trackScreenOcr: false,
   trackMedia: true,
   trackBrowser: false,
+  excludedApps: [],
   dataRetentionDays: 30,
   maxStorageMb: 512,
   autoCleanup: true,
@@ -376,6 +377,16 @@ export const SettingsView: React.FC = () => {
                 <Toggle label="Screen OCR" desc="Read text from screen snapshots." checked={!!local.trackScreenOcr} onChange={set('trackScreenOcr')} />
                 <Toggle label="Media Tracking" desc="Track media playback context." checked={!!local.trackMedia} onChange={set('trackMedia')} />
                 <Toggle label="Browser Tracking" desc="Track browser title/URL metadata." checked={!!local.trackBrowser} onChange={set('trackBrowser')} />
+                <div className="py-3 border-b border-[#1a1a1a] last:border-0">
+                  <label className="text-sm font-medium text-gray-200 block mb-1">Excluded Apps</label>
+                  <p className="text-xs text-gray-500 mb-2">One app per line. Matching apps are skipped from activity tracking.</p>
+                  <textarea
+                    value={(local.excludedApps || []).join('\n')}
+                    onChange={(e) => set('excludedApps')(e.target.value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean))}
+                    placeholder="spotify\nchrome\ntelegram"
+                    className="w-full min-h-[96px] bg-[#0a0a0a] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600"
+                  />
+                </div>
               </div>
             </div>
           )}

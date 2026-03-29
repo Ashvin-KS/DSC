@@ -27,6 +27,7 @@ export const DynamicIsland: React.FC = () => {
 
     // Nav
     const setActiveTab = useNavStore((state) => state.setActiveTab);
+    const activeTab = useNavStore((state) => state.activeTab);
 
     // Local UI State
     const [isExpanded, setIsExpanded] = useState(false);
@@ -64,8 +65,12 @@ export const DynamicIsland: React.FC = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isExpanded]);
 
+    const islandPositionClass = activeTab === 'schedule'
+        ? 'left-[22%] -translate-x-1/2'
+        : 'left-1/2 -translate-x-1/2';
+
     return (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center">
+        <div className={`fixed top-4 ${islandPositionClass} z-50 flex flex-col items-center`}>
             {/* ISLAND CONTAINER */}
             <div
                 className={`

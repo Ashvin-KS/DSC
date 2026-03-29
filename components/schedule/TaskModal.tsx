@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, AlignLeft } from 'lucide-react';
+import { X, Calendar, AlignLeft, Clock } from 'lucide-react';
 import { Task } from '../../store/useScheduleStore';
 
 interface TaskModalProps {
@@ -30,6 +30,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
     const [dueDate, setDueDate] = useState('');
+    const [dueTime, setDueTime] = useState('');
     const [tag, setTag] = useState<Task['tag']>('Work');
     const [color, setColor] = useState<Task['color']>('blue');
 
@@ -38,12 +39,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             setTitle(initialData.title);
             setDescription(initialData.description || '');
             setDueDate(initialData.dueDate || '');
+            setDueTime(initialData.dueTime || '');
             setTag(initialData.tag);
             setColor(initialData.color);
         } else {
             setTitle('');
             setDescription('');
             setDueDate('');
+            setDueTime('');
             setTag('Work');
             setColor('blue');
         }
@@ -62,6 +65,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             title: title.trim(),
             description: description.trim() || undefined,
             dueDate: dueDate || undefined,
+            dueTime: dueTime || undefined,
             tag,
             color
         });
@@ -110,18 +114,32 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                         />
                     </div>
 
-                    {/* Due Date */}
-                    <div>
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">
-                            <Calendar size={12} />
-                            Due Date
-                        </label>
-                        <input
-                            type="date"
-                            value={dueDate}
-                            onChange={(e) => setDueDate(e.target.value)}
-                            className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-all [color-scheme:dark]"
-                        />
+                    {/* Due Date & Time */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">
+                                <Calendar size={12} />
+                                Due Date
+                            </label>
+                            <input
+                                type="date"
+                                value={dueDate}
+                                onChange={(e) => setDueDate(e.target.value)}
+                                className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-all [color-scheme:dark]"
+                            />
+                        </div>
+                        <div>
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">
+                                <Clock size={12} />
+                                Alert Time
+                            </label>
+                            <input
+                                type="time"
+                                value={dueTime}
+                                onChange={(e) => setDueTime(e.target.value)}
+                                className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-all [color-scheme:dark]"
+                            />
+                        </div>
                     </div>
 
                     {/* Description */}

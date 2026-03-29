@@ -54,6 +54,7 @@ export const DiaryView: React.FC = () => {
                 } else {
                     // Stub offline preview
                     if (activeDate === todayStr() && entries.length === 0) {
+                        const now = Math.floor(Date.now() / 1000);
                         setEntries([{
                             id: 'stub-1',
                             date: todayStr(),
@@ -126,6 +127,7 @@ export const DiaryView: React.FC = () => {
     const handleAddManual = async () => {
         if (!newContent.trim()) return;
         setIsSavingManual(true);
+        const now = Math.floor(Date.now() / 1000);
         const entry: DiaryEntry = {
             id: `manual-${Date.now()}`, date: activeDate, content: newContent.trim(),
             isAiGenerated: false, createdAt: Date.now() / 1000, updatedAt: Date.now() / 1000,

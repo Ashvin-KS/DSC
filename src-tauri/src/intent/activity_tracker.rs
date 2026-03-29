@@ -1,11 +1,15 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::intent::activity::{ActivityEvent, ActivityMetadata};
 
 static TRACKING_ENABLED: AtomicBool = AtomicBool::new(true);
 static TRACKING_INTERVAL_SECS: AtomicU64 = AtomicU64::new(DEFAULT_TRACKING_INTERVAL_SECS);
+static TRACK_MEDIA_ENABLED: AtomicBool = AtomicBool::new(true);
+static TRACK_BROWSER_ENABLED: AtomicBool = AtomicBool::new(false);
+static EXCLUDED_APPS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 const DEFAULT_TRACKING_INTERVAL_SECS: u64 = 10;
 const MIN_TRACKING_INTERVAL_SECS: u64 = 1;
@@ -99,9 +103,43 @@ fn initialize_tracking_from_settings(app_handle: &AppHandle) {
         Ok(c) => c,
         Err(_) => return,
     };
-    if let Ok(val) = conn.query_row("SELECT value FROM app_settings WHERE key = 'track_apps'", [], |row| row.get::<_, String>(0)) {
-        set_tracking_enabled(val == "true");
+
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT key, value FROM app_settings WHERE key IN ('track_apps','track_media','track_browser','excluded_apps')"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) {
+            for (key, value) in rows.filter_map(|r| r.ok()) {
+                match key.as_str() {
+                    "track_apps" => set_tracking_enabled(value == "true"),
+                    "track_media" => set_track_media_enabled(value == "true"),
+                    "track_browser" => set_track_browser_enabled(value == "true"),
+                    "excluded_apps" => set_excluded_apps(parse_excluded_apps(&value)),
+                    _ => {}
+                }
+            }
+        }
+    };
+}
+
+fn parse_excluded_apps(raw: &str) -> Vec<String> {
+    if raw.trim().is_empty() {
+        return vec![];
     }
+
+    if let Ok(values) = serde_json::from_str::<Vec<String>>(raw) {
+        return values
+            .into_iter()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .collect();
+    }
+
+    raw.split(|c| c == ',' || c == '\n' || c == ';')
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+        .collect()
 }
 
 fn clamp_tracking_interval(seconds: u64) -> u64 {
@@ -121,13 +159,15 @@ async fn capture_metadata() -> ActivityMetadata {
         metadata.background_windows = Some(bg_windows);
     }
 
-    metadata.media_info = match tokio::task::spawn_blocking(|| crate::intent::windows_utils::get_media_info()).await {
-        Ok(info) => info,
-        Err(e) => {
-            println!("[Tracker] SMTC spawn_blocking failed: {:?}", e);
-            None
-        }
-    };
+    if TRACK_MEDIA_ENABLED.load(Ordering::Relaxed) {
+        metadata.media_info = match tokio::task::spawn_blocking(|| crate::intent::windows_utils::get_media_info()).await {
+            Ok(info) => info,
+            Err(e) => {
+                println!("[Tracker] SMTC spawn_blocking failed: {:?}", e);
+                None
+            }
+        };
+    }
 
     metadata
 }
@@ -182,7 +222,14 @@ fn get_active_window() -> Result<Option<ActiveWindow>, String> {
         Ok(window) => {
             // Sanitize app_name - remove control characters and normalize
             let app_name = sanitize_app_name(&window.app_name);
-            let title = window.title;
+            if is_app_excluded(&app_name) {
+                return Ok(None);
+            }
+
+            let mut title = window.title;
+            if !TRACK_BROWSER_ENABLED.load(Ordering::Relaxed) && is_browser_app(&app_name) {
+                title = "Browser (metadata hidden)".to_string();
+            }
             
             // Categorize the window
             let category_id = categorize_window(&app_name, &title);
@@ -283,15 +330,7 @@ fn categorize_window(app_name: &str, title: &str) -> i32 {
     }
     
     // Browser (category 2) — only if title didn't match entertainment above
-    if app_lower.contains("chrome") || 
-       app_lower.contains("firefox") ||
-       app_lower.contains("edge") ||
-       app_lower.contains("brave") ||
-       app_lower.contains("opera") ||
-       app_lower.contains("vivaldi") ||
-       app_lower.contains("safari") ||
-       app_lower.contains("webview2") ||
-       app_lower.contains("msedgewebview") {
+    if is_browser_app(&app_lower) {
         return 2;
     }
     
@@ -368,6 +407,45 @@ fn store_activity(app_handle: &AppHandle, activity: &ActivityEvent) -> Result<()
 
 pub fn set_tracking_enabled(enabled: bool) {
     TRACKING_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn set_track_media_enabled(enabled: bool) {
+    TRACK_MEDIA_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn set_track_browser_enabled(enabled: bool) {
+    TRACK_BROWSER_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn set_excluded_apps(apps: Vec<String>) {
+    if let Ok(mut list) = EXCLUDED_APPS.lock() {
+        *list = apps
+            .into_iter()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .collect();
+    }
+}
+
+fn is_app_excluded(app_name: &str) -> bool {
+    let app = app_name.to_lowercase();
+    if let Ok(list) = EXCLUDED_APPS.lock() {
+        return list.iter().any(|pattern| app == *pattern || app.contains(pattern));
+    }
+    false
+}
+
+fn is_browser_app(app_name: &str) -> bool {
+    let lower = app_name.to_lowercase();
+    lower.contains("chrome")
+        || lower.contains("firefox")
+        || lower.contains("edge")
+        || lower.contains("brave")
+        || lower.contains("opera")
+        || lower.contains("vivaldi")
+        || lower.contains("safari")
+        || lower.contains("webview2")
+        || lower.contains("msedgewebview")
 }
 
 pub fn is_tracking_enabled() -> bool {

@@ -8,6 +8,7 @@ import { GlobalWidgets } from './components/GlobalWidgets';
 import { useMusicStore } from './store/useMusicStore';
 import { useTimerStore } from './store/useTimerStore';
 import { TrayPanelView } from './views/TrayPanelView';
+import { useCodeStore } from './store/useCodeStore';
 
 // Lazy-load heavy views to avoid blocking initial render
 const CodeView = React.lazy(() => import('./views/CodeView').then(m => ({ default: m.CodeView })));
@@ -45,6 +46,24 @@ const App: React.FC = () => {
     };
     load();
   }, [isTrayPanelWindow, setSettings]);
+
+  // Load CSV problem bank early so the code dashboard has data without waiting for CodeView mount.
+  useEffect(() => {
+    if (isTrayPanelWindow) return;
+    const loadCsvOnStartup = async () => {
+      try {
+        const state = useCodeStore.getState();
+        if (state.problems.length > 2) return;
+        const csv = await window.nexusAPI?.leetcode?.readCsv?.();
+        if (csv) {
+          state.importFromCsv(csv);
+        }
+      } catch (err) {
+        console.warn('Failed to auto-load LeetCode CSV on startup.', err);
+      }
+    };
+    loadCsvOnStartup();
+  }, [isTrayPanelWindow]);
 
   useEffect(() => {
     if (isTrayPanelWindow) return;

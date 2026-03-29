@@ -58,6 +58,7 @@ export interface AppSettings {
     trackScreenOcr: boolean;
     trackMedia: boolean;
     trackBrowser: boolean;
+    excludedApps?: string[];
     // Storage
     dataRetentionDays: number;
     maxStorageMb?: number;
@@ -116,6 +117,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     trackScreenOcr: false,
     trackMedia: true,
     trackBrowser: false,
+    excludedApps: [],
     dataRetentionDays: 30,
     maxStorageMb: 512,
     autoCleanup: true,

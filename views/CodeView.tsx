@@ -413,6 +413,7 @@ const ProblemCard: React.FC<{ problem: Problem, onSelect: () => void, onToggle: 
 //   - isPaused=true (resizing panels): skip bounds updates so the browser doesn't flicker.
 //   - unmount (navigate away): actually close the browser then.
 const OFFSCREEN_X = -20000;
+const EMBEDDED_BROWSER_INSET = 2;
 const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boolean }> = ({ url, isActive, isPaused }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [browserReady, setBrowserReady] = useState(false);
@@ -437,11 +438,14 @@ const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boo
   const getRect = () => {
     if (!containerRef.current) return null;
     const r = containerRef.current.getBoundingClientRect();
+    const inset = EMBEDDED_BROWSER_INSET;
+    const width = Math.max(1, Math.round(r.width - inset * 2));
+    const height = Math.max(1, Math.round(r.height - inset * 2));
     return {
-      x: Math.round(r.left),
-      y: Math.round(r.top),
-      width: Math.max(1, Math.round(r.width)),
-      height: Math.max(1, Math.round(r.height)),
+      x: Math.round(r.left + inset),
+      y: Math.round(r.top + inset),
+      width,
+      height,
     };
   };
 

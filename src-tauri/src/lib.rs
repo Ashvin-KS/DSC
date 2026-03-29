@@ -133,14 +133,35 @@ fn delete_tokens(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn google_client_credentials() -> Result<(String, String), String> {
+fn google_client_credentials(app: &tauri::AppHandle) -> Result<(String, String), String> {
+    if let Ok(conn) = intent::db::open(app) {
+        let db_client_id: String = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'google_client_id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_default();
+        let db_client_secret: String = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'google_client_secret'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_default();
+
+        if !db_client_id.trim().is_empty() && !db_client_secret.trim().is_empty() {
+            return Ok((db_client_id, db_client_secret));
+        }
+    }
+
     dotenvy::dotenv().ok();
     let client_id = std::env::var("GOOGLE_CLIENT_ID")
         .or_else(|_| std::env::var("VITE_GOOGLE_CLIENT_ID"))
-        .map_err(|_| "Missing GOOGLE_CLIENT_ID".to_string())?;
+        .map_err(|_| "Missing Google Client ID. Set it in Settings > API Keys or GOOGLE_CLIENT_ID env var.".to_string())?;
     let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
         .or_else(|_| std::env::var("VITE_GOOGLE_CLIENT_SECRET"))
-        .map_err(|_| "Missing GOOGLE_CLIENT_SECRET".to_string())?;
+        .map_err(|_| "Missing Google Client Secret. Set it in Settings > API Keys or GOOGLE_CLIENT_SECRET env var.".to_string())?;
     Ok((client_id, client_secret))
 }
 
@@ -268,7 +289,7 @@ async fn refresh_access_token_if_needed(app: &tauri::AppHandle) -> Result<String
         .refresh_token
         .clone()
         .ok_or_else(|| "Not authenticated".to_string())?;
-    let (client_id, client_secret) = google_client_credentials()?;
+    let (client_id, client_secret) = google_client_credentials(app)?;
     let client = Client::new();
     let response = client
         .post("https://oauth2.googleapis.com/token")
@@ -560,6 +581,10 @@ fn apply_monitoring_state(app_handle: &tauri::AppHandle) {
     intent::activity_tracker::set_tracking_enabled(tracking_enabled);
     intent::screen_capture::set_capture_enabled(ocr_enabled);
     intent::file_monitor::set_monitor_enabled(tracking_enabled);
+}
+
+pub(crate) fn refresh_monitoring_state(app_handle: &tauri::AppHandle) {
+    apply_monitoring_state(app_handle);
 }
 
 fn disable_incognito(app_handle: &tauri::AppHandle) {
@@ -1082,7 +1107,7 @@ fn google_check_auth(app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 async fn google_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
-    let (client_id, client_secret) = google_client_credentials()?;
+    let (client_id, client_secret) = google_client_credentials(&app)?;
     let (redirect_uri, callback_bind_addr) = select_google_redirect_uri(&client_id).await?;
     let redirect_url = Url::parse(&redirect_uri).map_err(|e| format!("Invalid redirect URI: {e}"))?;
     let host = redirect_url
@@ -1210,7 +1235,11 @@ async fn google_api_get(app: &tauri::AppHandle, url: &str) -> Result<Value, Stri
         .await
         .map_err(|e| format!("Google GET request failed: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!("Google GET failed with status {}", response.status()));
+        let status = response.status();
+        let details = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Google GET failed with status {status}: {details}"
+        ));
     }
     response
         .json()
@@ -1235,7 +1264,11 @@ async fn google_api_with_body(
         .await
         .map_err(|e| format!("Google API request failed: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!("Google API failed with status {}", response.status()));
+        let status = response.status();
+        let details = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Google API failed with status {status}: {details}"
+        ));
     }
     if response.status() == reqwest::StatusCode::NO_CONTENT {
         return Ok(json!({}));
