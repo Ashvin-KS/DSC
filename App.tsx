@@ -9,6 +9,7 @@ import { useMusicStore } from './store/useMusicStore';
 import { useTimerStore } from './store/useTimerStore';
 import { TrayPanelView } from './views/TrayPanelView';
 import { useCodeStore } from './store/useCodeStore';
+import { preloadBrainVaultCache } from './lib/brainVaultBootstrap';
 
 // Lazy-load heavy views to avoid blocking initial render
 const CodeView = React.lazy(() => import('./views/CodeView').then(m => ({ default: m.CodeView })));
@@ -63,6 +64,14 @@ const App: React.FC = () => {
       }
     };
     loadCsvOnStartup();
+  }, [isTrayPanelWindow]);
+
+  // Warm Brain explorer/file cache before the Brain view is mounted.
+  useEffect(() => {
+    if (isTrayPanelWindow) return;
+    preloadBrainVaultCache().catch((err) => {
+      console.debug('Brain cache preload failed.', err);
+    });
   }, [isTrayPanelWindow]);
 
   useEffect(() => {

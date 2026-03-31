@@ -9,3 +9,4 @@ pub mod activity_tracker;
 pub mod file_monitor;
 pub mod screen_capture;
 pub mod windows_utils;
+pub mod retrieval;

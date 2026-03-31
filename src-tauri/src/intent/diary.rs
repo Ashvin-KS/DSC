@@ -358,24 +358,62 @@ pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Resul
     ).unwrap_or(false);
 
     if exists {
+        crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "diary_entry", &entry.id)?;
         conn.execute(
             "UPDATE diary_entries SET date=?1,content=?2,is_ai_generated=?3,updated_at=?4 WHERE id=?5",
             rusqlite::params![entry.date, entry.content, entry.is_ai_generated as i64, now, entry.id],
         ).map_err(|e| e.to_string())?;
-        Ok(DiaryEntry { updated_at: now, ..entry })
+        let saved = DiaryEntry { updated_at: now, ..entry };
+        let summary = format!(
+            "{} diary entry for {}",
+            if saved.is_ai_generated { "AI-generated" } else { "User-written" },
+            saved.date
+        );
+        let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+            &conn,
+            crate::intent::retrieval::ChunkInput {
+                entity_type: "diary_entry",
+                entity_id: &saved.id,
+                source_type: "diary",
+                chunk_text: &saved.content,
+                chunk_summary: Some(summary),
+                project_root: None,
+                source_ts: Some(saved.updated_at),
+            },
+        );
+        Ok(saved)
     } else {
         let id = if entry.id.is_empty() { Uuid::new_v4().to_string() } else { entry.id.clone() };
         conn.execute(
             "INSERT INTO diary_entries (id,date,content,is_ai_generated,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
             rusqlite::params![id, entry.date, entry.content, entry.is_ai_generated as i64, now],
         ).map_err(|e| e.to_string())?;
-        Ok(DiaryEntry { id, created_at: now, updated_at: now, ..entry })
+        let saved = DiaryEntry { id, created_at: now, updated_at: now, ..entry };
+        let summary = format!(
+            "{} diary entry for {}",
+            if saved.is_ai_generated { "AI-generated" } else { "User-written" },
+            saved.date
+        );
+        let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+            &conn,
+            crate::intent::retrieval::ChunkInput {
+                entity_type: "diary_entry",
+                entity_id: &saved.id,
+                source_type: "diary",
+                chunk_text: &saved.content,
+                chunk_summary: Some(summary),
+                project_root: None,
+                source_ts: Some(saved.updated_at),
+            },
+        );
+        Ok(saved)
     }
 }
 
 #[tauri::command]
 pub async fn diary_delete_entry(app_handle: AppHandle, id: String) -> Result<bool, String> {
     let conn = crate::intent::db::open(&app_handle)?;
+    crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "diary_entry", &id)?;
     conn.execute("DELETE FROM diary_entries WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
     Ok(true)
 }

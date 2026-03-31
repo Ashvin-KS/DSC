@@ -71,6 +71,37 @@ struct MutationResult {
     error: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+struct NotesMutationEvent {
+    vault_path: Option<String>,
+    action: String,
+    path: Option<String>,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    is_directory: bool,
+    source: String,
+}
+
+#[derive(Serialize)]
+struct VaultSearchHit {
+    path: String,
+    summary: String,
+    snippet: String,
+    score: f32,
+}
+
+#[derive(Serialize)]
+struct VaultSearchResult {
+    #[serde(rename = "indexedFiles")]
+    indexed_files: usize,
+    #[serde(rename = "indexedChunks")]
+    indexed_chunks: usize,
+    route: String,
+    #[serde(rename = "promptContext")]
+    prompt_context: String,
+    hits: Vec<VaultSearchHit>,
+}
+
 #[derive(Serialize)]
 struct CalendarEvent {
     id: String,
@@ -890,6 +921,70 @@ fn mutation_err(message: impl Into<String>) -> MutationResult {
     }
 }
 
+fn emit_notes_mutation_event(app: &tauri::AppHandle, payload: NotesMutationEvent) {
+    let _ = app.emit("notes://vault-mutated", payload);
+}
+
+fn normalize_path_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+fn path_is_within(candidate: &Path, root: &Path) -> bool {
+    let candidate_key = normalize_path_key(candidate);
+    let root_key = normalize_path_key(root);
+    candidate_key == root_key || candidate_key.starts_with(&format!("{root_key}\\"))
+}
+
+fn infer_vault_root_for_path(app: &tauri::AppHandle, target_path: &Path) -> Option<String> {
+    let conn = intent::db::open(app).ok()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT project_root
+             FROM retrieval_chunks
+             WHERE entity_type = 'vault_note' AND project_root IS NOT NULL",
+        )
+        .ok()?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .ok()?;
+
+    let target_key = normalize_path_key(target_path);
+    let mut best_match: Option<String> = None;
+    for row in rows.filter_map(|row| row.ok()) {
+        let root_path = PathBuf::from(&row);
+        let root_key = normalize_path_key(&root_path);
+        if target_key == root_key || target_key.starts_with(&format!("{root_key}\\")) {
+            match best_match.as_ref() {
+                Some(existing) if existing.len() >= row.len() => {}
+                _ => best_match = Some(row),
+            }
+        }
+    }
+
+    best_match
+}
+
+fn resolve_effective_vault_path(
+    app: &tauri::AppHandle,
+    provided_vault_path: Option<String>,
+    path_hint: &Path,
+) -> Option<String> {
+    let provided = provided_vault_path
+        .and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+    provided.or_else(|| infer_vault_root_for_path(app, path_hint))
+}
+
 /// Validate that a path is within an expected vault directory to prevent path traversal.
 /// Returns the canonicalized path on success.
 fn validate_notes_path(file_path: &str, vault_path: Option<&str>) -> Result<PathBuf, String> {
@@ -928,6 +1023,116 @@ async fn notes_get_file_tree(vault_path: String) -> Result<Vec<FileNode>, String
     tokio::task::spawn_blocking(move || {
         Ok(get_directory_tree(Path::new(&vault_path)))
     }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn notes_reindex_vault(app_handle: tauri::AppHandle, vault_path: String) -> Result<crate::intent::retrieval::VaultIndexStats, String> {
+    tokio::task::spawn_blocking(move || crate::intent::retrieval::reindex_markdown_vault(&app_handle, &vault_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn notes_reindex_subtree(
+    app_handle: tauri::AppHandle,
+    subtree_path: String,
+    vault_path: Option<String>,
+) -> Result<crate::intent::retrieval::VaultIndexStats, String> {
+    let subtree_hint = PathBuf::from(&subtree_path);
+    let effective_vault = resolve_effective_vault_path(&app_handle, vault_path, &subtree_hint)
+        .ok_or_else(|| "Unable to resolve vault path for subtree reindex".to_string())?;
+
+    tokio::task::spawn_blocking(move || {
+        crate::intent::retrieval::reindex_markdown_subtree(
+            &app_handle,
+            &effective_vault,
+            Path::new(&subtree_path),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn notes_cancel_vault_reindex() -> Result<bool, String> {
+    crate::intent::retrieval::cancel_vault_reindex();
+    Ok(true)
+}
+
+#[tauri::command]
+async fn notes_search_vault(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+    query: String,
+    max_hits: Option<usize>,
+) -> Result<VaultSearchResult, String> {
+    let stats = tokio::task::spawn_blocking({
+        let app_handle = app_handle.clone();
+        let vault_path = vault_path.clone();
+        move || {
+            let conn = crate::intent::db::open(&app_handle)?;
+            let canonical_vault = std::fs::canonicalize(&vault_path).map_err(|e| e.to_string())?;
+            let canonical_vault_str = canonical_vault.to_string_lossy().to_string();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM retrieval_chunks WHERE entity_type = 'vault_note' AND project_root = ?1",
+                    rusqlite::params![canonical_vault_str.clone()],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if count == 0 {
+                crate::intent::retrieval::reindex_markdown_vault(&app_handle, &vault_path)
+            } else {
+                let indexed_files: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(DISTINCT entity_id) FROM retrieval_chunks WHERE entity_type = 'vault_note' AND project_root = ?1",
+                        rusqlite::params![canonical_vault_str.clone()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                Ok(crate::intent::retrieval::VaultIndexStats {
+                    indexed_files: indexed_files as usize,
+                    indexed_chunks: count as usize,
+                    vault_path: canonical_vault_str,
+                    cancelled: false,
+                })
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let context = tokio::task::spawn_blocking(move || {
+        crate::intent::retrieval::build_vault_context(&app_handle, &vault_path, &query, max_hits.unwrap_or(8))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let hits = context
+        .hits
+        .into_iter()
+        .map(|hit| {
+            let path = Path::new(&hit.entity_id)
+                .strip_prefix(Path::new(&stats.vault_path))
+                .ok()
+                .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+                .unwrap_or(hit.entity_id.clone());
+            VaultSearchHit {
+                path,
+                summary: hit.summary,
+                snippet: hit.snippet,
+                score: hit.score,
+            }
+        })
+        .collect();
+
+    Ok(VaultSearchResult {
+        indexed_files: stats.indexed_files,
+        indexed_chunks: stats.indexed_chunks,
+        route: context.route,
+        prompt_context: context.prompt_context,
+        hits,
+    })
 }
 
 #[tauri::command]
@@ -1763,6 +1968,8 @@ pub fn run() {
             intent::screen_capture::start_screen_capture(handle.clone());
             intent::activity_tracker::start_tracking(handle.clone());
             intent::file_monitor::start_file_monitor(handle);
+            intent::retrieval::start_embedding_worker(app.handle().clone());
+            intent::retrieval::start_rollup_worker(app.handle().clone());
 
             #[cfg(all(target_os = "windows", not(debug_assertions)))]
             {
@@ -1805,6 +2012,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             notes_get_file_tree,
+            notes_reindex_vault,
+            notes_reindex_subtree,
+            notes_cancel_vault_reindex,
+            notes_search_vault,
             notes_read_file,
             notes_write_file,
             notes_create_file,
@@ -1871,6 +2082,7 @@ pub fn run() {
             intent::settings::settings_nvidia_chat_completion,
             intent::settings::settings_lmstudio_chat_completion,
             intent::settings::brain_chat_stream,
+            intent::settings::brain_cancel_stream,
             intent::dashboard::dashboard_get_overview,
             intent::dashboard::dashboard_refresh_overview,
             intent::dashboard::dashboard_summarize_item,

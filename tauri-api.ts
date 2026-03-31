@@ -16,6 +16,28 @@ interface MutationResult {
   error?: string;
 }
 
+interface VaultIndexStats {
+  indexed_files: number;
+  indexed_chunks: number;
+  vault_path: string;
+  cancelled: boolean;
+}
+
+interface VaultSearchHit {
+  path: string;
+  summary: string;
+  snippet: string;
+  score: number;
+}
+
+interface VaultSearchResult {
+  indexedFiles: number;
+  indexedChunks: number;
+  route: string;
+  promptContext: string;
+  hits: VaultSearchHit[];
+}
+
 const isTauriRuntime = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -42,6 +64,14 @@ export function initNexusApi() {
       },
       getFileTree: (vaultPath: string) =>
         invoke<FileNode[]>('notes_get_file_tree', { vaultPath }),
+      reindexVault: (vaultPath: string) =>
+        invoke<VaultIndexStats>('notes_reindex_vault', { vaultPath }),
+      reindexSubtree: (subtreePath: string, vaultPath?: string) =>
+        invoke<VaultIndexStats>('notes_reindex_subtree', { subtreePath, vaultPath }),
+      cancelVaultReindex: () =>
+        invoke<boolean>('notes_cancel_vault_reindex'),
+      searchVault: (vaultPath: string, query: string, maxHits?: number) =>
+        invoke<VaultSearchResult>('notes_search_vault', { vaultPath, query, maxHits }),
       readFile: (filePath: string) =>
         invoke<string | null>('notes_read_file', { filePath }),
       writeFile: (filePath: string, content: string) =>
@@ -184,6 +214,7 @@ export function initNexusApi() {
         temperature?: number,
         baseUrl?: string,
       ) => invoke<void>('brain_chat_stream', { model, messages, useLocal, maxTokens, temperature, baseUrl }),
+      brainCancelStream: () => invoke<boolean>('brain_cancel_stream'),
     },
     storage: {
       getStats: () => invoke<any>('storage_get_stats'),
@@ -205,6 +236,10 @@ declare global {
       notes: {
         selectVault: () => Promise<string | null>;
         getFileTree: (vaultPath: string) => Promise<FileNode[]>;
+        reindexVault: (vaultPath: string) => Promise<VaultIndexStats>;
+        reindexSubtree: (subtreePath: string, vaultPath?: string) => Promise<VaultIndexStats>;
+        cancelVaultReindex: () => Promise<boolean>;
+        searchVault: (vaultPath: string, query: string, maxHits?: number) => Promise<VaultSearchResult>;
         readFile: (filePath: string) => Promise<string | null>;
         writeFile: (filePath: string, content: string) => Promise<boolean>;
         createFile: (dirPath: string, fileName: string) => Promise<MutationResult>;
@@ -299,6 +334,7 @@ declare global {
           temperature?: number,
           baseUrl?: string,
         ) => Promise<void>;
+        brainCancelStream: () => Promise<boolean>;
       };
       storage?: {
         getStats: () => Promise<any>;

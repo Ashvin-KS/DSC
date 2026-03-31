@@ -1,10 +1,23 @@
 export type BrainActionType =
   | 'insert_content'
   | 'create_note'
+  | 'edit_note'
+  | 'create_folder'
+  | 'move_note'
+  | 'open_note'
+  | 'rename_note'
+  | 'delete_item'
+  | 'ask_question'
   | 'replace_selection'
   | 'insert_at_cursor'
   | 'find_and_replace'
   | 'replace_all';
+
+export interface ParsedQuestionOption {
+  label?: string;
+  value?: string;
+  description?: string;
+}
 
 export interface ParsedActionPayload {
   action?: BrainActionType;
@@ -12,6 +25,26 @@ export interface ParsedActionPayload {
   explanation?: string;
   target_text?: string;
   title?: string;
+  target_path?: string;
+  source_path?: string;
+  destination_path?: string;
+  new_name?: string;
+  question?: string;
+  question_id?: string;
+  options?: Array<string | ParsedQuestionOption>;
+  allow_free_text?: boolean;
+  free_text_placeholder?: string;
+}
+
+export type BrainChatOptionAction = 'open_note' | 'list_folder' | 'answer_question';
+
+export interface BrainChatOption {
+  id: string;
+  label: string;
+  value: string;
+  description?: string;
+  action: BrainChatOptionAction;
+  questionId?: string;
 }
 
 export interface BrainChatMessage {
@@ -19,6 +52,11 @@ export interface BrainChatMessage {
   text: string;
   context?: string;
   isAction?: boolean;
+  options?: BrainChatOption[];
+  questionPrompt?: string;
+  questionId?: string;
+  allowFreeTextReply?: boolean;
+  freeTextReplyPlaceholder?: string;
 }
 
 interface LineRecord {
@@ -414,6 +452,31 @@ const manualExtractAction = (raw: string): ParsedActionPayload | null => {
     out.explanation = extractField('explanation');
     out.target_text = extractField('target_text');
     out.title = extractField('title');
+    out.target_path = extractField('target_path');
+    out.source_path = extractField('source_path');
+    out.destination_path = extractField('destination_path');
+    out.new_name = extractField('new_name');
+    out.question = extractField('question');
+    out.question_id = extractField('question_id');
+    out.free_text_placeholder = extractField('free_text_placeholder');
+
+    const booleanMatch = raw.match(/"allow_free_text"\s*:\s*(true|false)/i);
+    if (booleanMatch) {
+      out.allow_free_text = booleanMatch[1].toLowerCase() === 'true';
+    }
+
+    const optionsMatch = raw.match(/"options"\s*:\s*(\[[\s\S]*?\])/i);
+    if (optionsMatch?.[1]) {
+      try {
+        const parsedOptions = JSON.parse(repairJson(optionsMatch[1]));
+        if (Array.isArray(parsedOptions)) {
+          out.options = parsedOptions as Array<string | ParsedQuestionOption>;
+        }
+      } catch {
+        // Ignore malformed options arrays in fallback mode.
+      }
+    }
+
     return out.action ? out : null;
   } catch {
     return null;
@@ -459,7 +522,8 @@ export const parseActionPayload = (aiResponse: string): ParsedActionPayload | nu
 
 const minContentLengthForAction = (action: BrainActionType): number => {
   if (action === 'replace_all') return 40;
-  if (action === 'create_note') return 0;
+  if (action === 'create_note' || action === 'create_folder' || action === 'move_note' || action === 'open_note' || action === 'rename_note' || action === 'delete_item' || action === 'ask_question') return 0;
+  if (action === 'edit_note') return 2;
   return 8;
 };
 
@@ -476,7 +540,7 @@ export const inferActionContentFromResponse = (action: BrainActionType, aiRespon
   const withoutPayload = aiResponse
     .replace(/<nexus_action_json>[\s\S]*?<\/nexus_action_json>/ig, '')
     .replace(/```json[\s\S]*?```/ig, '')
-    .replace(/\{[\s\S]*"action"\s*:\s*"(?:insert_content|create_note|replace_selection|insert_at_cursor|find_and_replace|replace_all)"[\s\S]*\}$/i, '')
+    .replace(/\{[\s\S]*"action"\s*:\s*"(?:insert_content|create_note|edit_note|create_folder|move_note|open_note|rename_note|delete_item|ask_question|replace_selection|insert_at_cursor|find_and_replace|replace_all)"[\s\S]*\}$/i, '')
     .trim();
 
   const cleaned = sanitizeProposedMarkdown(withoutPayload, { aggressive });

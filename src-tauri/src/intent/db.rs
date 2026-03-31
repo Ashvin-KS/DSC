@@ -74,6 +74,19 @@ pub fn init(app: &tauri::AppHandle) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_code_file_events_detected_at ON code_file_events(detected_at);
         CREATE INDEX IF NOT EXISTS idx_code_file_events_project ON code_file_events(project_root);
 
+        CREATE TABLE IF NOT EXISTS activity_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_id INTEGER NOT NULL,
+            evidence_type TEXT NOT NULL,
+            text TEXT NOT NULL,
+            source_ts INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_activity_evidence_activity ON activity_evidence(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_activity_evidence_type ON activity_evidence(evidence_type);
+        CREATE INDEX IF NOT EXISTS idx_activity_evidence_source_ts ON activity_evidence(source_ts);
+
         CREATE TABLE IF NOT EXISTS chat_sessions (
             id         TEXT    PRIMARY KEY,
             title      TEXT    NOT NULL DEFAULT 'New Chat',
@@ -104,6 +117,84 @@ pub fn init(app: &tauri::AppHandle) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_diary_date ON diary_entries(date);
         CREATE INDEX IF NOT EXISTS idx_diary_created ON diary_entries(created_at);
+
+        CREATE TABLE IF NOT EXISTS retrieval_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            chunk_text TEXT NOT NULL,
+            chunk_summary TEXT,
+            project_root TEXT,
+            source_ts INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(entity_type, entity_id, source_type, chunk_text)
+        );
+        CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_entity ON retrieval_chunks(entity_type, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_source_type ON retrieval_chunks(source_type);
+        CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_source_ts ON retrieval_chunks(source_ts);
+        CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_project_root ON retrieval_chunks(project_root);
+
+        CREATE TABLE IF NOT EXISTS retrieval_embeddings (
+            chunk_id INTEGER PRIMARY KEY,
+            model_name TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            vector_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (chunk_id) REFERENCES retrieval_chunks(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS embedding_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_id INTEGER NOT NULL UNIQUE,
+            model_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (chunk_id) REFERENCES retrieval_chunks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs(status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS daily_summaries (
+            date_key TEXT PRIMARY KEY,
+            summary_type TEXT NOT NULL,
+            summary_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_daily_summaries_type ON daily_summaries(summary_type, updated_at);
+
+        CREATE TABLE IF NOT EXISTS weekly_summaries (
+            week_key TEXT NOT NULL,
+            summary_type TEXT NOT NULL,
+            summary_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (week_key, summary_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_weekly_summaries_type ON weekly_summaries(summary_type, updated_at);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS activity_evidence_fts USING fts5(
+            text,
+            evidence_type UNINDEXED,
+            activity_id UNINDEXED,
+            source_ts UNINDEXED,
+            content=''
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_chunks_fts USING fts5(
+            chunk_text,
+            chunk_summary,
+            entity_type UNINDEXED,
+            entity_id UNINDEXED,
+            source_type UNINDEXED,
+            source_ts UNINDEXED,
+            project_root UNINDEXED,
+            content=''
+        );
 
         CREATE TABLE IF NOT EXISTS app_settings (
             key        TEXT PRIMARY KEY,

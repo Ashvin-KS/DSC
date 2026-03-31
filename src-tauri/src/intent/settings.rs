@@ -1,8 +1,11 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
 use tauri_plugin_autostart::ManagerExt;
+
+static BRAIN_STREAM_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Flat settings struct mirroring the frontend's AppSettings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -477,6 +480,8 @@ pub async fn brain_chat_stream(
 ) -> Result<(), String> {
     use tauri::Emitter;
 
+    BRAIN_STREAM_CANCELLED.store(false, Ordering::Relaxed);
+
     let nvidia_key = if !use_local {
         let conn = crate::intent::db::open(&app_handle)?;
         conn.query_row(
@@ -535,6 +540,11 @@ pub async fn brain_chat_stream(
     // Stream SSE lines and emit each token as a Tauri event
     let mut buffer = String::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if BRAIN_STREAM_CANCELLED.load(Ordering::Relaxed) {
+            let _ = app_handle.emit("brain://done", "");
+            return Ok(());
+        }
+
         let chunk_str = String::from_utf8_lossy(&chunk);
         buffer.push_str(&chunk_str);
 
@@ -551,12 +561,13 @@ pub async fn brain_chat_stream(
             let data = &line[6..];
             if data == "[DONE]" { break; }
 
+             if BRAIN_STREAM_CANCELLED.load(Ordering::Relaxed) {
+                let _ = app_handle.emit("brain://done", "");
+                return Ok(());
+            }
+
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                 let delta = &json["choices"][0]["delta"];
-                // reasoning_content (DeepSeek / Qwen models)
-                if let Some(r) = delta["reasoning_content"].as_str().filter(|s| !s.is_empty()) {
-                    let _ = app_handle.emit("brain://token", r);
-                }
                 if let Some(c) = delta["content"].as_str().filter(|s| !s.is_empty()) {
                     let _ = app_handle.emit("brain://token", c);
                 }
@@ -568,5 +579,11 @@ pub async fn brain_chat_stream(
 
     let _ = app_handle.emit("brain://done", "");
     Ok(())
+}
+
+#[tauri::command]
+pub fn brain_cancel_stream() -> Result<bool, String> {
+    BRAIN_STREAM_CANCELLED.store(true, Ordering::Relaxed);
+    Ok(true)
 }
 

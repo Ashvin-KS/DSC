@@ -402,6 +402,45 @@ fn store_activity(app_handle: &AppHandle, activity: &ActivityEvent) -> Result<()
         ],
     ).map_err(|e| e.to_string())?;
 
+    let activity_id = conn.last_insert_rowid();
+    let evidences = crate::intent::retrieval::extract_activity_evidence(&activity.metadata, activity.start_time);
+    crate::intent::retrieval::replace_activity_evidence(&conn, activity_id, &evidences)?;
+
+    let base_summary = format!(
+        "{} | {} | {}s",
+        activity.app_name,
+        activity.window_title,
+        activity.duration_seconds
+    );
+    let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+        &conn,
+        crate::intent::retrieval::ChunkInput {
+            entity_type: "activity",
+            entity_id: &activity_id.to_string(),
+            source_type: "activity_window",
+            chunk_text: &base_summary,
+            chunk_summary: Some(base_summary.clone()),
+            project_root: None,
+            source_ts: Some(activity.start_time),
+        },
+    );
+
+    for evidence in evidences {
+        let summary = format!("{}: {}", evidence.evidence_type, evidence.text);
+        let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+            &conn,
+            crate::intent::retrieval::ChunkInput {
+                entity_type: "activity",
+                entity_id: &activity_id.to_string(),
+                source_type: &evidence.evidence_type,
+                chunk_text: &evidence.text,
+                chunk_summary: Some(summary),
+                project_root: None,
+                source_ts: Some(evidence.source_ts),
+            },
+        );
+    }
+
     Ok(())
 }
 

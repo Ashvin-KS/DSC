@@ -3,6 +3,7 @@ import {
     Folder, File, ChevronRight, ChevronDown, Plus, Trash2,
     FolderOpen, Edit3, Save, X, RefreshCw, FolderPlus, FilePlus
 } from 'lucide-react';
+import { cacheFileContent, cacheFileTree, getCachedFileContent, getCachedFileTree, invalidateFileTreeCache } from '../../lib/notesCache';
 
 interface FileNode {
     name: string;
@@ -235,28 +236,15 @@ export const NotesApp: React.FC = () => {
         }
     }, []);
 
-    // Load file tree when vault changes
-    useEffect(() => {
-        if (vaultPath && window.nexusAPI?.notes) {
-            loadFileTree();
-            if (selectedFile) {
-                openFile(selectedFile);
-            }
-        }
-    }, [vaultPath]);
-
-    // Module-level cache to survive remounts (view switches)
     const loadFileTree = useCallback(async (force = false) => {
         if (!vaultPath || !window.nexusAPI?.notes) return;
-        // Use cached tree if available and recent (< 30s old)
-        const cacheKey = `__notesTreeCache_${vaultPath}`;
-        const cached = (window as any)[cacheKey];
-        if (!force && cached && Date.now() - cached.ts < 30000) {
+        const cached = !force ? getCachedFileTree(vaultPath) : null;
+        if (cached) {
             setFileTree(cached.tree);
             return;
         }
         const tree = await window.nexusAPI.notes.getFileTree(vaultPath);
-        (window as any)[cacheKey] = { tree, ts: Date.now() };
+        cacheFileTree(vaultPath, tree);
         setFileTree(tree);
     }, [vaultPath]);
 
@@ -272,21 +260,35 @@ export const NotesApp: React.FC = () => {
         }
     };
 
-    const openFile = async (filePath: string) => {
+    const openFile = useCallback(async (filePath: string, force = false) => {
         if (!window.nexusAPI?.notes) return;
-        const content = await window.nexusAPI.notes.readFile(filePath);
+        const content = !force
+            ? getCachedFileContent(filePath) ?? await window.nexusAPI.notes.readFile(filePath)
+            : await window.nexusAPI.notes.readFile(filePath);
         if (content !== null) {
+            cacheFileContent(filePath, content);
             setSelectedFile(filePath);
             localStorage.setItem('notes_selectedFile', filePath);
             setFileContent(content);
             setIsEditing(false);
         }
-    };
+    }, []);
+
+    // Load file tree when vault changes
+    useEffect(() => {
+        if (vaultPath && window.nexusAPI?.notes) {
+            loadFileTree();
+            if (selectedFile) {
+                openFile(selectedFile);
+            }
+        }
+    }, [vaultPath, selectedFile, loadFileTree, openFile]);
 
     const saveFile = async () => {
         if (!selectedFile || !window.nexusAPI?.notes) return;
         const success = await window.nexusAPI.notes.writeFile(selectedFile, editContent);
         if (success) {
+            cacheFileContent(selectedFile, editContent);
             setFileContent(editContent);
             setIsEditing(false);
         }
@@ -298,6 +300,7 @@ export const NotesApp: React.FC = () => {
         if (result.success && result.path) {
             setShowNewFileInput(false);
             setNewFileName('');
+            invalidateFileTreeCache(vaultPath);
             await loadFileTree();
             openFile(result.path);
         } else {

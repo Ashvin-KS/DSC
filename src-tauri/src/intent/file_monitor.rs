@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tauri::{AppHandle, Manager};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 
 const SCAN_INTERVAL_SECS: u64 = 2;
@@ -14,6 +15,17 @@ const RECENT_CREATE_WINDOW_MS: i64 = 180_000;
 const MAX_SNAPSHOT_CHARS: usize = 4000;
 const MAX_PREVIEW_CHARS: usize = 500;
 static MONITOR_ENABLED: AtomicBool = AtomicBool::new(true);
+
+#[derive(Debug, Clone, Serialize)]
+struct NotesMutationEvent {
+    vault_path: Option<String>,
+    action: String,
+    path: Option<String>,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    is_directory: bool,
+    source: String,
+}
 
 pub fn start_file_monitor(app_handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -50,6 +62,7 @@ pub fn start_file_monitor(app_handle: AppHandle) {
 
             for root in &roots {
                 scan_root(
+                    &app_handle,
                     &conn,
                     root,
                     &mut known_mtimes,
@@ -107,6 +120,7 @@ fn hash_content(content: &str) -> u64 {
 }
 
 fn scan_root(
+    app_handle: &AppHandle,
     conn: &rusqlite::Connection,
     root: &Path,
     known_mtimes: &mut HashMap<String, i64>,
@@ -132,6 +146,7 @@ fn scan_root(
             seen_dirs_in_scan.insert(dir_str.clone());
             if initialized && !known_dirs.contains(&dir_str) {
                 let _ = insert_event(
+                    app_handle,
                     conn,
                     &dir_str,
                     &root_string,
@@ -161,6 +176,7 @@ fn scan_root(
                     let created_preview = read_file_snapshot(path)
                         .map(|content| format!("Initial content:\n{}", truncate_chars(&content, MAX_PREVIEW_CHARS)));
                     let _ = insert_event(
+                        app_handle,
                         conn,
                         &path_str,
                         &root_string,
@@ -187,6 +203,7 @@ fn scan_root(
                     }
                     let preview = current.as_deref().map(|c| truncate_chars(c, MAX_PREVIEW_CHARS));
                     let _ = insert_event(
+                        app_handle,
                         conn,
                         &path_str,
                         &root_string,
@@ -210,6 +227,7 @@ fn scan_root(
         known_dirs.remove(&path);
         if initialized {
             let _ = insert_event(
+                app_handle,
                 conn,
                 &path,
                 &root_string,
@@ -232,6 +250,7 @@ fn scan_root(
         known_mtimes.remove(&path);
         known_hashes.remove(&path);
         let _ = insert_event(
+            app_handle,
             conn,
             &path,
             &root_string,
@@ -246,6 +265,7 @@ fn scan_root(
 }
 
 fn insert_event(
+    app_handle: &AppHandle,
     conn: &rusqlite::Connection,
     path: &str,
     project_root: &str,
@@ -267,7 +287,63 @@ fn insert_event(
         path,
         content_preview.map(|p| format!(" | {}", p.replace('\n', " "))).unwrap_or_default()
     );
+
+    let event_id = conn.last_insert_rowid();
+    let mut chunk_text = format!("{} {} {}", entity_type, change_type, path);
+    if let Some(preview) = content_preview {
+        chunk_text.push_str("\n");
+        chunk_text.push_str(preview);
+    }
+    let summary = format!("{} {} in {}", entity_type, change_type, project_root);
+    let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+        conn,
+        crate::intent::retrieval::ChunkInput {
+            entity_type: "file_event",
+            entity_id: &event_id.to_string(),
+            source_type: "file_change",
+            chunk_text: &chunk_text,
+            chunk_summary: Some(summary),
+            project_root: Some(project_root),
+            source_ts: Some(detected_at),
+        },
+    );
+
+    emit_external_notes_mutation(app_handle, path, entity_type, change_type);
+
     Ok(())
+}
+
+fn emit_external_notes_mutation(
+    app_handle: &AppHandle,
+    path: &str,
+    entity_type: &str,
+    change_type: &str,
+) {
+    let is_directory = entity_type == "folder";
+    let is_markdown = entity_type == "file" && path.to_ascii_lowercase().ends_with(".md");
+    if !is_directory && !is_markdown {
+        return;
+    }
+
+    let action = match (entity_type, change_type) {
+        ("file", "created") => "create_file",
+        ("file", "modified") => "write_file",
+        ("file", "deleted") => "delete",
+        ("folder", "created") => "create_folder",
+        ("folder", "deleted") => "delete",
+        _ => return,
+    };
+
+    let payload = NotesMutationEvent {
+        vault_path: None,
+        action: action.to_string(),
+        path: Some(path.to_string()),
+        old_path: None,
+        new_path: None,
+        is_directory,
+        source: "external".to_string(),
+    };
+    let _ = app_handle.emit("notes://vault-mutated", payload);
 }
 
 fn is_code_file(path: &Path) -> bool {

@@ -404,11 +404,26 @@ fn db_get_messages(conn: &rusqlite::Connection, session_id: &str) -> Result<Vec<
     Ok(rows.filter_map(|r| r.map_err(|e| eprintln!("[db] chat message row error: {e}")).ok()).collect())
 }
 
-fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &str, now: i64) -> Result<(), String> {
+fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &str, now: i64) -> Result<i64, String> {
     conn.execute(
         "INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![session_id, "user", message, now],
     ).map_err(|e| e.to_string())?;
+    let msg_id = conn.last_insert_rowid();
+
+    let summary = format!("User chat message in session {}", session_id);
+    let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+        conn,
+        crate::intent::retrieval::ChunkInput {
+            entity_type: "chat_message",
+            entity_id: &msg_id.to_string(),
+            source_type: "chat_user",
+            chunk_text: message,
+            chunk_summary: Some(summary),
+            project_root: None,
+            source_ts: Some(now),
+        },
+    );
 
     let msg_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
@@ -430,7 +445,7 @@ fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &st
             rusqlite::params![now, session_id],
         );
     }
-    Ok(())
+    Ok(msg_id)
 }
 
 fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
@@ -476,7 +491,21 @@ fn db_store_assistant_msg(
         "INSERT INTO chat_messages (session_id, role, content, created_at, agent_steps, activities, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![session_id, "assistant", content, now, tool_calls, activities, metadata],
     ).map_err(|e| e.to_string())?;
-    Ok(conn.last_insert_rowid())
+    let msg_id = conn.last_insert_rowid();
+    let summary = format!("Assistant reply in session {}", session_id);
+    let _ = crate::intent::retrieval::upsert_retrieval_chunk(
+        conn,
+        crate::intent::retrieval::ChunkInput {
+            entity_type: "chat_message",
+            entity_id: &msg_id.to_string(),
+            source_type: "chat_assistant",
+            chunk_text: content,
+            chunk_summary: Some(summary),
+            project_root: None,
+            source_ts: Some(now),
+        },
+    );
+    Ok(msg_id)
 }
 
 // ─── Tauri commands ────────────────────────────────────────────────────────────
@@ -496,6 +525,15 @@ pub async fn get_chat_sessions(app_handle: AppHandle) -> Result<Vec<ChatSession>
 #[tauri::command]
 pub async fn delete_chat_session(app_handle: AppHandle, session_id: String) -> Result<bool, String> {
     let conn = crate::intent::db::open(&app_handle)?;
+    let mut stmt = conn.prepare("SELECT id FROM chat_messages WHERE session_id = ?1").map_err(|e| e.to_string())?;
+    let message_ids: Vec<i64> = stmt
+        .query_map([&session_id], |row| row.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    for message_id in message_ids {
+        crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "chat_message", &message_id.to_string())?;
+    }
     conn.execute("DELETE FROM chat_messages WHERE session_id = ?1", [&session_id]).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM chat_sessions WHERE id = ?1", [&session_id]).map_err(|e| e.to_string())?;
     Ok(true)
@@ -519,7 +557,7 @@ pub async fn send_chat_message(
     sources: Option<Vec<String>>,
 ) -> Result<ChatMessageResponse, String> {
     let now = Utc::now().timestamp();
-    let sources = if sources.is_some() { sources } else { selected_sources };
+    let _sources = if sources.is_some() { sources } else { selected_sources };
 
     // Phase 1: sync DB work — collect everything into owned values, then conn is dropped
     let (nvidia_api_key, prior_messages): (Option<String>, Vec<ChatMessageResponse>) = tokio::task::spawn_blocking({

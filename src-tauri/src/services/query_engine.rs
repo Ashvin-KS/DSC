@@ -324,6 +324,56 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         ),
     });
 
+    if let Ok(Ok(hybrid_context)) = tauri::async_runtime::spawn_blocking({
+        let app = app_handle.clone();
+        let query = user_query.to_string();
+        let start_ts = resolved_scope.start_ts;
+        let end_ts = resolved_scope.end_ts;
+        move || crate::intent::retrieval::build_hybrid_context(&app, &query, start_ts, end_ts, 8)
+    }).await {
+        if !hybrid_context.hits.is_empty() {
+            steps.push(AgentStep {
+                turn: 0,
+                tool_name: "hybrid_retrieval".to_string(),
+                tool_args: serde_json::json!({
+                    "route": hybrid_context.route,
+                    "scope": resolved_scope.id,
+                    "start_ts": resolved_scope.start_ts,
+                    "end_ts": resolved_scope.end_ts,
+                    "max_hits": hybrid_context.hits.len(),
+                }),
+                tool_result: truncate_for_token_limit(&hybrid_context.prompt_context, 12000),
+                reasoning: "Prefetched normalized retrieval chunks using lexical, structured, and semantic ranking.".to_string(),
+            });
+
+            all_activities.extend(hybrid_context.hits.iter().map(|hit| {
+                serde_json::json!({
+                    "app": hit.source_type,
+                    "title": hit.summary,
+                    "time": hit.source_ts,
+                    "duration_seconds": 0,
+                    "category": "hybrid_retrieval",
+                    "entity_type": hit.entity_type,
+                    "entity_id": hit.entity_id,
+                    "score": hit.score,
+                })
+            }));
+            dedupe_activities(&mut all_activities);
+
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: format!(
+                    "Grounded retrieval pack for this question (route: {}, lexical_hits: {}, semantic_hits: {}, structured_hits: {}):\n{}\nUse this evidence first, then call more tools only if there are clear gaps or conflicts.",
+                    hybrid_context.route,
+                    hybrid_context.lexical_hits,
+                    hybrid_context.semantic_hits,
+                    hybrid_context.structured_hits,
+                    truncate_for_token_limit(&hybrid_context.prompt_context, 12000)
+                ),
+            });
+        }
+    }
+
     let use_long_range_pipeline = should_use_long_range_pipeline(user_query, &resolved_scope, &intent);
     if use_long_range_pipeline {
         let _ = app_handle.emit("chat://status", "Building long-range evidence (multi-step)...");

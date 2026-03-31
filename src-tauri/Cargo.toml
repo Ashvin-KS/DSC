@@ -39,3 +39,4 @@ walkdir       = "2.5"
 windows       = { version = "0.58", features = ["Media_Ocr", "Media_Control", "Graphics_Imaging", "Storage", "Storage_Streams", "Foundation"] }
 twox-hash     = "1.6"
 regex         = "1"
+fastembed     = "5"
