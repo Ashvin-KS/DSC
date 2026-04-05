@@ -46,12 +46,11 @@ import {
   Minus,
   Plus
 } from 'lucide-react';
-import { BrainActionType, BrainChatMessage, BrainChatOption, buildModelConversation, inferActionContentFromResponse, isUiTranscriptNoise, parseActionPayload, runLocalAgenticTools, sanitizeProposedMarkdown, serializeToolRuns } from '../services/brainAiService';
+import { BrainActionType, BrainChatMessage, BrainChatOption, ParsedActionPayload, buildBrainNoteContext, buildModelConversation, inferActionContentFromResponse, isUiTranscriptNoise, parseActionPayload, sanitizeProposedMarkdown } from '../services/brainAiService';
 import { MermaidBlock } from '../components/MermaidBlock';
 import { buildFileTreeSignature, cacheFileContent, cacheFileTree, getCachedFileContent, getCachedFileTree, invalidateFileTreeCache } from '../lib/notesCache';
 
-// Default vault path - your Notes folder
-const DEFAULT_VAULT = 'c:\\myself\\nonclgstuffs\\webdev\\all-in-one\\Notes';
+const DEFAULT_VAULT = '';
 const BRAIN_LAST_MODEL_STORAGE_KEY = 'brain_last_selected_model';
 const DEFAULT_NIM_MODEL = 'meta/llama-3.3-70b-instruct';
 const DEFAULT_BRAIN_SCOPE: BrainScope = 'note';
@@ -371,6 +370,54 @@ const isAmbiguousOperationRequest = (input: string): boolean => {
 
 const looksLikeClarificationQuestion = (input: string): boolean =>
   /\?|what\s+should|which\s+file|what\s+specific|how\s+should\s+i|what\s+changes|what\s+to\s+add|what\s+to\s+edit/i.test(input);
+
+const isVaultPathActionIntent = (input: string): boolean =>
+  /\b(create|open|move|rename|delete|folder|note|file|path|inside|under|into|destination)\b|\.md\b/i.test(input);
+
+const isBulkVaultOpenIntent = (input: string): boolean =>
+  /\bopen\b.*\b(all|every)\b.*\b(files|notes|docs|documents)\b|\b(all|every)\b.*\b(files|notes|docs|documents)\b.*\bopen\b/i.test(input);
+
+const buildBrainActionPreview = (actionData: ParsedActionPayload): string => {
+  const explanation = actionData.explanation?.trim();
+  if (explanation) return explanation;
+
+  const readableTarget =
+    actionData.target_path?.trim()
+    || actionData.destination_path?.trim()
+    || actionData.source_path?.trim()
+    || actionData.title?.trim()
+    || 'the requested item';
+
+  switch (actionData.action) {
+    case 'create_note':
+      return `Ready to create ${actionData.title?.trim() || 'a new note'}.`;
+    case 'edit_note':
+      return `Ready to edit ${readableTarget}.`;
+    case 'create_folder':
+      return `Ready to create folder ${actionData.title?.trim() || readableTarget}.`;
+    case 'move_note':
+      return `Ready to move ${actionData.source_path?.trim() || 'the selected note'}.`;
+    case 'open_note':
+      return `Ready to open ${readableTarget}.`;
+    case 'rename_note':
+      return `Ready to rename ${readableTarget}.`;
+    case 'delete_item':
+      return `Ready to delete ${readableTarget}.`;
+    case 'replace_selection':
+      return 'Ready to replace the selected text.';
+    case 'insert_at_cursor':
+    case 'insert_content':
+      return 'Ready to insert the generated content.';
+    case 'find_and_replace':
+      return 'Ready to update the matched text in the current note.';
+    case 'replace_all':
+      return 'Ready to rewrite the current note.';
+    case 'ask_question':
+      return actionData.question?.trim() || 'I need one clarification before continuing.';
+    default:
+      return 'Ready to continue with the requested action.';
+  }
+};
 
 // Unified Styles Configuration
 const MARKDOWN_STYLES = {
@@ -1299,6 +1346,25 @@ export const BrainView: React.FC = () => {
   const resolveVaultDestinationDirectory = useCallback((rawDestinationPath?: string | null): string => {
     const raw = stripWindowsExtendedPathPrefix(rawDestinationPath || '').trim();
     if (!raw) {
+      return getDirectoryForNodePath(createTargetPath || selectedTreePath || selectedFile, fileTree, vaultActionRoot);
+    }
+
+    const normalizedRaw = raw
+      .replace(/^[.][\\/]+/, '')
+      .replace(/[\\/]+/g, '/')
+      .replace(/\/+$/, '')
+      .toLowerCase();
+    const rootFolderName = (vaultActionRoot.split(/[\\/]/).pop() || '').toLowerCase();
+    if (
+      !normalizedRaw
+      || normalizedRaw === '.'
+      || normalizedRaw === '/'
+      || normalizedRaw === 'root'
+      || normalizedRaw === 'vault'
+      || normalizedRaw === 'vault root'
+      || normalizedRaw === 'root folder'
+      || normalizedRaw === rootFolderName
+    ) {
       return vaultActionRoot;
     }
 
@@ -1309,7 +1375,7 @@ export const BrainView: React.FC = () => {
       return getParentDirectory(candidate) || vaultActionRoot;
     }
     return candidate;
-  }, [vaultActionRoot]);
+  }, [createTargetPath, fileTree, selectedFile, selectedTreePath, vaultActionRoot]);
 
   const toVaultRelativePath = useCallback((absolutePath: string): string => {
     const cleanedPath = stripWindowsExtendedPathPrefix(absolutePath || '').trim();
@@ -1320,6 +1386,13 @@ export const BrainView: React.FC = () => {
     const relative = cleanedPath.replace(new RegExp(`^${escapeRegExp(cleanedRoot)}[\\\\/]*`, 'i'), '');
     return relative || '.';
   }, [vaultActionRoot]);
+
+  const getVaultDirectoryCandidates = useCallback((max = 500): string[] => {
+    return dedupeEquivalentPaths([
+      ...(vaultActionRoot ? [vaultActionRoot] : []),
+      ...collectDirectoryPaths(fileTree, max),
+    ]).slice(0, Math.max(max, 1));
+  }, [fileTree, vaultActionRoot]);
 
   const resolveVaultTargetPath = useCallback(async (rawTargetPath: string, destinationPath?: string | null): Promise<string | null> => {
     if (!window.nexusAPI?.notes) return null;
@@ -1432,7 +1505,8 @@ export const BrainView: React.FC = () => {
       .toLowerCase();
     if (!targetNormalized) return null;
 
-    const directoryMatch = collectDirectoryPaths(fileTree, 600)
+    const rootFolderName = (vaultActionRoot.split(/[\\/]/).pop() || '').toLowerCase();
+    const directoryMatch = getVaultDirectoryCandidates(600)
       .map(path => {
         const relativePath = toVaultRelativePath(path).replace(/[\\/]+/g, '/').toLowerCase();
         const folderName = (path.split(/[\\/]/).pop() || '').toLowerCase();
@@ -1442,6 +1516,11 @@ export const BrainView: React.FC = () => {
         if (relativePath.endsWith(`/${targetNormalized}`)) score += 8;
         if (folderName.includes(targetNormalized)) score += 5;
         if (relativePath.includes(targetNormalized)) score += 3;
+        if (path === vaultActionRoot) {
+          if (targetNormalized === '.' || targetNormalized === 'root' || targetNormalized === 'vault' || targetNormalized === 'vault root' || targetNormalized === 'root folder') score += 14;
+          if (rootFolderName && targetNormalized === rootFolderName) score += 12;
+          if (rootFolderName && targetNormalized.includes(rootFolderName)) score += 6;
+        }
         return { path, score };
       })
       .filter(item => item.score > 0)
@@ -1466,7 +1545,7 @@ export const BrainView: React.FC = () => {
       .sort((left, right) => right.score - left.score)[0];
 
     return noteMatch?.path || null;
-  }, [fileTree, resolveVaultDestinationDirectory, toVaultRelativePath, vaultActionRoot]);
+  }, [fileTree, getVaultDirectoryCandidates, resolveVaultDestinationDirectory, toVaultRelativePath, vaultActionRoot]);
 
   const suggestVaultNotePaths = useCallback((query: string, max = 4): string[] => {
     const normalizedQuery = stripWindowsExtendedPathPrefix(query || '')
@@ -1503,7 +1582,8 @@ export const BrainView: React.FC = () => {
       .toLowerCase();
     if (!normalizedQuery) return [];
 
-    return collectDirectoryPaths(fileTree, 500)
+    const rootFolderName = (vaultActionRoot.split(/[\\/]/).pop() || '').toLowerCase();
+    return getVaultDirectoryCandidates(500)
       .map(path => {
         const relativePath = toVaultRelativePath(path).replace(/[\\/]+/g, '/').toLowerCase();
         const folderName = (path.split(/[/\\]/).pop() || '').toLowerCase();
@@ -1513,20 +1593,56 @@ export const BrainView: React.FC = () => {
         if (relativePath.endsWith(`/${normalizedQuery}`)) score += 8;
         if (folderName.includes(normalizedQuery)) score += 6;
         if (relativePath.includes(normalizedQuery)) score += 4;
+        if (path === vaultActionRoot) {
+          if (normalizedQuery === '.' || normalizedQuery === 'root' || normalizedQuery === 'vault' || normalizedQuery === 'vault root' || normalizedQuery === 'root folder') score += 14;
+          if (rootFolderName && normalizedQuery === rootFolderName) score += 12;
+          if (rootFolderName && normalizedQuery.includes(rootFolderName)) score += 6;
+        }
         return { path, score };
       })
       .filter(item => item.score > 0)
       .sort((left, right) => right.score - left.score)
       .slice(0, max)
       .map(item => item.path);
-  }, [fileTree, toVaultRelativePath]);
+  }, [getVaultDirectoryCandidates, toVaultRelativePath, vaultActionRoot]);
 
   const collectMarkdownFilesForDirectory = useCallback((directoryPath: string, max = 80): string[] => {
-    const directoryNode = findNodeByPath(fileTree, directoryPath);
-    if (!directoryNode || !directoryNode.isDirectory) return [];
+    const cleanedDirectoryPath = stripWindowsExtendedPathPrefix(directoryPath || '').trim();
+    if (!cleanedDirectoryPath) return [];
+
+    const matchesVaultRoot = areEquivalentPaths(cleanedDirectoryPath, vaultActionRoot);
+    const resolvedNode = matchesVaultRoot ? null : findNodeByPath(fileTree, cleanedDirectoryPath);
+
+    let queue: FileNode[] = [];
+    if (matchesVaultRoot) {
+      queue = [...fileTree];
+    } else if (resolvedNode?.isDirectory) {
+      queue = [...(resolvedNode.children || [])];
+    } else if (resolvedNode) {
+      const parentPath = getParentDirectory(resolvedNode.path) || vaultActionRoot;
+      if (areEquivalentPaths(parentPath, vaultActionRoot)) {
+        queue = [...fileTree];
+      } else {
+        const parentNode = findNodeByPath(fileTree, parentPath);
+        if (parentNode?.isDirectory) {
+          queue = [...(parentNode.children || [])];
+        }
+      }
+    } else {
+      const fallbackParent = getParentDirectory(cleanedDirectoryPath);
+      if (fallbackParent && areEquivalentPaths(fallbackParent, vaultActionRoot)) {
+        queue = [...fileTree];
+      } else if (fallbackParent) {
+        const parentNode = findNodeByPath(fileTree, fallbackParent);
+        if (parentNode?.isDirectory) {
+          queue = [...(parentNode.children || [])];
+        }
+      }
+    }
+
+    if (!queue.length) return [];
 
     const discovered: string[] = [];
-    const queue: FileNode[] = [...(directoryNode.children || [])];
     while (queue.length > 0 && discovered.length < max) {
       const node = queue.shift();
       if (!node) break;
@@ -1542,7 +1658,7 @@ export const BrainView: React.FC = () => {
     }
 
     return discovered;
-  }, [fileTree]);
+  }, [fileTree, vaultActionRoot]);
 
   const buildVaultOpenOptions = useCallback((absolutePaths: string[], maxOptions = 8): BrainChatOption[] => {
     const deduped: string[] = [];
@@ -1820,7 +1936,7 @@ export const BrainView: React.FC = () => {
         resolvedPath: resolvedDestination,
         candidates: [resolvedDestination],
         confidence: 'low',
-        reason: 'No destination path provided; defaulting to index root.',
+        reason: 'No destination path provided; defaulting to the selected folder, current note folder, or vault root.',
       };
     }
 
@@ -1890,6 +2006,7 @@ export const BrainView: React.FC = () => {
     if (!text) return null;
 
     const patterns = [
+      /(?:open|show|list)\s+(?:all\s+)?(?:files|notes)(?:\s+that\s+are|\s+are|\s+present)?\s+(?:in|inside|under)\s+(.+)$/i,
       /(?:what|which|list|show)\s+(?:all\s+)?(?:files|notes)(?:\s+are\s+present|\s+are|\s+that are|\s+present)?\s+(?:in|inside|under)\s+(.+)$/i,
       /(?:files|notes)\s+(?:in|inside|under)\s+(.+)$/i,
       /(?:in|inside|under)\s+(.+)\s+(?:what|which)\s+(?:files|notes)/i,
@@ -1913,16 +2030,27 @@ export const BrainView: React.FC = () => {
   }, []);
 
   const tryHandleVaultFileListIntent = useCallback((messageText: string): boolean => {
+    const wantsBulkOpen = isBulkVaultOpenIntent(messageText);
     const folderQuery = extractVaultFolderListQuery(messageText);
-    if (!folderQuery) {
+    if (!folderQuery && !wantsBulkOpen) {
       return false;
     }
 
-    const directoryCandidates = suggestVaultDirectoryPaths(folderQuery, 6);
+    const fallbackDirectory =
+      selectedDirectoryPath
+      || (selectedFile ? getDirectoryForNodePath(selectedFile, fileTree, vaultPath) : null)
+      || vaultActionRoot;
+
+    const directoryCandidates = folderQuery
+      ? suggestVaultDirectoryPaths(folderQuery, 6)
+      : (fallbackDirectory ? [fallbackDirectory] : []);
+
     if (!directoryCandidates.length) {
       setVaultMessages(prev => [...prev, {
         sender: 'ai',
-        text: `I could not find a folder matching "${folderQuery}" in this vault. Try a more specific folder name.`
+        text: folderQuery
+          ? `I could not find a folder matching "${folderQuery}" in this vault. Try a more specific folder name.`
+          : 'I could not determine which folder to use. Select a folder in the vault tree or mention one explicitly.'
       }]);
       return true;
     }
@@ -1944,28 +2072,31 @@ export const BrainView: React.FC = () => {
 
       setVaultMessages(prev => [...prev, {
         sender: 'ai',
-        text: `I found multiple folders matching "${folderQuery}". Pick one folder below and I will list/open its files.\n\n${lines}`,
+        text: `I found multiple folders matching "${folderQuery}". Pick one folder below and I will list the files so you can choose exactly which note to open.\n\n${lines}`,
         options,
       }]);
       return true;
     }
 
-    const selectedDirectory = directoryCandidates[0];
-    const files = collectMarkdownFilesForDirectory(selectedDirectory, 120);
-    if (!files.length) {
-      setVaultMessages(prev => [...prev, {
-        sender: 'ai',
-        text: `I found ${toVaultRelativePath(selectedDirectory)}, but it has no markdown files in subfolders.`
-      }]);
-      return true;
-    }
+      const selectedDirectory = directoryCandidates[0];
+      const files = collectMarkdownFilesForDirectory(selectedDirectory, 120);
+      if (!files.length) {
+        const locationLabel = toVaultRelativePath(selectedDirectory) || '.';
+        setVaultMessages(prev => [...prev, {
+          sender: 'ai',
+          text: `I found ${locationLabel}, but there are no markdown notes there.`
+        }]);
+        return true;
+      }
 
     pushVaultOpenChoiceMessage(
       files,
-      `I found ${files.length} markdown ${files.length === 1 ? 'file' : 'files'} under ${toVaultRelativePath(selectedDirectory)}.`
+      wantsBulkOpen
+        ? `I can't open every file at once in Note mode. I found ${files.length} markdown ${files.length === 1 ? 'file' : 'files'} under ${toVaultRelativePath(selectedDirectory)}. Choose the exact file you want to open.`
+        : `I found ${files.length} markdown ${files.length === 1 ? 'file' : 'files'} under ${toVaultRelativePath(selectedDirectory)}.`
     );
     return true;
-  }, [collectMarkdownFilesForDirectory, extractVaultFolderListQuery, pushVaultOpenChoiceMessage, suggestVaultDirectoryPaths, toVaultRelativePath]);
+  }, [collectMarkdownFilesForDirectory, extractVaultFolderListQuery, fileTree, pushVaultOpenChoiceMessage, selectedDirectoryPath, selectedFile, suggestVaultDirectoryPaths, toVaultRelativePath, vaultActionRoot, vaultPath]);
 
   const handleVaultMessageOptionSelect = useCallback(async (option: BrainChatOption, messageIndex: number) => {
     setVaultMessages(prev => prev.map((message, index) => (
@@ -2209,6 +2340,32 @@ export const BrainView: React.FC = () => {
     localStorage.removeItem(chatKey);
   };
 
+  const buildBrainVaultContext = useCallback((params: {
+    userMessage: string;
+    vaultSearch?: VaultSearchResult;
+  }) => {
+    const currentOpenNote = selectedFile ? toVaultRelativePath(selectedFile) : '(none)';
+    const currentSelectedPath = selectedTreePath ? toVaultRelativePath(selectedTreePath) : '(none)';
+    const includeCandidates = isVaultPathActionIntent(params.userMessage);
+    const candidateFolders = includeCandidates
+      ? suggestVaultDirectoryPaths(params.userMessage, 4).map(path => toVaultRelativePath(path))
+      : [];
+    const candidateNotes = includeCandidates
+      ? suggestVaultNotePaths(params.userMessage, 4)
+      : [];
+
+    const candidateBlock = includeCandidates
+      ? `\nTop folder candidates:\n${candidateFolders.length ? `- ${candidateFolders.join('\n- ')}` : '- none'}\n\nTop note candidates:\n${candidateNotes.length ? `- ${candidateNotes.join('\n- ')}` : '- none'}\n`
+      : '';
+
+    return `Vault path: ${vaultPath || '(not selected)'}
+Index root: ${vaultActionRoot || '(not selected)'}
+Current open note: ${currentOpenNote}
+Current selected path: ${currentSelectedPath}${candidateBlock}
+
+${params.vaultSearch?.promptContext || 'No vault search context available.'}`;
+  }, [selectedFile, selectedTreePath, suggestVaultDirectoryPaths, suggestVaultNotePaths, toVaultRelativePath, vaultActionRoot, vaultPath]);
+
   const handleAiSend = async (
     messageText: string,
     sendOptions?: {
@@ -2217,6 +2374,14 @@ export const BrainView: React.FC = () => {
     }
   ) => {
     if (!messageText.trim() || isAiLoading) return;
+
+    if (brainScope === 'vault' && !vaultPath) {
+      setCurrentMessages(prev => [...prev, {
+        sender: 'ai',
+        text: 'Select a vault folder first. Vault mode cannot search or mutate notes until a vault is chosen.'
+      }]);
+      return;
+    }
 
     if (aiProvider === 'nvidia' && !nvidiaApiKey) {
       setCurrentMessages(prev => [...prev, {
@@ -2265,19 +2430,6 @@ export const BrainView: React.FC = () => {
       let systemPrompt = '';
       let contextPayload = '';
       if (brainScope === 'vault') {
-        const currentOpenNote = selectedFile ? toVaultRelativePath(selectedFile) : '(none)';
-        const currentSelectedPath = selectedTreePath ? toVaultRelativePath(selectedTreePath) : '(none)';
-        const knownFolders = collectDirectoryPaths(fileTree, 36)
-          .map(path => path.replace(vaultPath, '').replace(/^[/\\]/, '') || '.')
-          .filter((path, index, arr) => arr.indexOf(path) === index)
-          .slice(0, 36);
-        const folderHints = knownFolders.length ? `- ${knownFolders.join('\n- ')}` : '- .';
-        const knownNotes = collectMarkdownPaths(fileTree, 36)
-          .map(path => toVaultRelativePath(path))
-          .filter((path, index, arr) => arr.indexOf(path) === index)
-          .slice(0, 36);
-        const noteHints = knownNotes.length ? `- ${knownNotes.join('\n- ')}` : '- (no markdown notes indexed yet)';
-
         const vaultSearch = await window.nexusAPI?.notes?.searchVault?.(vaultPath, userMessage, 8) as VaultSearchResult | undefined;
         if (vaultSearch) {
           setVaultSearchMeta(vaultSearch);
@@ -2299,6 +2451,8 @@ Scope rules:
 - Use only markdown note evidence from the provided vault context.
 - The index root is fixed. Never use a destination outside that root.
 - Do not invent files, folders, headings, or note contents.
+- Prefer the current selected folder or current open note folder as the default destination when the user does not name one.
+- Ask for destination clarification only when the user explicitly names a path and multiple strong matches exist.
 - Never reveal hidden reasoning, chain-of-thought, or meta commentary.
 - Do not write prefatory analysis like "The user asks", "According to instructions", or "In the vault evidence".
 - If nothing relevant is found, answer briefly and directly in plain language.
@@ -2327,48 +2481,36 @@ Output rules:
 - If clarification is needed, do not ask a plain-text question; emit ask_question JSON.
 - For open_note or edit_note, target_path must be an absolute path or a path relative to the index root.
 - For create_note and edit_note also mirror markdown body in <nexus_content>...</nexus_content>.
-- If destination is ambiguous, emit ask_question instead of emitting a filesystem mutation.
+- If destination is ambiguous after explicit user path input, emit ask_question instead of emitting a filesystem mutation.
 - For open_note, edit_note, move_note, rename_note, and delete_item: if multiple path candidates are possible, emit ask_question with concrete path options.
-- For create_note and create_folder: if destination_path is missing or uncertain, emit ask_question before proposing the mutation.
+- For create_note and create_folder: omit destination_path when the user did not specify one and rely on the current selected folder / open note folder / vault root default.
 - For edit_note, if it is unclear whether user wants rewrite vs append vs section-only edits, emit ask_question first.
-- Use destination_path and source_path values from the Known folders / Known notes context whenever possible.
-- If destination evidence is weak, set destination_path to the index root.`;
-        contextPayload = `Vault path: ${vaultPath}
-Index root: ${vaultActionRoot}
-Current open note: ${currentOpenNote}
-Current selected path: ${currentSelectedPath}
-Known folders (sample):
-${folderHints}
-
-Known notes (sample):
-${noteHints}
-
-${vaultSearch?.promptContext || 'No vault search context available.'}`;
+- Use provided candidate folders/notes when you must disambiguate.
+- If destination evidence is weak, leave destination_path blank instead of inventing a folder.`;
+        contextPayload = buildBrainVaultContext({
+          userMessage,
+          vaultSearch,
+        });
       } else {
         const currentEditorContent = wasEditing ? editContent : fileContent;
         const isSelectionActive = Boolean(usedContext && usedContext.trim());
-        const toolRuns = runLocalAgenticTools({
-          content: currentEditorContent,
-          userMessage,
-          selectedText: usedContext || undefined,
-          selectedRange: usedRange
-        });
-        const toolContext = serializeToolRuns(toolRuns);
-        const MAX_RAW_CONTEXT = 12000;
-        const rawPreview = currentEditorContent.length > MAX_RAW_CONTEXT
-          ? currentEditorContent.slice(0, MAX_RAW_CONTEXT) + '\n...(truncated)...'
-          : currentEditorContent;
         contextPayload = selectedFile
-          ? `Current note: ${selectedFile.split(/[/\\]/).pop()}\nCurrent note path: ${selectedFile}\n\nSelection active: ${isSelectionActive ? 'yes' : 'no'}${usedRange ? ` (lines ${usedRange.startLine}-${usedRange.endLine})` : ''}\n\nTOOL RESULTS:\n${toolContext}\n\nRAW NOTE PREVIEW:\n${rawPreview}`
+          ? buildBrainNoteContext({
+            content: currentEditorContent,
+            userMessage,
+            notePath: selectedFile,
+            selectedText: usedContext || undefined,
+            selectedRange: usedRange || undefined,
+          })
           : 'No note currently open.';
 
         systemPrompt = aiMode === 'edit'
-          ? `You are Nexus AI, an editor assistant with an orchestration layer.\n\nMODE:\nEDIT MODE: return precise edit actions.\n\nYou are given local tool results (line extraction, keyword search, RAG chunks). Use those results first; do not hallucinate unseen content.\n\nOutput rules:\n- Always include ONE JSON object at the end of the response.\n- Wrap the JSON in <nexus_action_json>...</nexus_action_json> tags.\n- JSON action must be one of: insert_content, create_note, replace_selection, insert_at_cursor, find_and_replace, replace_all, ask_question.\n- For find_and_replace, include exact target_text from tool/line context.\n- For any edit action, content must be non-empty and must be the exact insertion text.\n- For replace_all, content must be the complete final note.\n- Never use replace_all unless the user explicitly requested full rewrite/reformat of the whole note.\n- If intent is ambiguous (rewrite vs append vs section edit, or target section unclear), use ask_question first.\n- If clarification is needed, do not ask a plain-text question; emit ask_question JSON.\n- Also include the same insertion body in <nexus_content>...</nexus_content> tags for write actions.\n- Do not duplicate sections or repeat algorithm steps; output one clean final version.\n- Keep explanation short and concrete.\n\nJSON schema:\n<nexus_action_json>\n{\n  "action": "find_and_replace",\n  "target_text": "exact text",\n  "content": "replacement",\n  "explanation": "why"\n}\n</nexus_action_json>\n\nClarification schema (when uncertain):\n<nexus_action_json>\n{\n  "action": "ask_question",\n  "question": "What should I do in this note?",\n  "options": [\n    { "label": "Add a new section", "value": "add_section" },\n    { "label": "Edit existing section only", "value": "edit_section" },\n    { "label": "Rewrite whole note", "value": "rewrite_note" }\n  ],\n  "allow_free_text": true,\n  "free_text_placeholder": "Type custom instructions",\n  "explanation": "Need clarification before editing"\n}\n</nexus_action_json>\n\nOptional content mirror:\n<nexus_content>\nreplacement\n</nexus_content>\n\nSelection constraints:\n${isSelectionActive
+          ? `You are Nexus AI, an editor assistant with an orchestration layer.\n\nMODE:\nEDIT MODE: return precise edit actions.\n\nYou are given cleaned note context built from the current note only. Use the ACTIVE SELECTION first when it exists; it is the highest-priority target and should override older chat context.\n\nOutput rules:\n- Always include ONE JSON object at the end of the response.\n- Wrap the JSON in <nexus_action_json>...</nexus_action_json> tags.\n- JSON action must be one of: insert_content, create_note, replace_selection, insert_at_cursor, find_and_replace, replace_all, ask_question.\n- For find_and_replace, include exact target_text from the provided note context.\n- For any edit action, content must be non-empty and must be the exact insertion text.\n- For replace_all, content must be the complete final note.\n- Never use replace_all unless the user explicitly requested full rewrite or whole-note reformatting.\n- If intent is ambiguous (rewrite vs append vs section edit, or target section unclear), use ask_question first.\n- If clarification is needed, do not ask a plain-text question; emit ask_question JSON.\n- Also include the same insertion body in <nexus_content>...</nexus_content> tags for write actions.\n- Do not duplicate sections or reintroduce older content that is not in the current note context.\n- Keep explanation short and concrete.\n\nJSON schema:\n<nexus_action_json>\n{\n  "action": "find_and_replace",\n  "target_text": "exact text",\n  "content": "replacement",\n  "explanation": "why"\n}\n</nexus_action_json>\n\nClarification schema (when uncertain):\n<nexus_action_json>\n{\n  "action": "ask_question",\n  "question": "What should I do in this note?",\n  "options": [\n    { "label": "Add a new section", "value": "add_section" },\n    { "label": "Edit existing section only", "value": "edit_section" },\n    { "label": "Rewrite whole note", "value": "rewrite_note" }\n  ],\n  "allow_free_text": true,\n  "free_text_placeholder": "Type custom instructions",\n  "explanation": "Need clarification before editing"\n}\n</nexus_action_json>\n\nOptional content mirror:\n<nexus_content>\nreplacement\n</nexus_content>\n\nSelection constraints:\n${isSelectionActive
             ? (wasEditing
               ? 'User selected text in editor. Prefer replace_selection.'
               : 'User selected text in rendered view. Prefer find_and_replace with exact raw markdown target_text.')
             : 'No explicit selection. Use insert_at_cursor for additions; use replace_all only for full rewrites.'}`
-          : `You are Nexus AI, a teaching assistant with an orchestration layer.\n\nMODE:\nLECTURE MODE: teach only.\n\nYou are given local tool results (line extraction, keyword search, RAG chunks). Use those results first; do not hallucinate unseen content.\n\nOutput rules:\n- Explain and teach in plain markdown.\n- Do NOT output any JSON object.\n- Do NOT output <nexus_action_json> or <nexus_content> tags.\n- Do NOT propose file edits, replacements, or apply/discard style actions.\n- Keep the response instructional, concrete, and structured.`;
+          : `You are Nexus AI, a teaching assistant with an orchestration layer.\n\nMODE:\nLECTURE MODE: teach only.\n\nYou are given cleaned note context built from the current note only. Use the ACTIVE SELECTION first when it exists and do not drift to older unrelated chat or note content.\n\nOutput rules:\n- Explain and teach in plain markdown.\n- Do NOT output any JSON object.\n- Do NOT output <nexus_action_json> or <nexus_content> tags.\n- Do NOT propose file edits, replacements, or apply/discard style actions.\n- Keep the response instructional, concrete, and structured.`;
       }
 
       const buildMessages = () => {
@@ -2393,7 +2535,7 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
         msgIdx = next.length - 1;
         return next;
       });
-      setTimeout(() => setStreamingMsgIndex(msgIdx), 0);
+      setStreamingMsgIndex(msgIdx);
 
       const isLocal = aiProvider === 'local' || aiProvider === 'lmstudio';
       const msgs = buildMessages();
@@ -2411,10 +2553,6 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
         });
       });
 
-      const unlistenDone = await listen<string>('brain://done', () => {
-        setStreamingMsgIndex(null);
-      });
-
       try {
         await window.nexusAPI!.settings!.brainChatStream!(
           effectiveModel,
@@ -2426,22 +2564,23 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
       } catch (err: any) {
         // Remove the empty bubble on error
         setCurrentMessages(prev => prev.filter((_, i) => i !== msgIdx));
+        setStreamingMsgIndex(null);
         throw err;
       } finally {
         unlistenToken();
-        unlistenDone();
       }
 
       if (!aiResponse.trim()) {
         aiResponse = 'Sorry, I could not generate a response.';
       }
       const visibleAiResponse = sanitizeVisibleBrainResponse(aiResponse);
+      const finalMessageText = aiResponse.trim() ? aiResponse : visibleAiResponse;
       const fallbackVisibleResponse = brainScope === 'vault'
         ? 'I can help with your vault. What would you like to do?'
         : 'I can help with this note. What would you like to do?';
       setCurrentMessages(prev => {
         const next = [...prev];
-        if (next[msgIdx]) next[msgIdx] = { ...next[msgIdx], text: visibleAiResponse || fallbackVisibleResponse };
+        if (next[msgIdx]) next[msgIdx] = { ...next[msgIdx], text: finalMessageText || fallbackVisibleResponse };
         return next;
       });
       setStreamingMsgIndex(null);
@@ -2482,6 +2621,23 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
               last.questionId = questionId;
               last.allowFreeTextReply = true;
               last.freeTextReplyPlaceholder = placeholder;
+            }
+            return next;
+          });
+        };
+
+        const setLastAiActionMessage = (text: string, options?: BrainChatOption[]) => {
+          setCurrentMessages(prev => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last && last.sender === 'ai') {
+              last.isAction = !options?.length;
+              last.text = text;
+              last.options = options;
+              last.questionPrompt = undefined;
+              last.questionId = undefined;
+              last.allowFreeTextReply = undefined;
+              last.freeTextReplyPlaceholder = undefined;
             }
             return next;
           });
@@ -2554,22 +2710,60 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
           let resolvedTargetPath = actionData.target_path?.trim();
           const destinationResolution = resolveVaultDestinationWithConfidence(actionData.destination_path, 6);
           let resolvedDestinationPath = destinationResolution.resolvedPath || vaultActionRoot;
+          const destinationWasExplicitlyProvided = Boolean(actionData.destination_path?.trim());
+          const usesDefaultDestination = actionData.action === 'create_note' || actionData.action === 'create_folder';
 
-          const shouldClarifyDestination = Boolean(actionData.destination_path?.trim())
+          if (actionData.action === 'open_note' && isBulkVaultOpenIntent(userMessage)) {
+            const preferredDirectory =
+              (resolvedDestinationPath && resolveVaultDestinationDirectory(resolvedDestinationPath))
+              || selectedDirectoryPath
+              || (selectedFile ? getDirectoryForNodePath(selectedFile, fileTree, vaultPath) : null)
+              || vaultActionRoot;
+
+            const files = preferredDirectory ? collectMarkdownFilesForDirectory(preferredDirectory, 120) : [];
+            if (files.length) {
+              const previewLimit = 12;
+              const previewLines = files
+                .slice(0, previewLimit)
+                .map((path, index) => `${index + 1}. ${toVaultRelativePath(path)}`)
+                .join('\n');
+              const moreCount = files.length - previewLimit;
+              setLastAiActionMessage(
+                `I can't open every file at once in Note mode. Choose exactly which file you want from ${toVaultRelativePath(preferredDirectory)}.\n\n${previewLines}${moreCount > 0 ? `\n...and ${moreCount} more.` : ''}`,
+                buildVaultOpenOptions(files, 8)
+              );
+            } else {
+              pushClarificationQuestionOnLastMessage(
+                'I can open one note at a time. Which file do you want me to open?',
+                buildVaultAnswerOptionsFromPaths(collectMarkdownPaths(fileTree, 6), 'Use target_path', 6),
+                'Type the exact note path to open'
+              );
+            }
+            setProposedAction(null);
+            return;
+          }
+
+          const shouldClarifyDestination = destinationWasExplicitlyProvided
             && (
               !destinationResolution.resolvedPath
-              || (destinationResolution.confidence !== 'high' && destinationResolution.candidates.length > 1)
+              || (
+                !usesDefaultDestination
+                && destinationResolution.confidence !== 'high'
+                && destinationResolution.candidates.length > 1
+              )
             );
           if (shouldClarifyDestination) {
             const destinationOptions = buildVaultAnswerOptionsFromPaths(
               destinationResolution.candidates.length
                 ? destinationResolution.candidates
-                : collectDirectoryPaths(fileTree, 8),
+                : getVaultDirectoryCandidates(8),
               'Use destination_path',
               6,
             );
             pushClarificationQuestionOnLastMessage(
-              `I found multiple destination folders for "${actionData.destination_path}". Which folder should I use?`,
+              destinationResolution.candidates.length
+                ? `I found multiple destination folders for "${actionData.destination_path}". Which folder should I use?`
+                : `I could not match "${actionData.destination_path}" to a vault folder. Which folder should I use instead?`,
               destinationOptions,
               'Type the exact destination folder path'
             );
@@ -2646,7 +2840,7 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
                   ? nodeResolution.candidates
                   : [
                     ...collectMarkdownPaths(fileTree, 5),
-                    ...collectDirectoryPaths(fileTree, 5),
+                    ...getVaultDirectoryCandidates(5),
                   ],
                 'Use target_path',
                 6,
@@ -2667,7 +2861,7 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
             pushClarificationQuestionOnLastMessage(
               `I need the exact target path before I can ${actionData.action.replace('_', ' ')}. Which file or folder should I use?`,
               buildVaultAnswerOptionsFromPaths(
-                [...collectMarkdownPaths(fileTree, 6), ...collectDirectoryPaths(fileTree, 4)],
+                [...collectMarkdownPaths(fileTree, 6), ...getVaultDirectoryCandidates(4)],
                 'Use target_path',
                 6,
               ),
@@ -2685,12 +2879,7 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
             return;
           }
 
-          setCurrentMessages(prev => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.sender === 'ai') last.isAction = true;
-            return next;
-          });
+          setLastAiActionMessage(buildBrainActionPreview(actionData));
 
           setProposedAction({
             scope: 'vault',
@@ -2731,12 +2920,7 @@ ${vaultSearch?.promptContext || 'No vault search context available.'}`;
           return;
         }
 
-        setCurrentMessages(prev => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.sender === 'ai') last.isAction = true;
-          return next;
-        });
+        setLastAiActionMessage(buildBrainActionPreview(actionData));
 
         const replaceAllTarget = (actionData.target_text || currentEditorContent || fileContent || editContent || '').toString();
         setProposedAction({
@@ -4594,7 +4778,7 @@ const ChatBubbleImpl: React.FC<{
   // If this message resulted in a successfully parsed action, we completely hide the raw text.
   // We still allow 'thinkContent' if DeepSeek or others generated thoughts before acting.
   if (isAction && sender === 'ai') {
-    text = "Action proposed.";
+    text = text?.trim() || 'Action proposed.';
   }
 
   // Remove <think> tags (both closed and unclosed, with optional attributes) and JSON action blocks
@@ -4602,6 +4786,10 @@ const ChatBubbleImpl: React.FC<{
     .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '')
     .replace(/<think[^>]*>[\s\S]*/gi, '')
     .replace(/<\/think>/gi, '')
+    .replace(/<nexus_action_json[^>]*>[\s\S]*$/ig, '')
+    .replace(/<nexus_content[^>]*>[\s\S]*$/ig, '')
+    .replace(/<\/?nexus_action_json[^>]*>/ig, '')
+    .replace(/<\/?nexus_content[^>]*>/ig, '')
     .trim();
 
   // Hide all JSON blocks, even unclosed ones (common when Kimi runs out of tokens or forgets backticks)
@@ -4652,11 +4840,16 @@ const ChatBubbleImpl: React.FC<{
 
   // Combine tagged and heuristic thinking
   const thinkContent = [taggedThinking, heuristicThinking].filter(Boolean).join('\n\n').trim() || null;
+  const showThinkingOnlyState = sender === 'ai' && isStreaming && !cleanText && !!thinkContent;
+  const containsHiddenActionMarkup = /<nexus_(?:action_json|content)[^>]*>?/i.test(text)
+    || /```json/i.test(text)
+    || /\{\s*"action"/i.test(text);
+  const showActionPreparationState = sender === 'ai' && isStreaming && !cleanText && !thinkContent && containsHiddenActionMarkup;
 
-  // If the message was entirely thinking and/or JSON, show a friendlier message
-  // But not while actively streaming - show nothing (blank) so only the cursor shows
-  if (cleanText === '' && sender === 'ai' && !isStreaming) {
-    cleanText = thinkContent ? 'Thinking complete - expand above to see reasoning.' : 'Done.';
+  // If the model finished with only hidden control markup, keep the fallback specific
+  // to actions instead of flashing a generic "Done." state.
+  if (cleanText === '' && sender === 'ai' && !isStreaming && containsHiddenActionMarkup) {
+    cleanText = 'Preparing action...';
   }
 
   // --- Animation for completed (non-streaming) messages only ---
@@ -4790,12 +4983,18 @@ const ChatBubbleImpl: React.FC<{
               )}
             </>
           ) : (
-            thinkContent ? <span className="italic text-gray-500">Thinking complete.</span> : text
-          )
-        ) : (
-          cleanText || (thinkContent ? <span className="italic text-gray-500">Thinking complete.</span> : text)
-        )}
-      </div>
+            showActionPreparationState
+              ? <span className="italic text-gray-500">Preparing action...</span>
+              : showThinkingOnlyState
+              ? <span className="italic text-gray-500">Thinking...</span>
+                : thinkContent
+                  ? null
+                  : text
+            )
+          ) : (
+            cleanText || (thinkContent ? null : text)
+          )}
+        </div>
 
       {sender === 'ai' && options?.length ? (
         <div className="mt-2 w-full flex flex-wrap gap-2">

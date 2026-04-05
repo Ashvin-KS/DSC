@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ChatSession, ChatMessage as ChatMessageType } from '../../lib/chatTypes';
+import type { ChatSession, ChatMessage as ChatMessageType, ChatSourceId } from '../../lib/chatTypes';
 import {
     createChatSession,
     getChatSessions,
@@ -46,13 +46,18 @@ import { useFavoriteModels } from '../../hooks/useFavoriteModels';
 import { useSettings } from '../../hooks/useSettings';
 
 // Source options
-const SOURCE_OPTIONS = [
+const SOURCE_OPTIONS: Array<{ id: ChatSourceId; label: string; default: boolean }> = [
     { id: 'apps', label: 'Applications', default: true },
     { id: 'screen', label: 'Screen Text (OCR)', default: true },
     { id: 'media', label: 'Media / Music', default: true },
     { id: 'browser', label: 'Browser History', default: false },
     { id: 'files', label: 'Files & Documents', default: false },
 ];
+
+const CHAT_SOURCE_IDS = new Set<ChatSourceId>(SOURCE_OPTIONS.map((source) => source.id));
+
+const normalizeChatSources = (sources?: string[]): ChatSourceId[] =>
+    (sources || []).filter((source): source is ChatSourceId => CHAT_SOURCE_IDS.has(source as ChatSourceId));
 
 // Time range options
 const TIME_RANGE_OPTIONS = [
@@ -121,7 +126,7 @@ interface ConfirmActionPayload {
     kind: string;
     reason: string;
     suggested_time_range?: string;
-    enable_sources?: string[];
+    enable_sources?: ChatSourceId[];
     retry_message: string;
 }
 
@@ -150,6 +155,18 @@ function loadSelectedModelFromStorage(): string {
     } catch {
         return '';
     }
+}
+
+function extractThinkingBlocks(content: string): string {
+    const matches = content.match(/<think[^>]*>[\s\S]*?(?:<\/think>|$)/gi);
+    return matches ? matches.join('\n\n').trim() : '';
+}
+
+function mergeStreamThinkingIntoContent(content: string, streaming: string): string {
+    const thinkingBlocks = extractThinkingBlocks(streaming);
+    if (!thinkingBlocks) return content;
+    if (/<think[^>]*>/i.test(content)) return content;
+    return `${thinkingBlocks}\n\n${content}`.trim();
 }
 
 /** Returns all text that comes after the last complete JSON tool-call block. */
@@ -196,12 +213,13 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const initialPromptHandled = useRef(false);
+    const streamingContentRef = useRef('');
 
     // Dropdown states
     const [showModelDropdown, setShowModelDropdown] = useState(false);
     const [showSourcesDropdown, setShowSourcesDropdown] = useState(false);
     const [showTimeDropdown, setShowTimeDropdown] = useState(false);
-    const [selectedSources, setSelectedSources] = useState<string[]>(
+    const [selectedSources, setSelectedSources] = useState<ChatSourceId[]>(
         SOURCE_OPTIONS.filter((s) => s.default).map((s) => s.id)
     );
     const [selectedTimeRange, setSelectedTimeRange] = useState('today');
@@ -351,6 +369,10 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, streamingContent]);
 
+    useEffect(() => {
+        streamingContentRef.current = streamingContent;
+    }, [streamingContent]);
+
     // Listen for streaming tokens
     useEffect(() => {
         let cancelled = false;
@@ -446,7 +468,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
 
     const handleSendWithMessage = async (
         messageText: string,
-        overrides?: { timeRange?: string; sources?: string[] }
+        overrides?: { timeRange?: string; sources?: ChatSourceId[] }
     ) => {
         if (!messageText.trim() || isSending) return;
 
@@ -491,9 +513,13 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 overrides?.sources || selectedSources
             );
             const { cleanedContent, action } = parseAssistantAction(response.content);
+            const finalContent = mergeStreamThinkingIntoContent(
+                cleanedContent || 'Please confirm the suggested scope/source update to continue.',
+                streamingContentRef.current
+            );
             const normalizedResponse: ChatMessageType = {
                 ...response,
-                content: cleanedContent || 'Please confirm the suggested scope/source update to continue.',
+                content: finalContent,
             };
             if (selectedModel) {
                 const selected = favorites.find((f) => f.id === selectedModel);
@@ -531,7 +557,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         }
     };
 
-    const toggleSource = (sourceId: string) => {
+    const toggleSource = (sourceId: ChatSourceId) => {
         setSelectedSources((prev) =>
             prev.includes(sourceId)
                 ? prev.filter((s) => s !== sourceId)
@@ -662,7 +688,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         return `${selectedSources.length} Sources`;
     };
 
-    const getSourceLabelById = (id: string) =>
+    const getSourceLabelById = (id: ChatSourceId) =>
         SOURCE_OPTIONS.find((s) => s.id === id)?.label || id;
 
     const getTimeRangeLabelById = (id?: string) =>
@@ -671,11 +697,12 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     const handleConfirmAction = async () => {
         if (!pendingAction) return;
         const nextTimeRange = pendingAction.suggested_time_range || selectedTimeRange;
+        const enabledSources = normalizeChatSources(pendingAction.enable_sources);
         const nextSources = Array.from(
-            new Set([...(selectedSources || []), ...(pendingAction.enable_sources || [])])
+            new Set<ChatSourceId>([...(selectedSources || []), ...enabledSources])
         );
         if (pendingAction.suggested_time_range) setSelectedTimeRange(nextTimeRange);
-        if ((pendingAction.enable_sources || []).length > 0) setSelectedSources(nextSources);
+        if (enabledSources.length > 0) setSelectedSources(nextSources);
         const retryMessage = pendingAction.retry_message || input.trim();
         setPendingAction(null);
         await handleSendWithMessage(retryMessage, { timeRange: nextTimeRange, sources: nextSources });

@@ -28,6 +28,7 @@ interface ChatMessageProps {
 export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) {
     const [showSteps, setShowSteps] = useState(false);
     const [showAllActivities, setShowAllActivities] = useState(false);
+    const [showThinking, setShowThinking] = useState(false);
     const [displayedText, setDisplayedText] = useState('');
     const isUser = message.role === 'user';
     const hasSteps = message.tool_calls && message.tool_calls.length > 0;
@@ -42,6 +43,12 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
     useEffect(() => {
         if (autoExpand) setShowSteps(true);
     }, [autoExpand]);
+
+    useEffect(() => {
+        if (hasThinking && isStreaming) {
+            setShowThinking(true);
+        }
+    }, [hasThinking, isStreaming]);
 
     useEffect(() => {
         if (!isStreaming || isUser) {
@@ -63,6 +70,8 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
     const visibleActivities = showAllActivities
         ? message.activities!
         : message.activities?.slice(0, 10);
+    const streamingPlaceholder = !isUser && isStreaming && !bubbleText && hasThinking ? 'Thinking...' : '';
+    const messageText = isStreaming && !isUser ? (displayedText || streamingPlaceholder) : bubbleText;
 
     return (
         <div
@@ -82,9 +91,20 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
 
                 {/* Thinking badge */}
                 {hasThinking && (
-                    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-gray-500 px-1">
-                        <Brain className="w-3 h-3 text-purple-400/70" />
-                        <span className="italic">Reasoned through the answer</span>
+                    <div className="mb-1.5 w-full">
+                        <button
+                            onClick={() => setShowThinking((prev) => !prev)}
+                            className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-gray-300 transition-colors px-1"
+                        >
+                            {showThinking ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                            <Brain className="w-3 h-3 text-purple-400/70" />
+                            <span className="italic">Reasoned through the answer</span>
+                        </button>
+                        {showThinking && (
+                            <div className="mt-1 ml-1 max-w-[520px] rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-xs italic leading-relaxed text-gray-400 whitespace-pre-wrap">
+                                {thinkingText}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -108,7 +128,7 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
                             backdropFilter: 'blur(8px)',
                         }}
                     >
-                        <MarkdownMessage text={isStreaming && !isUser ? displayedText : bubbleText} />
+                        <MarkdownMessage text={messageText} />
                         {isStreaming && !isUser && (
                             <span className="inline-block w-[5px] h-[14px] ml-0.5 align-[-2px] rounded-sm bg-cyan-400/80 animate-pulse" />
                         )}

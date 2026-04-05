@@ -137,6 +137,8 @@ You have access to the user's activity history (apps, windows, duration, time) a
 21. For complex queries, especially those about people, relationships, or identifying someone (e.g., "who is my crush"), you MUST make a minimum of 5 distinct tool calls to gather comprehensive evidence across different apps, timeframes, and contexts before providing a final answer. Do not jump to conclusions based on limited recent data.
 22. If the user asks a general question about habits, preferences, relationships, history, or asks "when", "how often", "first time", "ever" AND the current scope is narrow (like "Today" or "Last 7 Days"), you MUST call `resolve_query_scope` IMMEDIATELY as your first tool call to widen the scope to "last_30_days" or "all_time". Do NOT attempt to answer general or historical questions with just a few days of data. Also use this tool if the user's query implies a time range broader than the current scope (e.g., "few days back", "not just today", "earlier", "from the start", "before", "overall", "from the beginning", "across days", "the other day", "days ago", "recently" when scope is Today).
 23. If you detect the user needs data from sources that are not currently enabled (e.g., asking about files but Files source is disabled, or asking about browser history but Browser source is disabled), call `resolve_query_scope` with the required enable_sources array so the user can enable them.
+24. Treat recent chat history only as follow-up context, never as factual evidence. Do not re-import stale older claims unless they are supported by current evidence.
+25. If the grounded retrieval pack already answers the question, synthesize from it instead of making redundant tool calls.
 
 ## Response Format
 Output JSON for tool calls: { "tool": "tool_name", "args": { ... }, "reasoning": "..." }
@@ -186,6 +188,145 @@ struct QueryIntent {
     wants_files: bool,
     wants_timeline: bool,
     broad_summary: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ChatSourceScope {
+    apps: bool,
+    screen: bool,
+    media: bool,
+    browser: bool,
+    files: bool,
+}
+
+impl Default for ChatSourceScope {
+    fn default() -> Self {
+        Self {
+            apps: true,
+            screen: true,
+            media: true,
+            browser: false,
+            files: false,
+        }
+    }
+}
+
+impl ChatSourceScope {
+    // Retrieval boundary policy: Chat stays activity-first. File and vault-note evidence
+    // is only allowed when the Files source is explicitly enabled.
+    fn from_selection(selected_sources: Option<&[String]>) -> Self {
+        let Some(selected_sources) = selected_sources else {
+            return Self::default();
+        };
+        if selected_sources.is_empty() {
+            return Self::default();
+        }
+
+        let mut scope = Self {
+            apps: false,
+            screen: false,
+            media: false,
+            browser: false,
+            files: false,
+        };
+
+        for source in selected_sources {
+            match source.trim().to_lowercase().as_str() {
+                "apps" => scope.apps = true,
+                "screen" => scope.screen = true,
+                "media" => scope.media = true,
+                "browser" => scope.browser = true,
+                "files" => scope.files = true,
+                _ => {}
+            }
+        }
+
+        scope
+    }
+
+    fn is_enabled_source_id(&self, source_id: &str) -> bool {
+        match source_id {
+            "apps" => self.apps,
+            "screen" => self.screen,
+            "media" => self.media,
+            "browser" => self.browser,
+            "files" => self.files,
+            _ => false,
+        }
+    }
+
+    fn enabled_ids(&self) -> Vec<String> {
+        crate::intent::retrieval::CHAT_SOURCE_IDS
+            .iter()
+            .copied()
+            .filter(|source_id| self.is_enabled_source_id(source_id))
+            .map(|source_id| source_id.to_string())
+            .collect()
+    }
+
+    fn disabled_ids(&self) -> Vec<&'static str> {
+        crate::intent::retrieval::CHAT_SOURCE_IDS
+            .iter()
+            .copied()
+            .filter(|source_id| !self.is_enabled_source_id(source_id))
+            .collect()
+    }
+
+    fn missing_sources_for_tool(&self, tool: &str) -> Vec<String> {
+        match tool {
+            "get_recent_activities" | "get_usage_stats" | "query_activities" if !self.apps => vec!["apps".to_string()],
+            "search_ocr" | "get_recent_ocr" if !self.screen => vec!["screen".to_string()],
+            "get_music_history" if !self.media => vec!["media".to_string()],
+            "get_recent_file_changes" if !self.files => vec!["files".to_string()],
+            _ => Vec::new(),
+        }
+    }
+}
+
+fn missing_sources_for_query(source_scope: &ChatSourceScope, query: &str, intent: &QueryIntent) -> Vec<String> {
+    let q = query.to_lowercase();
+    let mut required_sources: Vec<&str> = Vec::new();
+    let mut push_required = |source_id: &'static str| {
+        if !required_sources.iter().any(|existing| existing == &source_id) {
+            required_sources.push(source_id);
+        }
+    };
+
+    if intent.wants_timeline
+        || q.contains("app ")
+        || q.contains("application")
+        || q.contains("window")
+    {
+        push_required("apps");
+    }
+    if intent.wants_ocr {
+        push_required("screen");
+    }
+    if intent.wants_music {
+        push_required("media");
+    }
+    if intent.wants_files {
+        push_required("files");
+    }
+    if q.contains("browser history")
+        || q.contains("website")
+        || q.contains("websites")
+        || q.contains("url")
+        || q.contains("tab")
+        || q.contains("tabs")
+        || q.contains("visited")
+        || q.contains("search history")
+        || q.contains("google")
+        || q.contains("youtube")
+    {
+        push_required("browser");
+    }
+
+    required_sources
+        .into_iter()
+        .filter(|source_id| !source_scope.is_enabled_source_id(source_id))
+        .map(|source_id| source_id.to_string())
+        .collect()
 }
 
 // ─── Public API ───
@@ -238,6 +379,7 @@ pub async fn run_agentic_search_with_steps_and_scope(
         settings,
         &[],
         time_scope,
+        None,
     ).await
 }
 
@@ -253,6 +395,7 @@ pub async fn run_agentic_search_with_steps_and_history(
         settings,
         prior_messages,
         None,
+        None,
     ).await
 }
 
@@ -262,6 +405,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     settings: &Settings,
     prior_messages: &[ChatMessage],
     time_scope: Option<&str>,
+    selected_sources: Option<&[String]>,
 ) -> Result<AgentResult, String> {
     let api_key = crate::utils::config::resolve_api_key(&settings.ai.api_key);
     let model = &settings.ai.model;
@@ -281,6 +425,46 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     let mut all_activities: Vec<Value> = Vec::new();
     let resolved_scope = resolve_time_scope(time_scope);
     let intent = detect_query_intent(user_query);
+    let active_sources = ChatSourceScope::from_selection(selected_sources);
+    let enabled_source_ids = active_sources.enabled_ids();
+    let disabled_source_ids = active_sources.disabled_ids();
+    let missing_query_sources = missing_sources_for_query(&active_sources, user_query, &intent);
+
+    if !missing_query_sources.is_empty() {
+        let reason = format!(
+            "This request needs additional sources before Chat can answer reliably: {}.",
+            missing_query_sources.join(", ")
+        );
+        let tool_args = serde_json::json!({
+            "suggested_scope": resolved_scope.id,
+            "enable_sources": missing_query_sources,
+            "reason": reason,
+        });
+        let payload = serde_json::json!({
+            "kind": "confirm_scope_or_sources",
+            "reason": reason,
+            "suggested_time_range": resolved_scope.id,
+            "enable_sources": tool_args["enable_sources"].clone(),
+            "retry_message": user_query,
+        });
+
+        steps.push(AgentStep {
+            turn: 1,
+            tool_name: "resolve_query_scope".to_string(),
+            tool_args,
+            tool_result: "Blocked before retrieval because the required Chat sources are disabled.".to_string(),
+            reasoning: "Requesting source confirmation before searching.".to_string(),
+        });
+
+        return Ok(AgentResult {
+            answer: format!(
+                "I need additional sources enabled before I can answer that.\n\n[[IF_ACTION:{}]]",
+                payload
+            ),
+            steps,
+            activities_referenced: Vec::new(),
+        });
+    }
     
     // Initial messages
     let mut messages = vec![ChatMessage {
@@ -289,7 +473,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     }];
 
     // Include recent chat history so follow-up questions keep context.
-    for msg in prior_messages.iter().rev().take(12).rev() {
+    for msg in prior_messages.iter().rev().take(6).rev() {
         if msg.content.trim().is_empty() {
             continue;
         }
@@ -324,12 +508,25 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         ),
     });
 
+    messages.push(ChatMessage {
+        role: "user".to_string(),
+        content: format!(
+            "Enabled data sources: {}.\nDisabled data sources: {}.\nDo not call tools that require disabled sources. Files is the only bridge that allows note/file evidence into Chat. Recent chat turns are follow-up context only, not evidence.",
+            if enabled_source_ids.is_empty() { "none".to_string() } else { enabled_source_ids.join(", ") },
+            if disabled_source_ids.is_empty() { "none".to_string() } else { disabled_source_ids.join(", ") }
+        ),
+    });
+
     if let Ok(Ok(hybrid_context)) = tauri::async_runtime::spawn_blocking({
         let app = app_handle.clone();
         let query = user_query.to_string();
         let start_ts = resolved_scope.start_ts;
         let end_ts = resolved_scope.end_ts;
-        move || crate::intent::retrieval::build_hybrid_context(&app, &query, start_ts, end_ts, 8)
+        let selected_sources = enabled_source_ids.clone();
+        move || {
+            let filter = crate::intent::retrieval::build_chat_retrieval_filter(Some(selected_sources.as_slice()));
+            crate::intent::retrieval::build_hybrid_context(&app, &query, start_ts, end_ts, 8, Some(&filter))
+        }
     }).await {
         if !hybrid_context.hits.is_empty() {
             steps.push(AgentStep {
@@ -378,7 +575,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     if use_long_range_pipeline {
         let _ = app_handle.emit("chat://status", "Building long-range evidence (multi-step)...");
         if let Ok((pipeline_steps, pipeline_activities, digest)) =
-            run_long_range_summary_pipeline(&db_path, &resolved_scope, &intent, user_query)
+            run_long_range_summary_pipeline(&db_path, &resolved_scope, &intent, &active_sources, user_query)
         {
             let start_turn = steps.len();
             for (idx, mut step) in pipeline_steps.into_iter().enumerate() {
@@ -401,9 +598,9 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
             });
         }
     } else if intent.broad_summary {
-        let prefetch_args = build_prefetch_parallel_args(&resolved_scope, &intent);
+        let prefetch_args = build_prefetch_parallel_args(&resolved_scope, &intent, &active_sources);
         if let Ok((prefetch_output, prefetch_activities)) =
-            execute_parallel_search(&db_path, &prefetch_args, Some(&resolved_scope), user_query)
+            execute_parallel_search(&db_path, &prefetch_args, Some(&resolved_scope), Some(&active_sources), user_query)
         {
             if !prefetch_activities.is_empty() {
                 all_activities.extend(prefetch_activities);
@@ -477,11 +674,12 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                 let normalized = normalize_final_answer_hardened(&cleaned_answer);
                 let normalized = scrub_unsupported_communication_claims(&normalized, user_query, &steps);
                 if must_validate_with_tools && steps.is_empty() && forced_parallel_runs < 2 {
-                    let forced_args = build_forced_validation_parallel_args(&resolved_scope, &intent, user_query);
+                    let forced_args = build_forced_validation_parallel_args(&resolved_scope, &intent, &active_sources, user_query);
                     let (out, activities) = execute_parallel_search(
                         &db_path,
                         &forced_args,
                         Some(&resolved_scope),
+                        Some(&active_sources),
                         user_query,
                     )?;
                     forced_parallel_runs += 1;
@@ -538,11 +736,12 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                 if !has_minimum_evidence_for_query(user_query, &steps) {
                     final_without_evidence_attempts += 1;
                     if must_validate_with_tools && final_without_evidence_attempts >= 2 && forced_parallel_runs < 2 {
-                        let forced_args = build_forced_validation_parallel_args(&resolved_scope, &intent, user_query);
+                        let forced_args = build_forced_validation_parallel_args(&resolved_scope, &intent, &active_sources, user_query);
                         let (out, activities) = execute_parallel_search(
                             &db_path,
                             &forced_args,
                             Some(&resolved_scope),
+                            Some(&active_sources),
                             user_query,
                         )?;
                         forced_parallel_runs += 1;
@@ -638,6 +837,39 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     });
                 }
 
+                let missing_sources = active_sources.missing_sources_for_tool(&tool);
+                if !missing_sources.is_empty() {
+                    steps.push(AgentStep {
+                        turn: turn + 1,
+                        tool_name: "resolve_query_scope".to_string(),
+                        tool_args: serde_json::json!({
+                            "suggested_scope": resolved_scope.id,
+                            "enable_sources": missing_sources,
+                            "reason": format!("{} needs a disabled source in the current Chat filter.", tool),
+                        }),
+                        tool_result: format!("Blocked {} because it needs disabled sources.", tool),
+                        reasoning: reasoning.as_deref().unwrap_or("").to_string(),
+                    });
+
+                    let payload = serde_json::json!({
+                        "kind": "confirm_scope_or_sources",
+                        "reason": format!("This request needs additional sources before {} can run.", tool),
+                        "suggested_time_range": resolved_scope.id,
+                        "enable_sources": active_sources.missing_sources_for_tool(&tool),
+                        "retry_message": user_query
+                    });
+
+                    let _ = app_handle.emit("chat://done", "final_answer");
+                    return Ok(AgentResult {
+                        answer: format!(
+                            "I need one more data source before I can continue.\n\n[[IF_ACTION:{}]]",
+                            payload
+                        ),
+                        steps,
+                        activities_referenced: all_activities,
+                    });
+                }
+
                 let enforced_args = enforce_tool_args_with_scope(&tool, &args, &resolved_scope, user_query);
                 println!("[Agent] Turn {}: Calling {} ({:?})", turn + 1, tool, enforced_args);
                 let _ = app_handle.emit("chat://status", format!("Running {}", tool));
@@ -658,13 +890,14 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                         .map(|v| v.len())
                         .unwrap_or(0);
                     let _ = app_handle.emit(
-                        "chat://token",
-                        format!("\n[Agent] Running {} searches in parallel...\n", parallel_count),
+                        "chat://status",
+                        format!("Running {} searches in parallel", parallel_count),
                     );
                     let (out, activities) = execute_parallel_search(
                         &db_path,
                         &enforced_args,
                         Some(&resolved_scope),
+                        Some(&active_sources),
                         user_query,
                     )?;
                     (out, activities, 1usize)
@@ -971,7 +1204,7 @@ fn resolve_window_from_args(args: &Value, default_hours: i64) -> (i64, i64) {
     (start_ts, end_ts)
 }
 
-fn build_prefetch_parallel_args(scope: &TimeScope, intent: &QueryIntent) -> Value {
+fn build_prefetch_parallel_args(scope: &TimeScope, intent: &QueryIntent, source_scope: &ChatSourceScope) -> Value {
     let mut calls = vec![serde_json::json!({
         "tool": "get_recent_activities",
         "args": {
@@ -980,21 +1213,25 @@ fn build_prefetch_parallel_args(scope: &TimeScope, intent: &QueryIntent) -> Valu
         }
     })];
 
-    if intent.wants_ocr || intent.broad_summary {
+    if !source_scope.apps {
+        calls.clear();
+    }
+
+    if source_scope.screen && (intent.wants_ocr || intent.broad_summary) {
         calls.push(serde_json::json!({
             "tool": "get_recent_ocr",
             "args": { "limit": if scope.id == "all_time" { 80 } else { 50 } }
         }));
     }
 
-    if intent.wants_files || intent.wants_timeline || intent.broad_summary {
+    if source_scope.files && (intent.wants_files || intent.wants_timeline || intent.broad_summary) {
         calls.push(serde_json::json!({
             "tool": "get_recent_file_changes",
             "args": { "limit": if scope.id == "all_time" { 80 } else { 40 } }
         }));
     }
 
-    if intent.wants_music {
+    if source_scope.media && intent.wants_music {
         calls.push(serde_json::json!({
             "tool": "get_music_history",
             "args": { "limit": if scope.id == "all_time" { 80 } else { 40 } }
@@ -1004,26 +1241,34 @@ fn build_prefetch_parallel_args(scope: &TimeScope, intent: &QueryIntent) -> Valu
     serde_json::json!({ "calls": calls })
 }
 
-fn build_forced_validation_parallel_args(scope: &TimeScope, intent: &QueryIntent, query: &str) -> Value {
-    let mut calls = vec![
-        serde_json::json!({
+fn build_forced_validation_parallel_args(
+    scope: &TimeScope,
+    intent: &QueryIntent,
+    source_scope: &ChatSourceScope,
+    query: &str,
+) -> Value {
+    let mut calls = Vec::new();
+    if source_scope.apps {
+        calls.push(serde_json::json!({
             "tool": "get_recent_activities",
             "args": { "limit": if scope.id == "all_time" { 120 } else { 80 }, "exclude_media_noise": !intent.wants_music }
-        }),
-        serde_json::json!({
+        }));
+    }
+    if source_scope.screen {
+        calls.push(serde_json::json!({
             "tool": "get_recent_ocr",
             "args": { "limit": if scope.id == "all_time" { 120 } else { 80 } }
-        }),
-    ];
+        }));
+    }
 
-    if intent.wants_files || query.to_lowercase().contains("project") || query.to_lowercase().contains("file") || query.to_lowercase().contains("code") {
+    if source_scope.files && (intent.wants_files || query.to_lowercase().contains("project") || query.to_lowercase().contains("file") || query.to_lowercase().contains("code")) {
         calls.push(serde_json::json!({
             "tool": "get_recent_file_changes",
             "args": { "limit": if scope.id == "all_time" { 100 } else { 60 } }
         }));
     }
 
-    if intent.wants_music || query.to_lowercase().contains("song") || query.to_lowercase().contains("music") {
+    if source_scope.media && (intent.wants_music || query.to_lowercase().contains("song") || query.to_lowercase().contains("music")) {
         calls.push(serde_json::json!({
             "tool": "get_music_history",
             "args": { "limit": if scope.id == "all_time" { 80 } else { 50 } }
@@ -1053,6 +1298,7 @@ fn run_long_range_summary_pipeline(
     db_path: &std::path::Path,
     scope: &TimeScope,
     intent: &QueryIntent,
+    source_scope: &ChatSourceScope,
     user_query: &str,
 ) -> Result<(Vec<AgentStep>, Vec<Value>, String), String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -1061,17 +1307,19 @@ fn run_long_range_summary_pipeline(
     let mut digest_parts: Vec<String> = Vec::new();
 
     // Step 1: Aggregate app usage for the whole range.
-    execute_and_record_long_range_step(
-        &conn,
-        scope,
-        user_query,
-        "get_usage_stats",
-        serde_json::json!({}),
-        "Aggregate usage baseline for long-range summary",
-        &mut steps,
-        &mut all_refs,
-        &mut digest_parts,
-    )?;
+    if source_scope.apps {
+        execute_and_record_long_range_step(
+            &conn,
+            scope,
+            user_query,
+            "get_usage_stats",
+            serde_json::json!({}),
+            "Aggregate usage baseline for long-range summary",
+            &mut steps,
+            &mut all_refs,
+            &mut digest_parts,
+        )?;
+    }
 
     // Step 2: Monthly category rollup to avoid feeding raw per-event data.
     let monthly_category_sql = format!(
@@ -1082,17 +1330,19 @@ fn run_long_range_summary_pipeline(
         scope.start_ts,
         scope.end_ts
     );
-    execute_and_record_long_range_step(
-        &conn,
-        scope,
-        user_query,
-        "query_activities",
-        serde_json::json!({ "query": monthly_category_sql }),
-        "Monthly category aggregation for long-range compression",
-        &mut steps,
-        &mut all_refs,
-        &mut digest_parts,
-    )?;
+    if source_scope.apps {
+        execute_and_record_long_range_step(
+            &conn,
+            scope,
+            user_query,
+            "query_activities",
+            serde_json::json!({ "query": monthly_category_sql }),
+            "Monthly category aggregation for long-range compression",
+            &mut steps,
+            &mut all_refs,
+            &mut digest_parts,
+        )?;
+    }
 
     // Step 3: Top apps over the full range.
     let top_apps_sql = format!(
@@ -1103,37 +1353,41 @@ fn run_long_range_summary_pipeline(
         scope.start_ts,
         scope.end_ts
     );
-    execute_and_record_long_range_step(
-        &conn,
-        scope,
-        user_query,
-        "query_activities",
-        serde_json::json!({ "query": top_apps_sql }),
-        "Top apps aggregation for the selected long-range window",
-        &mut steps,
-        &mut all_refs,
-        &mut digest_parts,
-    )?;
+    if source_scope.apps {
+        execute_and_record_long_range_step(
+            &conn,
+            scope,
+            user_query,
+            "query_activities",
+            serde_json::json!({ "query": top_apps_sql }),
+            "Top apps aggregation for the selected long-range window",
+            &mut steps,
+            &mut all_refs,
+            &mut digest_parts,
+        )?;
+    }
 
     // Step 4: Recent high-signal activity slice for concrete examples.
-    execute_and_record_long_range_step(
-        &conn,
-        scope,
-        user_query,
-        "get_recent_activities",
-        serde_json::json!({
-            "limit": if scope.id == "all_time" { 300 } else { 220 },
-            "exclude_media_noise": !intent.wants_music
-        }),
-        "Concrete activity slice for examples and chronology",
-        &mut steps,
-        &mut all_refs,
-        &mut digest_parts,
-    )?;
+    if source_scope.apps {
+        execute_and_record_long_range_step(
+            &conn,
+            scope,
+            user_query,
+            "get_recent_activities",
+            serde_json::json!({
+                "limit": if scope.id == "all_time" { 300 } else { 220 },
+                "exclude_media_noise": !intent.wants_music
+            }),
+            "Concrete activity slice for examples and chronology",
+            &mut steps,
+            &mut all_refs,
+            &mut digest_parts,
+        )?;
+    }
 
     let q = user_query.to_lowercase();
     let needs_files = intent.wants_files || q.contains("project") || q.contains("repo") || q.contains("code");
-    if needs_files {
+    if source_scope.files && needs_files {
         execute_and_record_long_range_step(
             &conn,
             scope,
@@ -1148,7 +1402,7 @@ fn run_long_range_summary_pipeline(
     }
 
     let needs_chat = intent.wants_ocr || q.contains("chat") || q.contains("text") || q.contains("message");
-    if needs_chat {
+    if source_scope.screen && needs_chat {
         execute_and_record_long_range_step(
             &conn,
             scope,
@@ -1162,7 +1416,7 @@ fn run_long_range_summary_pipeline(
         )?;
     }
 
-    if intent.wants_music || q.contains("music") || q.contains("song") {
+    if source_scope.media && (intent.wants_music || q.contains("music") || q.contains("song")) {
         execute_and_record_long_range_step(
             &conn,
             scope,
@@ -1334,6 +1588,7 @@ fn execute_parallel_search(
     db_path: &std::path::Path,
     args: &Value,
     scope: Option<&TimeScope>,
+    source_scope: Option<&ChatSourceScope>,
     user_query: &str,
 ) -> Result<(String, Vec<Value>), String> {
     let calls = args
@@ -1353,6 +1608,20 @@ fn execute_parallel_search(
             .to_string();
         if tool == "parallel_search" {
             return Err("Nested parallel_search is not allowed".to_string());
+        }
+        if let Some(active_sources) = source_scope {
+            let missing_sources = active_sources.missing_sources_for_tool(&tool);
+            if !missing_sources.is_empty() {
+                handles.push(std::thread::spawn(move || -> Result<(String, String, Vec<Value>, usize), String> {
+                    Ok((
+                        tool,
+                        format!("Skipped because the following sources are disabled: {}", missing_sources.join(", ")),
+                        Vec::new(),
+                        1usize,
+                    ))
+                }));
+                continue;
+            }
         }
         let raw_tool_args = call.get("args").cloned().unwrap_or_else(|| serde_json::json!({}));
         let tool_args = if let Some(active_scope) = scope {

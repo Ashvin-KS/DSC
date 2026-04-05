@@ -71,10 +71,16 @@ interface RagChunk {
   text: string;
 }
 
-interface LocalToolExecution {
-  tool: string;
-  reason: string;
-  output: string;
+interface LineRange {
+  startLine: number;
+  endLine: number;
+}
+
+interface NoteSection {
+  title: string;
+  startLine: number;
+  endLine: number;
+  text: string;
 }
 
 interface SanitizeOptions {
@@ -89,16 +95,6 @@ const STOP_WORDS = new Set([
 
 const toLineRecords = (content: string): LineRecord[] =>
   content.split(/\r?\n/).map((text, idx) => ({ line: idx + 1, text }));
-
-const extractLineWindow = (content: string, startLine: number, endLine: number, pad = 3): string => {
-  const lines = content.split(/\r?\n/);
-  const s = Math.max(1, startLine - pad);
-  const e = Math.min(lines.length, endLine + pad);
-  return lines
-    .slice(s - 1, e)
-    .map((line, i) => `${s + i}| ${line}`)
-    .join('\n');
-};
 
 const buildHeadingOutline = (content: string, limit = 40): string => {
   const lines = toLineRecords(content);
@@ -116,21 +112,6 @@ const getQueryTerms = (query: string): string[] => {
       .match(/[a-z0-9_]{3,}/g) || []
   );
   return [...unique].filter(t => !STOP_WORDS.has(t)).slice(0, 12);
-};
-
-const keywordLineSearch = (content: string, query: string, maxHits = 10): string => {
-  const terms = getQueryTerms(query);
-  if (!terms.length) return 'No useful keywords extracted from query.';
-  const lines = toLineRecords(content);
-  const hits: string[] = [];
-  for (const line of lines) {
-    const lower = line.text.toLowerCase();
-    if (terms.some(t => lower.includes(t))) {
-      hits.push(`${line.line}| ${line.text}`);
-      if (hits.length >= maxHits) break;
-    }
-  }
-  return hits.length ? hits.join('\n') : `No keyword hits for: ${terms.join(', ')}`;
 };
 
 const buildRagChunks = (content: string, linesPerChunk = 30, overlap = 8): RagChunk[] => {
@@ -170,62 +151,239 @@ const scoreRagChunk = (chunk: RagChunk, queryTerms: string[], selectedText?: str
   return score;
 };
 
-const retrieveRagContext = (content: string, query: string, selectedText?: string, topK = 4): string => {
-  const chunks = buildRagChunks(content);
-  const queryTerms = getQueryTerms(query);
-  const ranked = chunks
-    .map(c => ({ chunk: c, score: scoreRagChunk(c, queryTerms, selectedText) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    .filter(x => x.score > 0);
+const rangesOverlap = (left: LineRange, right: LineRange): boolean =>
+  left.startLine <= right.endLine && right.startLine <= left.endLine;
 
-  if (!ranked.length) return 'No high-confidence RAG chunks.';
-  return ranked
-    .map(x => `Chunk ${x.chunk.id} [${x.chunk.startLine}-${x.chunk.endLine}]\n${x.chunk.text}`)
-    .join('\n\n---\n\n');
+const mergeLineRanges = (ranges: LineRange[], gap = 1): LineRange[] => {
+  const sorted = [...ranges]
+    .filter(range => range.startLine > 0 && range.endLine >= range.startLine)
+    .sort((left, right) => left.startLine - right.startLine);
+  if (!sorted.length) return [];
+
+  const merged: LineRange[] = [{ ...sorted[0] }];
+  for (const range of sorted.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (range.startLine <= last.endLine + gap) {
+      last.endLine = Math.max(last.endLine, range.endLine);
+      continue;
+    }
+    merged.push({ ...range });
+  }
+  return merged;
 };
 
-export const runLocalAgenticTools = (params: {
-  content: string;
-  userMessage: string;
-  selectedText?: string;
-  selectedRange?: { startLine: number; endLine: number } | null;
-}): LocalToolExecution[] => {
-  const runs: LocalToolExecution[] = [];
+const buildRangeWindow = (content: string, range: LineRange, pad = 2, maxLines = 40): string => {
+  const lines = content.split(/\r?\n/);
+  const start = Math.max(1, range.startLine - pad);
+  const end = Math.min(lines.length, Math.max(range.endLine + pad, range.startLine));
+  const clippedEnd = Math.min(end, start + maxLines - 1);
+  return lines
+    .slice(start - 1, clippedEnd)
+    .map((line, index) => `${start + index}| ${line}`)
+    .join('\n');
+};
 
-  runs.push({
-    tool: 'outline_scan',
-    reason: 'Find structure anchors and section boundaries.',
-    output: buildHeadingOutline(params.content)
-  });
+const collectKeywordHitRanges = (content: string, query: string, maxHits = 6): LineRange[] => {
+  const terms = getQueryTerms(query);
+  if (!terms.length) return [];
+  const hits: LineRange[] = [];
+  for (const line of toLineRecords(content)) {
+    const lowered = line.text.toLowerCase();
+    if (!terms.some(term => lowered.includes(term))) continue;
+    hits.push({ startLine: line.line, endLine: line.line });
+    if (hits.length >= maxHits) break;
+  }
+  return mergeLineRanges(hits, 2);
+};
 
-  if (params.selectedRange) {
-    runs.push({
-      tool: 'extract_lines',
-      reason: 'Get exact line window around user selection for precise edits.',
-      output: extractLineWindow(params.content, params.selectedRange.startLine, params.selectedRange.endLine, 4)
+const buildNoteSections = (content: string): NoteSection[] => {
+  const lines = content.split(/\r?\n/);
+  if (!lines.length) return [];
+
+  const headingIndexes = lines
+    .map((text, index) => ({ text, index }))
+    .filter(line => /^#{1,6}\s+/.test(line.text));
+
+  if (!headingIndexes.length) {
+    return [{
+      title: 'Full note',
+      startLine: 1,
+      endLine: lines.length,
+      text: lines.join('\n')
+    }];
+  }
+
+  const sections: NoteSection[] = [];
+  if (headingIndexes[0].index > 0) {
+    sections.push({
+      title: 'Opening lines',
+      startLine: 1,
+      endLine: headingIndexes[0].index,
+      text: lines.slice(0, headingIndexes[0].index).join('\n')
     });
   }
 
-  runs.push({
-    tool: 'keyword_search',
-    reason: 'Locate likely edit targets by query terms.',
-    output: keywordLineSearch(params.content, `${params.userMessage}\n${params.selectedText || ''}`)
-  });
+  for (let index = 0; index < headingIndexes.length; index += 1) {
+    const current = headingIndexes[index];
+    const next = headingIndexes[index + 1];
+    const startLine = current.index + 1;
+    const endLine = next ? next.index : lines.length;
+    sections.push({
+      title: current.text.trim(),
+      startLine,
+      endLine,
+      text: lines.slice(current.index, endLine).join('\n')
+    });
+  }
 
-  runs.push({
-    tool: 'rag_retrieve',
-    reason: 'Retrieve semantically relevant chunks for planning and rewriting.',
-    output: retrieveRagContext(params.content, params.userMessage, params.selectedText)
-  });
-
-  return runs;
+  return sections.filter(section => section.text.trim().length > 0);
 };
 
-export const serializeToolRuns = (runs: LocalToolExecution[]): string =>
-  runs
-    .map((r, i) => `TOOL ${i + 1}: ${r.tool}\nReason: ${r.reason}\nOutput:\n${r.output}`)
-    .join('\n\n====================\n\n');
+const findSectionForRange = (sections: NoteSection[], range: LineRange): NoteSection | null => {
+  const overlapping = sections.find(section =>
+    rangesOverlap(range, { startLine: section.startLine, endLine: section.endLine })
+  );
+  if (overlapping) return overlapping;
+
+  const midpoint = Math.floor((range.startLine + range.endLine) / 2);
+  return sections.find(section => midpoint >= section.startLine && midpoint <= section.endLine) || null;
+};
+
+const retrieveParentSections = (
+  content: string,
+  query: string,
+  selectedText?: string,
+  selectedRange?: LineRange | null,
+  topK = 3
+): NoteSection[] => {
+  const sections = buildNoteSections(content);
+  if (!sections.length) return [];
+
+  const chunkQueryTerms = getQueryTerms(query);
+  const selectedTerms = getQueryTerms(selectedText || '');
+  const rankedSections = new Map<string, { section: NoteSection; score: number }>();
+  const chunks = buildRagChunks(content, 24, 6);
+
+  for (const chunk of chunks) {
+    const score = scoreRagChunk(chunk, chunkQueryTerms, selectedText);
+    if (score <= 0) continue;
+    const section = findSectionForRange(sections, { startLine: chunk.startLine, endLine: chunk.endLine });
+    if (!section) continue;
+    const key = `${section.startLine}-${section.endLine}`;
+    const existing = rankedSections.get(key);
+    rankedSections.set(key, {
+      section,
+      score: Math.max(existing?.score || 0, score),
+    });
+  }
+
+  if (selectedRange) {
+    const selectedSection = findSectionForRange(sections, selectedRange);
+    if (selectedSection) {
+      const key = `${selectedSection.startLine}-${selectedSection.endLine}`;
+      rankedSections.set(key, {
+        section: selectedSection,
+        score: (rankedSections.get(key)?.score || 0) + 6,
+      });
+    }
+  }
+
+  for (const section of sections) {
+    const haystack = section.text.toLowerCase();
+    let score = 0;
+    for (const term of chunkQueryTerms) {
+      if (haystack.includes(term)) score += 2;
+    }
+    for (const term of selectedTerms) {
+      if (haystack.includes(term)) score += 1;
+    }
+    if (score <= 0) continue;
+    const key = `${section.startLine}-${section.endLine}`;
+    rankedSections.set(key, {
+      section,
+      score: Math.max(rankedSections.get(key)?.score || 0, score),
+    });
+  }
+
+  return [...rankedSections.values()]
+    .sort((left, right) => right.score - left.score || left.section.startLine - right.section.startLine)
+    .slice(0, topK)
+    .map(item => item.section);
+};
+
+const trimToBudget = (input: string, budget: number): string =>
+  input.length <= budget ? input : `${input.slice(0, budget)}\n...(truncated)...`;
+
+export const buildBrainNoteContext = (params: {
+  content: string;
+  userMessage: string;
+  notePath?: string | null;
+  selectedText?: string;
+  selectedRange?: { startLine: number; endLine: number } | null;
+  maxChars?: number;
+}): string => {
+  const {
+    content,
+    userMessage,
+    notePath,
+    selectedText,
+    selectedRange,
+    maxChars = 9000,
+  } = params;
+
+  if (!content.trim()) {
+    return notePath ? `Current note path: ${notePath}\n\nThe note is empty.` : 'No note currently open.';
+  }
+
+  const noteName = notePath?.split(/[/\\]/).pop() || 'Current note';
+  const sections: string[] = [
+    `NOTE\nTitle: ${noteName}${notePath ? `\nPath: ${notePath}` : ''}`
+  ];
+
+  const consumedRanges: LineRange[] = [];
+  if (selectedRange) {
+    consumedRanges.push(selectedRange);
+    sections.push(
+      `ACTIVE SELECTION\nLines ${selectedRange.startLine}-${selectedRange.endLine}\n${buildRangeWindow(content, selectedRange, 2, 32)}`
+    );
+  } else if (selectedText?.trim()) {
+    sections.push(`ACTIVE SELECTION\n${trimToBudget(selectedText.trim(), 800)}`);
+  }
+
+  sections.push(`HEADING OUTLINE\n${buildHeadingOutline(content, 24)}`);
+
+  const keywordRanges = collectKeywordHitRanges(content, `${userMessage}\n${selectedText || ''}`, 6)
+    .filter(range => !consumedRanges.some(existing => rangesOverlap(existing, range)));
+  if (keywordRanges.length) {
+    consumedRanges.push(...keywordRanges);
+    sections.push(
+      `KEYWORD HITS\n${keywordRanges
+        .map(range => `Lines ${range.startLine}-${range.endLine}\n${buildRangeWindow(content, range, 1, 18)}`)
+        .join('\n\n')}`
+    );
+  }
+
+  const parentSections = retrieveParentSections(content, userMessage, selectedText, selectedRange, 3)
+    .filter(section => !consumedRanges.some(range =>
+      rangesOverlap(range, { startLine: section.startLine, endLine: section.endLine })
+    ));
+  if (parentSections.length) {
+    sections.push(
+      `RELEVANT SECTIONS\n${parentSections
+        .map(section => `${section.title} [${section.startLine}-${section.endLine}]\n${trimToBudget(section.text, 1800)}`)
+        .join('\n\n---\n\n')}`
+    );
+  }
+
+  const shouldUseFallback = !selectedRange && !keywordRanges.length && !parentSections.length;
+  if (shouldUseFallback) {
+    const fallbackRange = { startLine: 1, endLine: Math.min(content.split(/\r?\n/).length, 80) };
+    sections.push(`RAW FALLBACK\n${buildRangeWindow(content, fallbackRange, 0, 80)}`);
+  }
+
+  const prompt = sections.join('\n\n');
+  return trimToBudget(prompt, maxChars);
+};
 
 export const isUiTranscriptNoise = (text: string): boolean => {
   const t = text || '';
@@ -356,8 +514,8 @@ export const buildModelConversation = (messages: BrainChatMessage[], aiMode: 'le
   const selected: BrainChatMessage[] = [];
   let userCount = 0;
   let aiCount = 0;
-  const maxUser = aiMode === 'edit' ? 4 : 6;
-  const maxAi = aiMode === 'edit' ? 2 : 4;
+  const maxUser = aiMode === 'edit' ? 3 : 4;
+  const maxAi = aiMode === 'edit' ? 1 : 2;
 
   for (const msg of reversed) {
     if (msg.sender === 'user' && userCount < maxUser) {

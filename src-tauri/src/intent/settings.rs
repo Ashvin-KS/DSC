@@ -539,8 +539,12 @@ pub async fn brain_chat_stream(
 
     // Stream SSE lines and emit each token as a Tauri event
     let mut buffer = String::new();
+    let mut reasoning_open = false;
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         if BRAIN_STREAM_CANCELLED.load(Ordering::Relaxed) {
+            if reasoning_open {
+                let _ = app_handle.emit("brain://token", "</think>");
+            }
             let _ = app_handle.emit("brain://done", "");
             return Ok(());
         }
@@ -562,13 +566,27 @@ pub async fn brain_chat_stream(
             if data == "[DONE]" { break; }
 
              if BRAIN_STREAM_CANCELLED.load(Ordering::Relaxed) {
+                if reasoning_open {
+                    let _ = app_handle.emit("brain://token", "</think>");
+                }
                 let _ = app_handle.emit("brain://done", "");
                 return Ok(());
             }
 
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                 let delta = &json["choices"][0]["delta"];
+                if let Some(reasoning) = delta["reasoning_content"].as_str().filter(|s| !s.is_empty()) {
+                    if !reasoning_open {
+                        let _ = app_handle.emit("brain://token", "<think>");
+                        reasoning_open = true;
+                    }
+                    let _ = app_handle.emit("brain://token", reasoning);
+                }
                 if let Some(c) = delta["content"].as_str().filter(|s| !s.is_empty()) {
+                    if reasoning_open {
+                        let _ = app_handle.emit("brain://token", "</think>");
+                        reasoning_open = false;
+                    }
                     let _ = app_handle.emit("brain://token", c);
                 }
             }
@@ -577,6 +595,9 @@ pub async fn brain_chat_stream(
         buffer = keep_last;
     }
 
+    if reasoning_open {
+        let _ = app_handle.emit("brain://token", "</think>");
+    }
     let _ = app_handle.emit("brain://done", "");
     Ok(())
 }

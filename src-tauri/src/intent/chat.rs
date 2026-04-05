@@ -557,7 +557,7 @@ pub async fn send_chat_message(
     sources: Option<Vec<String>>,
 ) -> Result<ChatMessageResponse, String> {
     let now = Utc::now().timestamp();
-    let _sources = if sources.is_some() { sources } else { selected_sources };
+    let effective_sources = if sources.is_some() { sources } else { selected_sources };
 
     // Phase 1: sync DB work — collect everything into owned values, then conn is dropped
     let (nvidia_api_key, prior_messages): (Option<String>, Vec<ChatMessageResponse>) = tokio::task::spawn_blocking({
@@ -621,6 +621,7 @@ pub async fn send_chat_message(
         &settings,
         &prior_qe_messages,
         time_range.as_deref(),
+        effective_sources.as_deref(),
     ).await?;
 
     // Use agent_result directly (same as intent-flow-main)

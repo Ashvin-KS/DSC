@@ -2,7 +2,7 @@
  * Chat service — wraps window.nexusAPI.intent.* and window.nexusAPI.settings.*
  * so ChatPage doesn't depend on intent-flow-main's separate Tauri invocations.
  */
-import type { ChatSession, ChatMessage } from '../lib/chatTypes';
+import type { ChatSession, ChatMessage, ChatSourceId } from '../lib/chatTypes';
 
 export interface ModelInfo {
   id: string;
@@ -40,7 +40,7 @@ export async function sendChatMessage(
   model?: string,
   provider?: string,
   timeRange?: string,
-  selectedSources?: string[]
+  selectedSources?: ChatSourceId[]
 ): Promise<ChatMessage> {
   return api()?.intent?.sendChatMessage(sessionId, message, model, provider, timeRange, selectedSources);
 }

@@ -7,6 +7,8 @@ export interface ChatSession {
   updated_at: number;
 }
 
+export type ChatSourceId = 'apps' | 'screen' | 'media' | 'browser' | 'files';
+
 export interface AgentStep {
   turn: number;
   tool_name: string;

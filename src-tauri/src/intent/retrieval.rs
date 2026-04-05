@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use crate::intent::activity::ActivityMetadata;
 
 pub const DEFAULT_EMBED_MODEL: &str = "BAAI/bge-base-en-v1.5";
+pub const CHAT_SOURCE_IDS: [&str; 5] = ["apps", "screen", "media", "browser", "files"];
 const MAX_CHUNK_CHARS: usize = 4_000;
 const MAX_SUMMARY_CHARS: usize = 512;
 const MAX_EVIDENCE_CHARS: usize = 1_000;
@@ -111,6 +112,77 @@ pub struct HybridRetrievalContext {
     pub hits: Vec<RetrievalHit>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RetrievalScopeFilter {
+    allowed_source_types: Option<Vec<String>>,
+    excluded_source_types: Vec<String>,
+    excluded_entity_types: Vec<String>,
+}
+
+impl RetrievalScopeFilter {
+    fn allows(&self, candidate: &RetrievalCandidate) -> bool {
+        if self
+            .excluded_entity_types
+            .iter()
+            .any(|entity_type| entity_type == &candidate.entity_type)
+        {
+            return false;
+        }
+        if self
+            .excluded_source_types
+            .iter()
+            .any(|source_type| source_type == &candidate.source_type)
+        {
+            return false;
+        }
+        match &self.allowed_source_types {
+            Some(allowed) => allowed.iter().any(|source_type| source_type == &candidate.source_type),
+            None => true,
+        }
+    }
+}
+
+pub fn build_chat_retrieval_filter(selected_sources: Option<&[String]>) -> RetrievalScopeFilter {
+    let enabled_sources: Vec<String> = match selected_sources {
+        Some(sources) if !sources.is_empty() => sources.iter().map(|value| value.trim().to_lowercase()).collect(),
+        _ => vec!["apps".to_string(), "screen".to_string(), "media".to_string()],
+    };
+
+    let mut allowed_source_types: Vec<String> = Vec::new();
+    let mut push_allowed = |value: &str| {
+        if !allowed_source_types.iter().any(|existing| existing == value) {
+            allowed_source_types.push(value.to_string());
+        }
+    };
+
+    // Retrieval boundary policy:
+    // Chat stays activity-first; note/file evidence is only allowed through the Files source.
+    for source in enabled_sources {
+        match source.as_str() {
+            "apps" => {
+                push_allowed("activity_window");
+                push_allowed("summary_daily");
+                push_allowed("summary_weekly");
+            }
+            "screen" => push_allowed("ocr"),
+            "media" => push_allowed("media"),
+            "browser" => push_allowed("url"),
+            "files" => {
+                push_allowed("file_change");
+                push_allowed("vault_note_outline");
+                push_allowed("vault_note_chunk");
+            }
+            _ => {}
+        }
+    }
+
+    RetrievalScopeFilter {
+        allowed_source_types: Some(allowed_source_types),
+        excluded_source_types: vec!["chat_user".to_string(), "chat_assistant".to_string()],
+        excluded_entity_types: vec!["chat_message".to_string()],
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct VaultIndexStats {
     pub indexed_files: usize,
@@ -193,14 +265,17 @@ fn recent_candidate_limit(start_ts: i64, end_ts: i64) -> i64 {
 
 fn source_weight(source_type: &str) -> f32 {
     match source_type {
-        "diary_entry" => 1.25,
+        "diary" => 1.1,
         "chat_user" => 1.18,
         "chat_assistant" => 0.92,
-        "activity_evidence_ocr" => 1.1,
-        "activity_evidence_url" => 0.98,
-        "activity_evidence_media" => 0.9,
-        "file_event" => 1.05,
+        "ocr" => 1.1,
+        "url" => 0.98,
+        "media" => 0.9,
+        "file_change" => 1.05,
         "activity_window" => 1.0,
+        "summary_daily" | "summary_weekly" => 1.02,
+        "vault_note_outline" => 0.98,
+        "vault_note_chunk" => 1.0,
         _ => 0.95,
     }
 }
@@ -287,6 +362,7 @@ fn fetch_structured_candidates(
     start_ts: i64,
     end_ts: i64,
     limit: i64,
+    filter: Option<&RetrievalScopeFilter>,
 ) -> Result<Vec<RetrievalCandidate>, String> {
     let mut stmt = conn
         .prepare(
@@ -317,7 +393,10 @@ fn fetch_structured_candidates(
         })
         .map_err(|e| e.to_string())?;
 
-    Ok(rows.filter_map(|row| row.ok()).collect())
+    Ok(rows
+        .filter_map(|row| row.ok())
+        .filter(|candidate| filter.map(|value| value.allows(candidate)).unwrap_or(true))
+        .collect())
 }
 
 fn fetch_lexical_candidates(
@@ -326,6 +405,7 @@ fn fetch_lexical_candidates(
     start_ts: i64,
     end_ts: i64,
     limit: i64,
+    filter: Option<&RetrievalScopeFilter>,
 ) -> Result<Vec<RetrievalCandidate>, String> {
     let mut stmt = conn
         .prepare(
@@ -359,7 +439,10 @@ fn fetch_lexical_candidates(
         })
         .map_err(|e| e.to_string())?;
 
-    Ok(rows.filter_map(|row| row.ok()).collect())
+    Ok(rows
+        .filter_map(|row| row.ok())
+        .filter(|candidate| filter.map(|value| value.allows(candidate)).unwrap_or(true))
+        .collect())
 }
 
 fn fetch_semantic_candidates(
@@ -368,6 +451,7 @@ fn fetch_semantic_candidates(
     start_ts: i64,
     end_ts: i64,
     route: &str,
+    filter: Option<&RetrievalScopeFilter>,
 ) -> Result<Vec<RetrievalCandidate>, String> {
     let mut stmt = conn
         .prepare(
@@ -412,7 +496,9 @@ fn fetch_semantic_candidates(
             continue;
         };
         candidate.semantic_score = cosine_similarity(query_embedding, &vector);
-        candidates.push(candidate);
+        if filter.map(|value| value.allows(&candidate)).unwrap_or(true) {
+            candidates.push(candidate);
+        }
     }
 
     candidates.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
@@ -1260,15 +1346,16 @@ pub fn build_hybrid_context(
     start_ts: i64,
     end_ts: i64,
     max_hits: usize,
+    filter: Option<&RetrievalScopeFilter>,
 ) -> Result<HybridRetrievalContext, String> {
     let conn = crate::intent::db::open(app)?;
     let route = detect_retrieval_route(query).to_string();
     let query_terms = tokenize_query_terms(query);
     let mut candidates = Vec::new();
-    let structured = fetch_structured_candidates(&conn, start_ts, end_ts, 12)?;
+    let structured = fetch_structured_candidates(&conn, start_ts, end_ts, 12, filter)?;
     let fts_query = make_fts_query(query);
     let lexical = if let Some(ref match_query) = fts_query {
-        fetch_lexical_candidates(&conn, match_query, start_ts, end_ts, 12)?
+        fetch_lexical_candidates(&conn, match_query, start_ts, end_ts, 12, filter)?
     } else {
         Vec::new()
     };
@@ -1286,7 +1373,7 @@ pub fn build_hybrid_context(
                 .next()
                 .ok_or_else(|| "Embedding model returned no query vector".to_string())
         })?;
-        semantic = fetch_semantic_candidates(&conn, &query_embedding, start_ts, end_ts, &route)?;
+        semantic = fetch_semantic_candidates(&conn, &query_embedding, start_ts, end_ts, &route, filter)?;
         candidates.extend(semantic.iter().cloned());
     }
 
@@ -2053,4 +2140,43 @@ pub fn get_chunk_id(
     )
     .optional()
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_chat_retrieval_filter, RetrievalCandidate};
+
+    fn candidate(source_type: &str, entity_type: &str) -> RetrievalCandidate {
+        RetrievalCandidate {
+            chunk_id: 1,
+            entity_type: entity_type.to_string(),
+            entity_id: "entity-1".to_string(),
+            source_type: source_type.to_string(),
+            chunk_summary: "summary".to_string(),
+            chunk_text: "text".to_string(),
+            project_root: None,
+            source_ts: Some(0),
+            lexical_score: 0.0,
+            semantic_score: 0.0,
+            structured_score: 0.0,
+        }
+    }
+
+    #[test]
+    fn chat_filter_blocks_vault_chunks_without_files_source() {
+        let selected_sources = vec!["apps".to_string(), "screen".to_string()];
+        let filter = build_chat_retrieval_filter(Some(selected_sources.as_slice()));
+
+        assert!(filter.allows(&candidate("activity_window", "activity")));
+        assert!(!filter.allows(&candidate("vault_note_chunk", "note_chunk")));
+    }
+
+    #[test]
+    fn chat_filter_excludes_chat_history_entities_even_when_files_enabled() {
+        let selected_sources = vec!["files".to_string()];
+        let filter = build_chat_retrieval_filter(Some(selected_sources.as_slice()));
+
+        assert!(filter.allows(&candidate("vault_note_chunk", "note_chunk")));
+        assert!(!filter.allows(&candidate("chat_assistant", "chat_message")));
+    }
 }
