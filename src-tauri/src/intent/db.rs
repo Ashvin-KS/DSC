@@ -9,19 +9,14 @@ pub fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let current = dir.join("atheletia_intent.db");
     let legacy = dir.join("allentire_intent.db");
-    eprintln!("[db] Database path: {:?}", current);
-    eprintln!("[db] App data dir: {:?}", dir);
     if !current.exists() && legacy.exists() {
-        eprintln!("[db] Migrating legacy database from {:?} to {:?}", legacy, current);
         std::fs::copy(&legacy, &current).map_err(|e| e.to_string())?;
     }
-    eprintln!("[db] Database exists: {}", current.exists());
     Ok(current)
 }
 
 pub fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
-    eprintln!("[db] Opening connection to: {:?}", path);
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
     // Performance-critical PRAGMAs — applied on every connection open
     conn.execute_batch("

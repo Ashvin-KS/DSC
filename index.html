@@ -408,6 +408,46 @@
   </style>
 
   <!-- Global styles injected by Vite build -->
+  
+  <!-- Disable DevTools in production -->
+  <script>
+    // Disable right-click context menu
+    document.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+    });
+    
+    // Disable DevTools keyboard shortcuts and refresh
+    document.addEventListener('keydown', function(e) {
+      // Ctrl+Shift+I (DevTools)
+      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+        e.preventDefault();
+      }
+      // Ctrl+Shift+J (Console)
+      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
+        e.preventDefault();
+      }
+      // Ctrl+Shift+C (Inspect Element)
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+      }
+      // F12 (DevTools)
+      if (e.key === 'F12') {
+        e.preventDefault();
+      }
+      // Ctrl+U (View Source)
+      if (e.ctrlKey && e.key === 'U') {
+        e.preventDefault();
+      }
+      // Ctrl+R (Refresh)
+      if (e.ctrlKey && e.key === 'r') {
+        e.preventDefault();
+      }
+      // F5 (Refresh)
+      if (e.key === 'F5') {
+        e.preventDefault();
+      }
+    });
+  </script>
 </head>
 
 <body>

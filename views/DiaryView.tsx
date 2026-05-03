@@ -90,28 +90,18 @@ export const DiaryView: React.FC = () => {
     useEffect(() => {
         let cancelled = false;
         const load = async () => {
-            console.log('[DiaryView] load() called for activeDate:', activeDate);
-            console.log('[DiaryView] window.atheletiaAPI:', window.atheletiaAPI);
-            console.log('[DiaryView] window.atheletiaAPI?.diary:', window.atheletiaAPI?.diary);
             try {
                 if (window.atheletiaAPI?.diary) {
-                    console.log('[DiaryView] Calling getEntries for', activeDate);
-                    // getEntries must only return entries for the exact activeDate
                     const data: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(activeDate);
-                    console.log('[DiaryView] getEntries result for', activeDate, ':', data);
                     if (cancelled) return;
-                    // Extra client-side guard: filter by date just in case backend returns extras
                     const dateFiltered = (data || []).filter((e: DiaryEntry) => e.date === activeDate);
                     setEntries(dateFiltered);
                     const latestAi = dateFiltered.find((e: DiaryEntry) => e.isAiGenerated) || null;
                     setAiSummary(latestAi);
                 } else {
-                    console.error('[DiaryView] diary API not available');
                     if (!cancelled) { setEntries([]); setAiSummary(null); }
                 }
-            } catch (loadError) {
-                console.error('[DiaryView] getEntries failed:', loadError);
-            }
+            } catch { /* offline */ }
         };
         load();
         return () => { cancelled = true; };
@@ -160,10 +150,8 @@ export const DiaryView: React.FC = () => {
             };
             try {
                 const saved = await window.atheletiaAPI.diary.saveEntry(generated);
-                console.log('[DiaryView] saveEntry result:', saved);
                 return saved;
-            } catch (saveError) {
-                console.error('[DiaryView] saveEntry failed:', saveError);
+            } catch {
                 return generated;
             }
         } catch (error) {
@@ -243,19 +231,14 @@ export const DiaryView: React.FC = () => {
             id: `manual-${Date.now()}`, date: activeDate, content: newContent.trim(),
             isAiGenerated: false, createdAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000),
         };
-        console.log('[DiaryView] handleAddManual - saving entry:', entry);
         try {
             if (window.atheletiaAPI?.diary) {
                 const saved = await window.atheletiaAPI.diary.saveEntry(entry);
-                console.log('[DiaryView] handleAddManual - saveEntry result:', saved);
                 setEntries(p => [saved, ...p]);
                 setNewContent('');
-            } else {
-                console.error('[DiaryView] handleAddManual - diary API not available');
             }
-        } catch (e) {
-            console.error("[DiaryView] handleAddManual - Failed to save entry:", e);
-        } finally {
+        } catch { /* ignore */ }
+        finally {
             setIsSavingManual(false);
         }
     };

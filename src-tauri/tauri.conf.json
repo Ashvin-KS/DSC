@@ -20,7 +20,8 @@
         "center": true,
         "skipTaskbar": false,
         "decorations": true,
-        "shadow": true
+        "shadow": true,
+        "devtools": false
       }
     ],
     "security": {
