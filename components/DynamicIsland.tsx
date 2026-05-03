@@ -75,11 +75,11 @@ export const DynamicIsland: React.FC = () => {
             <div
                 className={`
                     dynamic-island-container
-                    relative bg-black/40 backdrop-blur-[40px] saturate-150 border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.5)] rounded-[32px]
+                    relative bg-[#0d0d0d]/95 backdrop-blur-2xl saturate-150 border border-white/[0.08] shadow-[0_8px_32px_0_rgba(0,0,0,0.6)] rounded-[32px]
                     transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden
-                    before:absolute before:inset-0 before:bg-gradient-to-b before:from-white/10 before:to-transparent before:pointer-events-none
+                    before:absolute before:inset-0 before:bg-gradient-to-b before:from-white/[0.06] before:to-transparent before:pointer-events-none
                     ${getWidth()}
-                    ${isExpanded ? 'h-auto p-4 ring-1 ring-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.6)]' : 'h-[40px] hover:scale-[1.02] cursor-pointer hover:bg-black/50'}
+                    ${isExpanded ? 'h-auto p-4 ring-1 ring-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.7)]' : 'h-[40px] hover:scale-[1.02] cursor-pointer hover:bg-[#111]/95'}
                 `}
                 onClick={!isExpanded ? handleExpandToggle : undefined}
             >

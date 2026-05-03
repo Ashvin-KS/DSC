@@ -210,10 +210,10 @@ export const ScheduleView: React.FC = () => {
 
   const getEventColor = (type: string) => {
     switch (type) {
-      case 'focus': return 'bg-cyan-500/10 border-cyan-500/50 text-cyan-200 hover:bg-cyan-500/20';
+      case 'focus': return 'bg-[var(--accent-soft)] border-[var(--accent-soft)] text-cyan-200 hover:bg-[var(--accent-soft)]';
       case 'break': return 'bg-gray-700/30 border-gray-600/50 text-gray-400 hover:bg-gray-700/50';
-      case 'meeting': return 'bg-purple-500/10 border-purple-500/50 text-purple-200 hover:bg-purple-500/20';
-      default: return 'bg-blue-500/10 border-blue-500/50 text-blue-200 hover:bg-blue-500/20';
+      case 'meeting': return 'bg-[var(--accent-soft)] border-[var(--accent-soft)] text-purple-200 hover:bg-[var(--accent-soft)]';
+      default: return 'bg-[var(--accent-soft)] border-[var(--accent-soft)] text-blue-200 hover:bg-[var(--accent-soft)]';
     }
   };
 
@@ -357,12 +357,12 @@ export const ScheduleView: React.FC = () => {
                   <h3 className="text-sm font-medium text-gray-200 mb-1 flex items-center gap-2">
                     {task.title}
                     {task.googleId && (
-                      <span className="text-[8px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono" title="Synced with Google Tasks">
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-[var(--accent-soft)] text-accent font-mono" title="Synced with Google Tasks">
                         G
                       </span>
                     )}
                   </h3>
-                  <div className={`text-[10px] inline-block px-2 py-0.5 rounded border ${task.color === 'blue' ? 'bg-blue-900/20 border-blue-800 text-blue-400' :
+                  <div className={`text-[10px] inline-block px-2 py-0.5 rounded border ${task.color === 'blue' ? 'bg-blue-900/20 border-blue-800 text-accent' :
                     task.color === 'orange' ? 'bg-orange-900/20 border-orange-800 text-orange-400' :
                       task.color === 'emerald' ? 'bg-emerald-900/20 border-emerald-800 text-emerald-400' :
                         'bg-zinc-800 border-zinc-700 text-gray-400'
@@ -397,7 +397,7 @@ export const ScheduleView: React.FC = () => {
         <div className="h-14 flex items-center justify-between px-6 border-b border-[#262626] shrink-0 bg-[#0a0a0a]/95 backdrop-blur z-20">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <Clock size={16} className="text-cyan-500" />
+              <Clock size={16} className="text-accent" />
               <span className="font-semibold text-gray-200">Timeline</span>
             </div>
 
@@ -443,7 +443,7 @@ export const ScheduleView: React.FC = () => {
               <button
                 onClick={handleManualSync}
                 disabled={isSyncing}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 rounded-lg hover:bg-blue-500/20 transition-colors text-xs font-medium disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--accent-soft)] border border-[var(--accent-soft)] text-accent rounded-lg hover:bg-[var(--accent-soft)] transition-colors text-xs font-medium disabled:opacity-50"
                 title="Sync with Google Calendar"
               >
                 <RefreshCw size={12} className={isSyncing ? 'animate-spin' : ''} />
@@ -453,7 +453,7 @@ export const ScheduleView: React.FC = () => {
 
             <button
               onClick={() => handleOpenNewEvent()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 rounded-lg hover:bg-cyan-500/20 transition-colors text-xs font-medium"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--accent-soft)] border border-[var(--accent-soft)] text-accent rounded-lg hover:bg-[var(--accent-soft)] transition-colors text-xs font-medium"
             >
               <Plus size={14} />
               Add Event

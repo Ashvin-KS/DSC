@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ChatSession, ChatMessage as ChatMessageType, ChatSourceId } from '../../lib/chatTypes';
 import {
     createChatSession,
@@ -41,10 +41,13 @@ import {
     Leaf,
     BriefcaseBusiness,
     Search,
+    Square,
+    Undo2,
 } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import { useFavoriteModels } from '../../hooks/useFavoriteModels';
 import { useIntentStore } from '../../store/useIntentStore';
+import { useMultiProviderModels, setStoredModelWithProvider, getStoredModelWithProvider } from '../../hooks/useMultiProviderModels';
 
 // Source options
 const SOURCE_OPTIONS: Array<{ id: ChatSourceId; label: string; default: boolean }> = [
@@ -227,6 +230,9 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const initialPromptHandled = useRef(false);
     const streamingContentRef = useRef('');
+    const abortControllerRef = useRef<AbortController | null>(null);
+    const activeRequestIdRef = useRef<number>(0);
+    const stoppedRequestIdsRef = useRef<Set<number>>(new Set());
 
     // Dropdown states
     const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -236,7 +242,8 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         SOURCE_OPTIONS.filter((s) => s.default).map((s) => s.id)
     );
     const [selectedTimeRange, setSelectedTimeRange] = useState('today');
-    const [selectedModel, setSelectedModel] = useState<string>(loadSelectedModelFromStorage);
+    const [selectedModel, setSelectedModel] = useState<string>(() => getStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY)?.model || loadSelectedModelFromStorage());
+    const [selectedProvider, setSelectedProvider] = useState<string>(() => getStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY)?.provider || '');
     const [pendingAction, setPendingAction] = useState<ConfirmActionPayload | null>(null);
 
     // Cloud vs Local toggle
@@ -244,9 +251,6 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     const [lmStudioModels, setLmStudioModels] = useState<ModelInfo[]>([]);
     const [lmStudioLoading, setLmStudioLoading] = useState(false);
     const [lmStudioError, setLmStudioError] = useState<string | null>(null);
-    const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
-    const [cloudLoading, setCloudLoading] = useState(false);
-    const [cloudError, setCloudError] = useState<string | null>(null);
     const [modelSearch, setModelSearch] = useState('');
     const [customModelInput, setCustomModelInput] = useState('');
 
@@ -264,8 +268,11 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         if (!settings?.defaultModel) return;
         if (!selectedModel) {
             setSelectedModel(settings.defaultModel);
+            const prov = (settings.aiProvider || 'nvidia').toLowerCase();
+            setSelectedProvider(prov);
+            setStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY, settings.defaultModel, prov);
         }
-    }, [settings?.defaultModel, selectedModel]);
+    }, [settings?.defaultModel, settings?.aiProvider, selectedModel]);
 
     useEffect(() => {
         try {
@@ -273,15 +280,20 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 // Validate model ID — only allow safe characters
                 const safe = /^[a-zA-Z0-9\-_/:. @]+$/.test(selectedModel) && selectedModel.length < 200;
                 if (safe) {
-                    localStorage.setItem(CHAT_MODEL_STORAGE_KEY, selectedModel);
+                    setStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY, selectedModel, selectedProvider);
                 }
             } else {
                 localStorage.removeItem(CHAT_MODEL_STORAGE_KEY);
+                localStorage.removeItem(`${CHAT_MODEL_STORAGE_KEY}_provider`);
             }
         } catch {
             // ignore storage errors
         }
-    }, [selectedModel]);
+    }, [selectedModel, selectedProvider]);
+
+    const { groups: cloudGroups, allModels: allCloudModels, loading: cloudLoading, error: cloudErrorRaw, refetch: refetchCloud } = useMultiProviderModels(settings);
+    const cloudModels = useMemo(() => allCloudModels.map(m => ({ id: m.id, name: m.name })), [allCloudModels]);
+    const cloudError = cloudErrorRaw ? String(cloudErrorRaw) : null;
 
     const fetchLMStudioModels = useCallback(async () => {
         setLmStudioLoading(true);
@@ -291,7 +303,10 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             const models = await getLMStudioModels(lmStudioUrl);
             setLmStudioModels(models);
             if (models.length > 0 && !selectedModel) {
-                setSelectedModel(models[0].id);
+                const first = models[0].id;
+                setSelectedModel(first);
+                setSelectedProvider('local');
+                setStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY, first, 'local');
             }
         } catch {
             setLmStudioError(`LM Studio not reachable at ${lmStudioUrl}`);
@@ -300,43 +315,6 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             setLmStudioLoading(false);
         }
     }, [selectedModel]);
-
-    const fetchCloudModels = useCallback(async () => {
-        const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
-        const apiKey = (() => {
-            switch (provider) {
-                case 'openai': return settings?.openaiApiKey?.trim() || '';
-                case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
-                case 'groq': return settings?.groqApiKey?.trim() || '';
-                case 'gemini': return settings?.geminiApiKey?.trim() || '';
-                default: return settings?.nvidiaApiKey?.trim() || '';
-            }
-        })();
-
-        if (provider !== 'nvidia') {
-            setCloudModels([]);
-            setCloudError(`Model auto-discovery is currently only supported for NVIDIA API. For ${provider.toUpperCase()}, please manually type your Model ID below.`);
-            setCloudLoading(false);
-            return;
-        }
-
-        setCloudLoading(true);
-        setCloudError(null);
-        try {
-            const models = await getNvidiaModels(apiKey);
-            setCloudModels(models);
-        } catch (error) {
-            setCloudModels([]);
-            const message = error instanceof Error ? error.message : String(error);
-            if (message.toLowerCase().includes('missing nvidia api key')) {
-                setCloudError('Cloud model list needs an API key in Settings or NVIDIA_API_KEY env var.');
-            } else {
-                setCloudError(`Failed to load cloud model list (${message || 'unknown error'}). Chat may still work with your current model selection.`);
-            }
-        } finally {
-            setCloudLoading(false);
-        }
-    }, [settings?.nvidiaApiKey, settings?.openaiApiKey, settings?.anthropicApiKey, settings?.groqApiKey, settings?.geminiApiKey, settings?.aiProvider]);
 
     // Sync modelMode from settings.aiProvider (mirrors CodeView/BrainView aiProvider derivation)
     useEffect(() => {
@@ -350,10 +328,8 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     useEffect(() => {
         if (modelMode === 'local') {
             fetchLMStudioModels();
-            return;
         }
-        fetchCloudModels();
-    }, [modelMode, fetchLMStudioModels, fetchCloudModels]);
+    }, [modelMode, fetchLMStudioModels]);
 
     // Close dropdowns on outside click
     useEffect(() => {
@@ -540,6 +516,8 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         setStreamingContent('');
         setAgentStatus('Preparing search...');
 
+        const requestId = ++activeRequestIdRef.current;
+
         const tempUserMsg: ChatMessageType = {
             id: Date.now(),
             session_id: sessionId,
@@ -550,13 +528,13 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         setMessages((prev) => [...prev, tempUserMsg]);
 
         try {
+            const provider = modelMode === 'local' ? 'local' : (selectedProvider || settings?.aiProvider || 'nvidia').toLowerCase();
             const apiKey = (() => {
-                const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
                 switch (provider) {
                     case 'openai': return settings?.openaiApiKey?.trim() || '';
                     case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
                     case 'groq': return settings?.groqApiKey?.trim() || '';
-                    case 'gemini': return settings?.geminiApiKey?.trim() || '';
+                    case 'gemini': return (settings as any)?.geminiApiKey?.trim() || '';
                     default: return settings?.nvidiaApiKey?.trim() || '';
                 }
             })();
@@ -565,11 +543,15 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 sessionId,
                 messageText.trim(),
                 selectedModel || undefined,
-                modelMode === 'local' ? 'local' : 'cloud',
+                provider,
                 overrides?.timeRange || selectedTimeRange,
                 overrides?.sources || selectedSources,
                 apiKey
             );
+
+            // If user pressed Stop while awaiting, discard the response
+            if (stoppedRequestIdsRef.current.has(requestId)) return;
+
             const { cleanedContent, action } = parseAssistantAction(response.content);
             const finalContent = mergeStreamThinkingIntoContent(
                 cleanedContent || 'Please confirm the suggested scope/source update to continue.',
@@ -589,6 +571,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             }
             loadSessions();
         } catch (error) {
+            if (stoppedRequestIdsRef.current.has(requestId)) return; // Stop was pressed — don't show error
             console.error('Failed to send message:', error);
             const isAuthError = error instanceof ChatServiceError && error.code === 'AUTH';
             const isUnavailable = error instanceof ChatServiceError && error.code === 'API_UNAVAILABLE';
@@ -607,14 +590,43 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             };
             setMessages((prev) => [...prev, errorMsg]);
         } finally {
-            setIsSending(false);
-            setStreamingContent('');
-            setAgentStatus('');
-            setDisplayedStatus('');
+            if (!stoppedRequestIdsRef.current.has(requestId)) {
+                setIsSending(false);
+                setStreamingContent('');
+                setAgentStatus('');
+                setDisplayedStatus('');
+            }
         }
     };
 
     const handleSend = () => handleSendWithMessage(input);
+
+    /** Stop in-progress request */
+    const handleStop = useCallback(() => {
+        const currentRequestId = activeRequestIdRef.current;
+        stoppedRequestIdsRef.current.add(currentRequestId);
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        setIsSending(false);
+        setStreamingContent('');
+        setAgentStatus('');
+        setDisplayedStatus('');
+    }, []);
+
+    /** Rewind conversation to a specific user message — delete it and all after, load text into input */
+    const handleRewindToMessage = useCallback(async (messageId: number) => {
+        const idx = messages.findIndex(m => m.id === messageId);
+        if (idx < 0) return;
+        const clickedMsg = messages[idx];
+        // Remove this message and all after
+        const kept = messages.slice(0, idx);
+        setMessages(kept);
+        // Load the clicked message text into the input
+        if (clickedMsg.role === 'user') {
+            setInput(clickedMsg.content);
+        }
+        inputRef.current?.focus();
+    }, [messages]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -711,7 +723,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         if (!selectedModel) return 'Select Model';
         const fav = favorites.find((f) => f.id === selectedModel);
         if (fav) return fav.name;
-        const cloud = cloudModels.find((m) => m.id === selectedModel);
+        const cloud = allCloudModels.find((m) => m.id === selectedModel);
         if (cloud) return cloud.name;
         const local = lmStudioModels.find((m) => m.id === selectedModel);
         if (local) return local.name;
@@ -719,31 +731,25 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         return parts[parts.length - 1] || selectedModel;
     };
 
-    const selectChatModel = (modelId: string, modelName?: string) => {
+    const selectChatModel = (modelId: string, modelName?: string, provider?: string) => {
         const normalizedId = modelId.trim();
         if (!normalizedId) return;
         setSelectedModel(normalizedId);
+        if (provider) setSelectedProvider(provider);
         addFavorite({ id: normalizedId, name: modelName || normalizedId });
         setShowModelDropdown(false);
         setModelSearch('');
         setCustomModelInput('');
     };
 
-    const uniqueCloudModels = Array.from(
-        new Map(
-            [
-                ...cloudModels,
-                ...favorites.map((f) => ({ id: f.id, name: f.name })),
-                ...(settings?.defaultModel ? [{ id: settings.defaultModel, name: settings.defaultModel }] : []),
-            ].map((model) => [model.id, model])
-        ).values()
-    );
-
-    const filteredCloudModels = uniqueCloudModels.filter((model) => {
-        const query = modelSearch.trim().toLowerCase();
-        if (!query) return true;
-        return model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
-    });
+    const filteredCloudGroups = cloudGroups.map(group => ({
+        ...group,
+        models: group.models.filter(model => {
+            const query = modelSearch.trim().toLowerCase();
+            if (!query) return true;
+            return model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
+        })
+    })).filter(g => g.models.length > 0);
 
     const getTimeRangeLabel = () =>
         TIME_RANGE_OPTIONS.find((t) => t.id === selectedTimeRange)?.label || 'Today';
@@ -829,7 +835,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                         <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
                     </button>
                     {showModelDropdown && (
-                        <div className="absolute bottom-full mb-2 left-0 w-72 bg-white/5 border border-[#333] rounded-xl shadow-2xl shadow-black/40 z-dropdown py-1 max-h-72 overflow-y-auto">
+                        <div className="absolute bottom-full mb-2 left-0 w-72 bg-[#0d0d0d] backdrop-blur-2xl border border-[#333] rounded-xl shadow-2xl shadow-black/60 z-dropdown py-1 max-h-72 overflow-y-auto">
                             {modelMode === 'local' ? (
                                 <>
                                     <div className="px-3 py-2 border-b border-[#333]/50 flex items-center justify-between">
@@ -877,9 +883,18 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                                 </>
                             ) : (
                                 <>
-                                    <div className="px-3 py-2 border-b border-[#333]/50">
-                                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Cloud Models</p>
-                                        <div className="mt-2 relative">
+                                    <div className="px-3 py-2 border-b border-[#333]/50 flex items-center justify-between">
+                                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                                            Cloud Models
+                                        </p>
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={refetchCloud} className="text-gray-400 hover:text-white transition-colors" title="Refresh models">
+                                                {cloudLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="px-3 py-1.5 border-b border-[#333]/50">
+                                        <div className="relative">
                                             <Search className="w-3.5 h-3.5 text-gray-500 absolute left-2 top-1.5" />
                                             <input
                                                 value={modelSearch}
@@ -894,27 +909,39 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                                             <p className="text-[11px] text-amber-300">{cloudError}</p>
                                         </div>
                                     )}
+                                    {cloudModels.length === 0 && !cloudLoading && !cloudError && (
+                                        <div className="px-3 py-2 border-b border-[#333]/50">
+                                            <p className="text-[10px] text-gray-500">No models found. Add an API key in Settings, or type a model ID below.</p>
+                                        </div>
+                                    )}
                                     {cloudLoading ? (
                                         <div className="px-3 py-4 flex items-center justify-center gap-2">
                                             <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
                                             <p className="text-xs text-gray-400">Loading models...</p>
                                         </div>
-                                    ) : filteredCloudModels.length === 0 ? (
+                                    ) : filteredCloudGroups.length === 0 ? (
                                         <div className="px-3 py-4 text-center">
                                             <p className="text-xs text-gray-500">No matching models</p>
                                             <p className="text-[10px] text-gray-600 mt-1">Type a model ID below to use any model</p>
                                         </div>
                                     ) : (
-                                        filteredCloudModels.map((model) => (
-                                            <button
-                                                key={model.id}
-                                                onClick={() => selectChatModel(model.id, model.name)}
-                                                className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/10 transition-colors ${selectedModel === model.id ? 'text-blue-400' : 'text-gray-200'}`}
-                                            >
-                                                <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
-                                                <span className="flex-1 truncate text-xs">{model.name || model.id}</span>
-                                                {selectedModel === model.id && <Check className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />}
-                                            </button>
+                                        filteredCloudGroups.map((group) => (
+                                            <div key={group.provider} className="border-b border-[#333]/30 last:border-b-0">
+                                                <div className="px-3 py-1.5 bg-white/5">
+                                                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{group.label}</p>
+                                                </div>
+                                                {group.models.map((model) => (
+                                                    <button
+                                                        key={model.id}
+                                                        onClick={() => selectChatModel(model.id, model.name, group.provider)}
+                                                        className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/10 transition-colors ${selectedModel === model.id ? 'text-blue-400' : 'text-gray-200'}`}
+                                                    >
+                                                        <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
+                                                        <span className="flex-1 truncate text-xs">{model.name || model.id}</span>
+                                                        {selectedModel === model.id && <Check className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         ))
                                     )}
                                     <div className="px-3 py-2 border-t border-[#333]/50">
@@ -961,7 +988,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                         <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${showSourcesDropdown ? 'rotate-180' : ''}`} />
                     </button>
                     {showSourcesDropdown && (
-                        <div className="absolute bottom-full mb-2 left-0 w-56 bg-white/5 border border-[#333] rounded-xl shadow-2xl shadow-black/40 z-dropdown py-1">
+                        <div className="absolute bottom-full mb-2 left-0 w-56 bg-[#0d0d0d] backdrop-blur-2xl border border-[#333] rounded-xl shadow-2xl shadow-black/60 z-dropdown py-1">
                             <div className="px-3 py-2 border-b border-[#333]/50">
                                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Data Sources</p>
                             </div>
@@ -998,7 +1025,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                         <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${showTimeDropdown ? 'rotate-180' : ''}`} />
                     </button>
                     {showTimeDropdown && (
-                        <div className="absolute bottom-full mb-2 left-0 w-48 bg-white/5 border border-[#333] rounded-xl shadow-2xl shadow-black/40 z-dropdown py-1">
+                        <div className="absolute bottom-full mb-2 left-0 w-48 bg-[#0d0d0d] backdrop-blur-2xl border border-[#333] rounded-xl shadow-2xl shadow-black/60 z-dropdown py-1">
                             <div className="px-3 py-2 border-b border-[#333]/50">
                                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Time Range</p>
                             </div>
@@ -1021,10 +1048,10 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     );
 
     return (
-        <div className="flex h-full bg-[#0a0a0a]">
+        <div className="flex h-full" style={{ background: 'var(--bg-app)' }}>
             {/* Chat History Panel */}
             {showHistory && (
-                <div className="w-64 flex-shrink-0 bg-[#0d0f12]/90 border-r border-[#1f2329] flex flex-col">
+                <div className="w-64 flex-shrink-0 flex flex-col" style={{ background: 'var(--bg-elev-1)', borderRight: '1px solid var(--border-default)' }}>
                     <div className="flex items-center justify-between px-3 py-3 border-b border-[#1f2329]">
                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">History</span>
                         <div className="flex items-center gap-1">
@@ -1112,7 +1139,18 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                         <div className="flex-1 overflow-y-auto px-6 py-4">
                             <div className="max-w-3xl mx-auto">
                                 {messages.map((msg) => (
-                                    <ChatMessage key={msg.id} message={msg} />
+                                    <div key={msg.id} className="group/msg relative">
+                                        <ChatMessage message={msg} />
+                                        {msg.role === 'user' && !isSending && (
+                                            <button
+                                                onClick={() => handleRewindToMessage(msg.id)}
+                                                className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-md text-gray-500 hover:text-amber-400 hover:bg-white/10 transition-all border border-transparent hover:border-white/10 shadow-sm"
+                                                title="Undo — rewind to this message and edit it"
+                                            >
+                                                <Undo2 className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                    </div>
                                 ))}
                                 {streamingContent ? renderStreamingMessage() : isSending && (
                                     <div className="flex gap-3 mb-6 justify-start">
@@ -1149,7 +1187,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                             </div>
                         </div>
 
-                        <div className="border-t border-[#262626]/50 bg-[#0a0a0a] px-6 py-4">
+                        <div className="border-t px-6 py-4" style={{ borderColor: 'var(--border-default)', background: 'var(--bg-elev-1)' }}>
                             <div className="max-w-3xl mx-auto space-y-3">
                                 <div className="relative">
                                     <textarea
@@ -1164,7 +1202,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                                         }}
                                         placeholder="Ask about your activity..."
                                         rows={1}
-                                        className="w-full resize-none bg-[#161616] border border-[#333]/70 text-white rounded-xl px-4 py-3 pr-12 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 focus:border-cyan-500/40"
+                                        className="w-full resize-none bg-[#161616] border border-[#333]/70 text-white rounded-xl px-4 py-3 pr-12 text-sm placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 focus:border-cyan-500/40 scrollbar-none"
                                         style={{ minHeight: '44px', maxHeight: '120px' }}
                                         onInput={(e) => {
                                             const t = e.target as HTMLTextAreaElement;
@@ -1172,13 +1210,23 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                                             t.style.height = `${Math.min(t.scrollHeight, 120)}px`;
                                         }}
                                     />
-                                    <button
-                                        onClick={handleSend}
-                                        disabled={!input.trim() || isSending}
-                                        className="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-cyan-400 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
-                                    >
-                                        {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                    </button>
+                                    {isSending ? (
+                                        <button
+                                            onClick={handleStop}
+                                            className="absolute right-2 bottom-2 w-9 h-9 flex items-center justify-center rounded-lg bg-red-500/20 text-red-400 hover:text-red-300 hover:bg-red-500/30 border border-red-500/30 transition-colors shadow-sm"
+                                            title="Stop generating"
+                                        >
+                                            <Square className="w-4 h-4 fill-current" />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleSend}
+                                            disabled={!input.trim()}
+                                            className="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-cyan-400 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                        </button>
+                                    )}
                                 </div>
                                 {controlBar}
                             </div>
@@ -1238,7 +1286,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                             </div>
                         </div></div>
                         {/* Pinned input bar — same structure as messages view so dropdowns open upward */}
-                        <div className="border-t border-[#262626]/50 bg-[#0a0a0a] px-6 py-4 flex-shrink-0">
+                        <div className="border-t px-6 py-4 flex-shrink-0" style={{ borderColor: 'var(--border-default)', background: 'var(--bg-elev-1)' }}>
                             <div className="max-w-2xl mx-auto space-y-3">
                                 <div className="relative">
                                     <textarea
@@ -1261,13 +1309,23 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                                             t.style.height = `${Math.min(t.scrollHeight, 120)}px`;
                                         }}
                                     />
-                                    <button
-                                        onClick={handleSend}
-                                        disabled={!input.trim() || isSending}
-                                        className="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-cyan-400 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
-                                    >
-                                        {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                    </button>
+                                    {isSending ? (
+                                        <button
+                                            onClick={handleStop}
+                                            className="absolute right-2 bottom-2 w-9 h-9 flex items-center justify-center rounded-lg bg-red-500/20 text-red-400 hover:text-red-300 hover:bg-red-500/30 border border-red-500/30 transition-colors shadow-sm"
+                                            title="Stop generating"
+                                        >
+                                            <Square className="w-4 h-4 fill-current" />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleSend}
+                                            disabled={!input.trim()}
+                                            className="absolute right-2 bottom-2 w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-cyan-400 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                        </button>
+                                    )}
                                 </div>
                                 {controlBar}
                             </div>

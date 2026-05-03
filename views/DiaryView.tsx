@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavStore } from '../store/useNavStore';
 import { useIntentStore } from '../store/useIntentStore';
+import { useLeetCodeActivityStore } from '../store/useLeetCodeActivityStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
-import { BookOpen, Sparkles, PenLine, ChevronLeft, ChevronRight, Loader2, Trash2, CalendarClock } from 'lucide-react';
+import { BookOpen, Sparkles, PenLine, ChevronLeft, ChevronRight, Loader2, Trash2, CalendarClock, BellRing, CheckCircle2 } from 'lucide-react';
 
 interface DiaryEntry {
     id: string;
@@ -19,6 +20,12 @@ function todayStr() {
     return new Date().toISOString().slice(0, 10);
 }
 
+function yesterdayStr() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+}
+
 function formatDisplayDate(dateStr: string) {
     const d = new Date(dateStr + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -30,127 +37,224 @@ function addDays(dateStr: string, n: number): string {
     return d.toISOString().slice(0, 10);
 }
 
+/** Auto-create key stored in localStorage to avoid duplicate auto-creation */
+const getAutoCreateKey = (date: string) => `diary_auto_created_${date}`;
+
 export const DiaryView: React.FC = () => {
     const setHasUnsavedChanges = useNavStore(s => s.setHasUnsavedChanges);
-    const { settings } = useIntentStore();
+    const { settings, setSettings } = useIntentStore();
     const [activeDate, setActiveDate] = useState(todayStr());
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
-    const [yesterdaySummary, setYesterdaySummary] = useState<DiaryEntry | null>(null);
-    const [yesterdaySummaryError, setYesterdaySummaryError] = useState<string | null>(null);
+    const [aiSummary, setAiSummary] = useState<DiaryEntry | null>(null);
+    const [aiSummaryError, setAiSummaryError] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editContent, setEditContent] = useState('');
     const [newContent, setNewContent] = useState('');
     const [isSavingManual, setIsSavingManual] = useState(false);
-    const [isGeneratingYesterday, setIsGeneratingYesterday] = useState(false);
+    const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+    const [autoCreateMsg, setAutoCreateMsg] = useState<string | null>(null);
     const textRef = useRef<HTMLTextAreaElement>(null);
+
+    // Auto-create diary setting (stored in settings via key autoCreateDiary)
+    const autoCreateEnabled = !!((settings as any)?.autoCreateDiary ?? false);
+
+    const toggleAutoCreate = () => {
+        if (settings) {
+            const updated = { ...settings, autoCreateDiary: !autoCreateEnabled } as any;
+            setSettings(updated);
+            try { window.atheletiaAPI?.settings?.save?.(updated); } catch { /* offline */ }
+        }
+    };
 
     useEffect(() => {
         setHasUnsavedChanges(newContent.trim().length > 0 || (editingId !== null && editContent.trim().length > 0));
     }, [newContent, editingId, editContent, setHasUnsavedChanges]);
 
     const currentDateEntries = entries.filter(e => e.date === activeDate);
-    const aiEntries = currentDateEntries.filter(e => e.isAiGenerated);
     const manualEntries = currentDateEntries.filter(e => !e.isAiGenerated);
-    const yesterdayDate = addDays(todayStr(), -1);
+    const aiEntries = currentDateEntries.filter(e => e.isAiGenerated);
 
-    // Load entries for the active date
+    /** Resolve API key from settings for the active provider */
+    const getApiKey = useCallback(() => {
+        const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
+        switch (provider) {
+            case 'openai': return settings?.openaiApiKey?.trim() || '';
+            case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
+            case 'groq': return settings?.groqApiKey?.trim() || '';
+            case 'gemini': return (settings as any)?.geminiApiKey?.trim() || '';
+            default: return settings?.nvidiaApiKey?.trim() || '';
+        }
+    }, [settings]);
+
+    // Load entries for the ACTIVE DATE ONLY — no cross-date contamination
     useEffect(() => {
+        let cancelled = false;
         const load = async () => {
+            console.log('[DiaryView] load() called for activeDate:', activeDate);
+            console.log('[DiaryView] window.atheletiaAPI:', window.atheletiaAPI);
+            console.log('[DiaryView] window.atheletiaAPI?.diary:', window.atheletiaAPI?.diary);
             try {
                 if (window.atheletiaAPI?.diary) {
-                    const data = await window.atheletiaAPI.diary.getEntries(activeDate);
-                    setEntries(data);
+                    console.log('[DiaryView] Calling getEntries for', activeDate);
+                    // getEntries must only return entries for the exact activeDate
+                    const data: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(activeDate);
+                    console.log('[DiaryView] getEntries result for', activeDate, ':', data);
+                    if (cancelled) return;
+                    // Extra client-side guard: filter by date just in case backend returns extras
+                    const dateFiltered = (data || []).filter((e: DiaryEntry) => e.date === activeDate);
+                    setEntries(dateFiltered);
+                    const latestAi = dateFiltered.find((e: DiaryEntry) => e.isAiGenerated) || null;
+                    setAiSummary(latestAi);
                 } else {
-                    setEntries([]);
-                    return;
+                    console.error('[DiaryView] diary API not available');
+                    if (!cancelled) { setEntries([]); setAiSummary(null); }
                 }
-            } catch { /* offline */ }
+            } catch (loadError) {
+                console.error('[DiaryView] getEntries failed:', loadError);
+            }
         };
         load();
+        return () => { cancelled = true; };
     }, [activeDate]);
 
-    useEffect(() => {
-        const loadYesterdaySummary = async () => {
-            try {
-                if (!window.atheletiaAPI?.diary) {
-                    setYesterdaySummary(null);
-                    return;
-                }
-                const data = await window.atheletiaAPI.diary.getEntries(yesterdayDate);
-                const latestAi = (data || []).find((entry: DiaryEntry) => entry.isAiGenerated) || null;
-                setYesterdaySummary(latestAi);
-            } catch {
-                setYesterdaySummary(null);
-            }
-        };
-        loadYesterdaySummary();
-    }, [yesterdayDate]);
-
-    const handleGenerateYesterdaySummary = async () => {
-        setIsGeneratingYesterday(true);
-        setYesterdaySummaryError(null);
+    /** Core summary generation — tied strictly to `targetDate` */
+    const generateSummaryForDate = useCallback(async (targetDate: string, silent = false) => {
+        if (!silent) {
+            setIsGeneratingSummary(true);
+            setAiSummaryError(null);
+        }
         try {
-            if (window.atheletiaAPI?.diary) {
-                const apiKey = (() => {
-                    const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
-                    switch (provider) {
-                        case 'openai': return settings?.openaiApiKey?.trim() || '';
-                        case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
-                        case 'groq': return settings?.groqApiKey?.trim() || '';
-                        case 'gemini': return settings?.geminiApiKey?.trim() || '';
-                        default: return settings?.nvidiaApiKey?.trim() || '';
-                    }
-                })();
+            if (!window.atheletiaAPI?.diary) {
+                if (!silent) setAiSummaryError('Diary backend is unavailable in this runtime.');
+                return null;
+            }
+            const apiKey = getApiKey();
+            if (!apiKey) {
+                if (!silent) setAiSummaryError('No API key configured. Go to Settings → API Keys to add one for your selected provider.');
+                return null;
+            }
 
-                const content = await window.atheletiaAPI.diary.generateEntry(yesterdayDate, undefined, apiKey);
-                const now = Date.now() / 1000;
-                const generated: DiaryEntry = {
-                    id: `ai-yesterday-${Date.now()}`,
-                    date: yesterdayDate,
-                    content,
-                    isAiGenerated: true,
-                    createdAt: now,
-                    updatedAt: now,
-                };
-                try {
-                    const saved = await window.atheletiaAPI.diary.saveEntry(generated);
-                    setYesterdaySummary(saved);
-                    if (activeDate === yesterdayDate) {
-                        setEntries(p => [saved, ...p.filter(e => e.id !== saved.id)]);
-                    }
-                } catch {
-                    setYesterdaySummary(generated);
-                    if (activeDate === yesterdayDate) {
-                        setEntries(p => [generated, ...p.filter(e => e.id !== generated.id)]);
-                    }
-                }
-            } else {
-                setYesterdaySummaryError('Diary backend is unavailable in this runtime.');
+            // Gather ONLY this date's LeetCode context
+            const leetCodeActivity = useLeetCodeActivityStore.getState().getDayActivity(targetDate);
+            let extraContext = `Date: ${targetDate}\n`;
+            if (leetCodeActivity && leetCodeActivity.count > 0) {
+                extraContext += `LeetCode Submissions: ${leetCodeActivity.count} problems solved on ${targetDate}.\n`;
+            }
+            extraContext += `[Only summarize activities from ${targetDate}. Do not reference other dates.]\n`;
+
+            const model = (settings as any)?.defaultModel || undefined;
+            const provider = (settings as any)?.aiProvider || undefined;
+            const content = await window.atheletiaAPI.diary.generateEntry(targetDate, extraContext, model, apiKey, provider);
+            if (!content || typeof content !== 'string' || !content.trim()) {
+                if (!silent) setAiSummaryError('AI returned an empty summary. Ensure your API key is valid and the provider is reachable.');
+                return null;
+            }
+            const now = Math.floor(Date.now() / 1000);
+            const generated: DiaryEntry = {
+                id: `ai-${targetDate}-${Date.now()}`,
+                date: targetDate,
+                content,
+                isAiGenerated: true,
+                createdAt: now,
+                updatedAt: now,
+            };
+            try {
+                const saved = await window.atheletiaAPI.diary.saveEntry(generated);
+                console.log('[DiaryView] saveEntry result:', saved);
+                return saved;
+            } catch (saveError) {
+                console.error('[DiaryView] saveEntry failed:', saveError);
+                return generated;
             }
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to generate summary.';
-            setYesterdaySummaryError(message);
+            const message = error instanceof Error ? error.message : String(error);
+            const friendly = message.toLowerCase().includes('api key')
+                ? '🔑 API key error — check Settings → API Keys.'
+                : message.toLowerCase().includes('network') || message.toLowerCase().includes('fetch')
+                ? '🌐 Network error — check your internet connection.'
+                : `Failed to generate summary: ${message}`;
+            if (!silent) setAiSummaryError(friendly);
+            return null;
+        } finally {
+            if (!silent) setIsGeneratingSummary(false);
         }
-        setIsGeneratingYesterday(false);
+    }, [getApiKey]);
+
+    const handleGenerateSummary = async () => {
+        const result = await generateSummaryForDate(activeDate);
+        if (result) {
+            setAiSummary(result);
+            setEntries(p => [result, ...p.filter(e => e.id !== result.id)]);
+        }
     };
+
+    // ── Auto-create yesterday's diary at midnight ──────────────────────────────
+    useEffect(() => {
+        if (!autoCreateEnabled) return;
+
+        const runAutoCreate = async () => {
+            const yesterday = yesterdayStr();
+            const key = getAutoCreateKey(yesterday);
+            if (localStorage.getItem(key)) return; // already auto-created for this yesterday
+
+            try {
+                // Check if yesterday already has an AI entry
+                if (window.atheletiaAPI?.diary) {
+                    const existing: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(yesterday);
+                    const hasAi = (existing || []).some((e: DiaryEntry) => e.isAiGenerated && e.date === yesterday);
+                    if (hasAi) {
+                        localStorage.setItem(key, '1');
+                        return;
+                    }
+                }
+                // Run silently in the background — no banner
+                console.log(`[Diary] Auto-creating diary for ${yesterday}...`);
+                const result = await generateSummaryForDate(yesterday, true);
+                if (result) {
+                    localStorage.setItem(key, '1');
+                    console.log(`[Diary] Auto-created diary for ${yesterday}`);
+                    // If the user is currently viewing yesterday, refresh the entries
+                    if (activeDate === yesterday) {
+                        setAiSummary(result);
+                        setEntries(p => [result, ...p.filter(e => e.id !== result.id)]);
+                    }
+                }
+            } catch { /* ignore */ }
+        };
+
+        // Run once immediately (silently)
+        runAutoCreate();
+
+        // Schedule at midnight
+        const now = new Date();
+        const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+        const msUntilMidnight = midnight.getTime() - now.getTime();
+        const midnightTimer = setTimeout(() => {
+            runAutoCreate();
+        }, msUntilMidnight);
+
+        return () => clearTimeout(midnightTimer);
+    }, [autoCreateEnabled, generateSummaryForDate, activeDate]);
 
     const handleAddManual = async () => {
         if (!newContent.trim()) return;
         setIsSavingManual(true);
-        const now = Math.floor(Date.now() / 1000);
         const entry: DiaryEntry = {
             id: `manual-${Date.now()}`, date: activeDate, content: newContent.trim(),
-            isAiGenerated: false, createdAt: Date.now() / 1000, updatedAt: Date.now() / 1000,
+            isAiGenerated: false, createdAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000),
         };
+        console.log('[DiaryView] handleAddManual - saving entry:', entry);
         try {
             if (window.atheletiaAPI?.diary) {
                 const saved = await window.atheletiaAPI.diary.saveEntry(entry);
+                console.log('[DiaryView] handleAddManual - saveEntry result:', saved);
                 setEntries(p => [saved, ...p]);
                 setNewContent('');
+            } else {
+                console.error('[DiaryView] handleAddManual - diary API not available');
             }
         } catch (e) {
-            console.error("Failed to save entry:", e);
-            // Optimistic update removed to avoid data loss
+            console.error("[DiaryView] handleAddManual - Failed to save entry:", e);
         } finally {
             setIsSavingManual(false);
         }
@@ -158,8 +262,7 @@ export const DiaryView: React.FC = () => {
 
     const handleSaveEdit = async () => {
         if (!editingId) return;
-        const now = Date.now() / 1000;
-        
+        const now = Math.floor(Date.now() / 1000);
         try {
             const entry = entries.find(e => e.id === editingId);
             if (entry && window.atheletiaAPI?.diary) {
@@ -177,11 +280,14 @@ export const DiaryView: React.FC = () => {
             if (window.atheletiaAPI?.diary) {
                 await window.atheletiaAPI.diary.deleteEntry(id);
                 setEntries(p => p.filter(e => e.id !== id));
+                if (aiSummary?.id === id) setAiSummary(null);
             }
         } catch (e) {
             console.error("Failed to delete entry:", e);
         }
     };
+
+    const isToday = activeDate === todayStr();
 
     return (
         <div className="flex flex-col h-full">
@@ -191,9 +297,30 @@ export const DiaryView: React.FC = () => {
                     <h1 className="text-2xl font-bold text-white tracking-tight">Diary</h1>
                     <p className="text-xs text-gray-500">Personal dashboard + AI reflections + manual notes</p>
                 </div>
-
-
+                {/* Auto-create toggle */}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={toggleAutoCreate}
+                        title="Auto-create diary entry for yesterday at midnight"
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                            autoCreateEnabled
+                                ? 'bg-[var(--accent-soft)] border-accent/30 text-accent'
+                                : 'bg-transparent border-[#2a2a2a] text-gray-500 hover:text-gray-300'
+                        }`}
+                    >
+                        <BellRing size={12} />
+                        Auto-Create
+                    </button>
+                </div>
             </div>
+
+            {/* Auto-create notification */}
+            {autoCreateMsg && (
+                <div className="mx-6 md:mx-10 mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent-soft)] border border-accent/20 text-accent text-xs">
+                    <CheckCircle2 size={13} />
+                    {autoCreateMsg}
+                </div>
+            )}
 
             {/* Date Navigation */}
             <div className="flex items-center gap-4 px-6 md:px-10 pb-5">
@@ -205,7 +332,8 @@ export const DiaryView: React.FC = () => {
                 </button>
                 <div className="flex-1 text-center">
                     <p className="text-sm font-semibold text-white">{formatDisplayDate(activeDate)}</p>
-                    {activeDate === todayStr() && <p className="text-[10px] text-cyan-500 mt-0.5 font-medium">TODAY</p>}
+                    {isToday && <p className="text-[10px] text-accent mt-0.5 font-medium">TODAY</p>}
+                    {activeDate === yesterdayStr() && <p className="text-[10px] text-gray-500 mt-0.5 font-medium">YESTERDAY</p>}
                 </div>
                 <button
                     onClick={() => setActiveDate(addDays(activeDate, 1))}
@@ -217,38 +345,56 @@ export const DiaryView: React.FC = () => {
             </div>
 
             {/* Entries */}
-            <div className="flex-1 overflow-y-auto px-6 md:px-10 pb-10 space-y-4">
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 md:px-10 pb-10 space-y-4">
+                {/* AI Summary Card */}
                 <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-5">
                     <div className="flex items-center justify-between gap-3 mb-3">
                         <div>
                             <p className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                                 <CalendarClock size={12} /> Personal Dashboard
                             </p>
-                            <p className="text-sm font-semibold text-white mt-1">Yesterday AI Summary</p>
-                            <p className="text-[11px] text-gray-500">{formatDisplayDate(yesterdayDate)}</p>
+                            <p className="text-sm font-semibold text-white mt-1">
+                                {isToday ? "Today's AI Summary" : 'AI Daily Summary'}
+                            </p>
+                            <p className="text-[11px] text-gray-500">{formatDisplayDate(activeDate)}</p>
                         </div>
-                        <button
-                            onClick={handleGenerateYesterdaySummary}
-                            disabled={isGeneratingYesterday}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/15 transition-all text-xs font-medium disabled:opacity-50"
-                        >
-                            {isGeneratingYesterday ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                            {yesterdaySummary ? 'Refresh Summary' : 'Generate Summary'}
-                        </button>
+                        {/* Allow generating summary for any past date including yesterday — never for today */}
+                        {!isToday && (
+                            <button
+                                onClick={handleGenerateSummary}
+                                disabled={isGeneratingSummary}
+                                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent-soft)] border border-accent/20 text-accent hover:bg-accent/15 transition-all text-xs font-medium disabled:opacity-50"
+                            >
+                                {isGeneratingSummary ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                {aiSummary ? 'Refresh Summary' : 'Generate Summary'}
+                            </button>
+                        )}
                     </div>
 
-                    {yesterdaySummary ? (
-                        <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-[#121212] prose-code:text-cyan-300 prose-code:before:content-none prose-code:after:content-none text-gray-300">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{yesterdaySummary.content}</ReactMarkdown>
+                    {isToday ? (
+                        <div className="space-y-2">
+                            <p className="text-sm text-gray-500 italic">
+                                Today's summary will be available tomorrow. Add your manual notes below for today.
+                            </p>
+                            {autoCreateEnabled && (
+                                <p className="text-xs text-gray-600">
+                                    <span className="text-accent font-medium">Auto-Create is ON</span> — a summary for today will be automatically generated at midnight.
+                                </p>
+                            )}
+                        </div>
+                    ) : aiSummary ? (
+                        <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-[#121212] prose-code:text-accent prose-code:before:content-none prose-code:after:content-none text-gray-300">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{aiSummary.content}</ReactMarkdown>
                         </div>
                     ) : (
-                        <p className="text-sm text-gray-500">No AI summary yet for yesterday. Click “Generate Summary”.</p>
+                        <p className="text-sm text-gray-500">No AI summary yet for {formatDisplayDate(activeDate)}. Click "Generate Summary".</p>
                     )}
-                    {yesterdaySummaryError && (
-                        <p className="text-xs text-red-400 mt-3">{yesterdaySummaryError}</p>
+                    {aiSummaryError && (
+                        <p className="text-xs text-red-400 mt-3">{aiSummaryError}</p>
                     )}
                 </div>
 
+                {/* Manual Notes Card */}
                 <div className="bg-[#111] border border-[#2a2a2a] rounded-2xl p-5">
                     <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <PenLine size={12} /> Manual Notes
@@ -266,7 +412,7 @@ export const DiaryView: React.FC = () => {
                         <button
                             onClick={handleAddManual}
                             disabled={!newContent.trim() || isSavingManual}
-                            className="px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 text-xs font-medium transition-colors disabled:opacity-50"
+                            className="px-4 py-2 rounded-lg bg-[var(--accent-soft)] border border-accent/20 text-accent hover:bg-[var(--accent-soft)] text-xs font-medium transition-colors disabled:opacity-50"
                         >
                             {isSavingManual ? 'Saving…' : 'Save Note'}
                         </button>
@@ -274,10 +420,12 @@ export const DiaryView: React.FC = () => {
                 </div>
 
                 {currentDateEntries.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-56 text-gray-600">
-                        <BookOpen size={36} className="mb-3 opacity-40" />
-                        <p className="text-sm">No entries for this day yet.</p>
-                        <p className="text-xs mt-1">Use "Generate Summary" above to create one from yesterday's activity, or add a manual note above.</p>
+                    <div className="flex flex-col items-center justify-center h-40 text-gray-600">
+                        <BookOpen size={32} className="mb-3 opacity-40" />
+                        <p className="text-sm">No entries for {formatDisplayDate(activeDate)} yet.</p>
+                        {!isToday && (
+                            <p className="text-xs mt-1">Use "Generate Summary" above or add a manual note.</p>
+                        )}
                     </div>
                 ) : currentDateEntries.map(entry => (
                     <div key={entry.id} className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-5">
@@ -285,7 +433,7 @@ export const DiaryView: React.FC = () => {
                         <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2">
                                 {entry.isAiGenerated
-                                    ? <span className="flex items-center gap-1 text-[10px] text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"><Sparkles size={9} /> AI Generated</span>
+                                    ? <span className="flex items-center gap-1 text-[10px] text-accent bg-[var(--accent-soft)] border border-accent/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"><Sparkles size={9} /> AI Generated</span>
                                     : <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-white/5 border border-white/10 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"><PenLine size={9} /> Manual</span>
                                 }
                             </div>
@@ -315,7 +463,7 @@ export const DiaryView: React.FC = () => {
                                 />
                                 <div className="flex gap-2 mt-3">
                                     <button onClick={handleSaveEdit}
-                                        className="px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 text-xs font-medium transition-colors">
+                                        className="px-4 py-2 rounded-lg bg-[var(--accent-soft)] border border-accent/20 text-accent hover:bg-[var(--accent-soft)] text-xs font-medium transition-colors">
                                         Save
                                     </button>
                                     <button onClick={() => setEditingId(null)}
@@ -325,7 +473,13 @@ export const DiaryView: React.FC = () => {
                                 </div>
                             </div>
                         ) : (
-                            <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{entry.content}</p>
+                            entry.isAiGenerated ? (
+                                <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-[#121212] prose-code:text-accent prose-code:before:content-none prose-code:after:content-none text-gray-300">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{entry.content}</ReactMarkdown>
+                                </div>
+                            ) : (
+                                <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{entry.content}</p>
+                            )
                         )}
                     </div>
                 ))}

@@ -72,6 +72,8 @@ export interface AppSettings {
     // Locale
     locale?: string;
     dateFormat?: string;
+    // Diary
+    autoCreateDiary?: boolean;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────

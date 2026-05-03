@@ -219,6 +219,13 @@ fn resolve_dashboard_ai_endpoint(provider: &str, user_model: Option<&str>) -> (S
             "https://api.groq.com/openai/v1/chat/completions".to_string(),
             user_model.unwrap_or("llama-3.3-70b-versatile").to_string(),
         ),
+        "gemini" => {
+            let model = user_model.unwrap_or("gemini-2.0-flash");
+            (
+                format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model),
+                model.to_string(),
+            )
+        },
         _ => (
             "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
             user_model.unwrap_or("meta/llama-3.3-70b-instruct").to_string(),
@@ -799,30 +806,57 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
 
     let (endpoint, model_name) = resolve_dashboard_ai_endpoint(ai_provider, ai_model);
 
-    let req = Req {
-        model: model_name,
-        messages: vec![
-            Msg { role: "system".into(), content: "You output valid JSON only. For the contacts array, the 'context' field must only describe professional or social interaction patterns (e.g. '3 interactions in WhatsApp'). Never include romantic, intimate, or personal relationship labels such as 'love interest', 'crush', 'girlfriend', 'boyfriend', or descriptions of personal habits. Do not include any person named 'Sneha Nair' in the contacts array.".into() },
-            Msg { role: "user".into(), content: prompt },
-        ],
-        temperature: 0.2,
-    };
-
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build().map_err(|e| e.to_string())?;
-    let mut request = client.post(&endpoint).json(&req);
-    request = if ai_provider.to_lowercase() == "anthropic" {
-        request
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-    } else {
-        request.header("Authorization", format!("Bearer {}", api_key))
-    };
-    let res: Resp = request.send().await.map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
 
-    let content = res.choices.into_iter().next().map(|c| c.message.content).unwrap_or_default();
+    let provider_norm = ai_provider.to_lowercase();
+
+    let content = if provider_norm == "gemini" {
+        // Gemini uses a different schema
+        let system_msg = "You output valid JSON only. For the contacts array, the 'context' field must only describe professional or social interaction patterns (e.g. '3 interactions in WhatsApp'). Never include romantic, intimate, or personal relationship labels such as 'love interest', 'crush', 'girlfriend', 'boyfriend', or descriptions of personal habits.";
+        let full_prompt = format!("{}\n\n{}", system_msg, prompt);
+        let gemini_url = format!("{}?key={}", endpoint, api_key);
+        let body = serde_json::json!({
+            "contents": [{ "parts": [{ "text": full_prompt }] }],
+            "generationConfig": { "temperature": 0.2, "maxOutputTokens": 2048 }
+        });
+        let resp = client.post(&gemini_url)
+            .header("Content-Type", "application/json")
+            .json(&body).send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("AI {} — {}", status, &text[..text.len().min(300)]));
+        }
+        let parsed: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        parsed.get("candidates").and_then(|v| v.as_array()).and_then(|a| a.first())
+            .and_then(|c| c.get("content")).and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array()).and_then(|parts| parts.first())
+            .and_then(|part| part.get("text")).and_then(|t| t.as_str())
+            .unwrap_or("{}").to_string()
+    } else {
+        let req = Req {
+            model: model_name,
+            messages: vec![
+                Msg { role: "system".into(), content: "You output valid JSON only. For the contacts array, the 'context' field must only describe professional or social interaction patterns (e.g. '3 interactions in WhatsApp'). Never include romantic, intimate, or personal relationship labels such as 'love interest', 'crush', 'girlfriend', 'boyfriend', or descriptions of personal habits. Do not include any person named 'Sneha Nair' in the contacts array.".into() },
+                Msg { role: "user".into(), content: prompt },
+            ],
+            temperature: 0.2,
+        };
+        let mut request = client.post(&endpoint).json(&req);
+        request = if provider_norm == "anthropic" {
+            request
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+        } else {
+            request.header("Authorization", format!("Bearer {}", api_key))
+        };
+        let res: Resp = request.send().await.map_err(|e| e.to_string())?
+            .json().await.map_err(|e| e.to_string())?;
+        res.choices.into_iter().next().map(|c| c.message.content).unwrap_or_default()
+    };
+
     let clean = content.trim().trim_start_matches("```json").trim_end_matches("```").trim();
     
     // We parse loosely and fill defaults if NIM fails to return arrays

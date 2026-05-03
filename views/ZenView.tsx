@@ -50,7 +50,7 @@ export const ZenView: React.FC = () => {
   };
 
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center relative bg-[#050505] overflow-hidden animate-in fade-in duration-700">
+    <div className="h-full w-full flex flex-col items-center justify-center relative overflow-hidden animate-in fade-in duration-700" style={{ background: 'var(--bg-app)' }}>
 
       {/* Ambient Background Glow */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-900/10 rounded-full blur-[120px] pointer-events-none" />
@@ -64,7 +64,7 @@ export const ZenView: React.FC = () => {
             <div className="flex items-center gap-2 mb-8 bg-white/5 p-1 rounded-full border border-white/5 backdrop-blur-md">
               <button
                 onClick={() => setMode('pomodoro')}
-                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${mode === 'pomodoro' ? 'bg-indigo-500/20 text-indigo-300' : 'text-gray-400 hover:text-white'}`}
+                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${mode === 'pomodoro' ? 'bg-[var(--accent-soft)] text-accent' : 'text-gray-400 hover:text-white'}`}
               >
                 Pomodoro
               </button>
@@ -76,7 +76,7 @@ export const ZenView: React.FC = () => {
               </button>
               <button
                 onClick={() => setMode('longBreak')}
-                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${mode === 'longBreak' ? 'bg-blue-500/20 text-blue-300' : 'text-gray-400 hover:text-white'}`}
+                className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${mode === 'longBreak' ? 'bg-[var(--accent-soft)] text-accent' : 'text-gray-400 hover:text-white'}`}
               >
                 Long Break
               </button>
@@ -94,7 +94,7 @@ export const ZenView: React.FC = () => {
                 onChange={(e) => setCustomMinutes(e.target.value)}
                 autoFocus
                 onBlur={handleTimeEditSubmit}
-                className="bg-transparent border-b-2 border-indigo-500 text-8xl md:text-9xl font-thin font-mono tracking-tighter tabular-nums text-white text-center w-48 outline-none"
+                className="bg-transparent border-b-2 border-accent text-8xl md:text-9xl font-thin font-mono tracking-tighter tabular-nums text-white text-center w-48 outline-none"
               />
             </form>
           ) : (
@@ -116,7 +116,7 @@ export const ZenView: React.FC = () => {
           <div className="flex items-center justify-center gap-6 mt-8 opacity-90 transition-opacity">
             <button
               onClick={toggleTimer}
-              className={`w-14 h-14 rounded-full border flex items-center justify-center transition-all ${isActive ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/30' : 'bg-white/5 border-white/10 text-gray-300 hover:text-white hover:bg-white/10 hover:border-white/20 hover:scale-105'}`}
+              className={`w-14 h-14 rounded-full border flex items-center justify-center transition-all ${isActive ? 'bg-[var(--accent-soft)] border-[var(--accent-soft)] text-accent hover:bg-[var(--accent-soft)]' : 'bg-white/5 border-white/10 text-gray-300 hover:text-white hover:bg-white/10 hover:border-white/20 hover:scale-105'}`}
             >
               {isActive ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" className="ml-1" />}
             </button>
@@ -134,7 +134,7 @@ export const ZenView: React.FC = () => {
             {/* Pomodoro Toggle */}
             <button
               onClick={togglePomodoro}
-              className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest transition-colors ${isPomodoroEnabled ? 'text-indigo-300' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest transition-colors ${isPomodoroEnabled ? 'text-accent' : 'text-gray-500 hover:text-gray-300'}`}
             >
               <Clock size={14} />
               Pomodoro
@@ -144,7 +144,7 @@ export const ZenView: React.FC = () => {
             {/* Music Sync Toggle */}
             <button
               onClick={toggleAutoSyncMusic}
-              className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest transition-colors ${autoSyncMusic ? 'text-pink-300' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest transition-colors ${autoSyncMusic ? 'text-accent' : 'text-gray-500 hover:text-gray-300'}`}
               title="Auto-pause music when timer finishes"
             >
               <Music size={14} />
@@ -165,7 +165,7 @@ export const ZenView: React.FC = () => {
             onClick={() => {
               useNavStore.getState().setActiveTab('music');
             }}
-            className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+            className="text-xs text-accent hover:text-accent transition-colors flex items-center gap-1"
           >
             Open Music App <Play size={10} />
           </button>
@@ -199,7 +199,7 @@ export const ZenView: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100 shadow-lg">
+                <div className="w-8 h-8 rounded-full bg-accent text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100 shadow-lg">
                   <Play size={14} fill="currentColor" className="ml-0.5" />
                 </div>
               </div>
@@ -210,7 +210,7 @@ export const ZenView: React.FC = () => {
 
       {/* --- COMPONENT C: AMBIENT TOGGLE --- */}
       <div className="z-20 mt-10 flex items-center gap-4 bg-white/5 px-6 py-3 rounded-full border border-white/5 backdrop-blur-md">
-        <Moon size={16} className={dndEnabled ? 'text-indigo-400' : 'text-gray-500'} />
+        <Moon size={16} className={dndEnabled ? 'text-accent' : 'text-gray-500'} />
         <span className={`text-xs font-bold uppercase tracking-widest ${dndEnabled ? 'text-indigo-200' : 'text-gray-500'}`}>
           Do Not Disturb
         </span>
@@ -219,7 +219,7 @@ export const ZenView: React.FC = () => {
           onClick={() => setDndEnabled(!dndEnabled)}
           className={`
             w-10 h-5 rounded-full relative transition-colors duration-300
-            ${dndEnabled ? 'bg-indigo-500/50' : 'bg-gray-800'}
+            ${dndEnabled ? 'bg-[var(--accent-strong)]' : 'bg-gray-800'}
           `}
         >
           <div className={`

@@ -187,8 +187,8 @@ export function initAtheletiaApi() {
       getEntries: (date?: string) => invoke<any[]>('diary_get_entries', { date }),
       saveEntry: (entry: any) => invoke<any>('diary_save_entry', { entry }),
       deleteEntry: (id: string) => invoke<boolean>('diary_delete_entry', { id }),
-      generateEntry: (date: string, model?: string, apiKey?: string) =>
-        invoke<string>('diary_generate_entry', { date, model, apiKey }),
+      generateEntry: (date: string, extraContext?: string, model?: string, apiKey?: string, provider?: string) =>
+        invoke<string>('diary_generate_entry', { date, extraContext, model, apiKey, provider }),
     },
     settings: {
       get: () => invoke<any>('settings_get'),
@@ -219,7 +219,8 @@ export function initAtheletiaApi() {
         temperature?: number,
         baseUrl?: string,
         apiKey?: string,
-      ) => invoke<void>('brain_chat_stream', { model, messages, useLocal, maxTokens, temperature, baseUrl, apiKey }),
+        provider?: string,
+      ) => invoke<void>('brain_chat_stream', { model, messages, useLocal, maxTokens, temperature, baseUrl, apiKey, provider }),
       brainCancelStream: () => invoke<boolean>('brain_cancel_stream'),
     },
     storage: {
@@ -313,7 +314,7 @@ declare global {
         getEntries: (date?: string) => Promise<any[]>;
         saveEntry: (entry: any) => Promise<any>;
         deleteEntry: (id: string) => Promise<boolean>;
-        generateEntry: (date: string, model?: string, apiKey?: string) => Promise<string>;
+        generateEntry: (date: string, extraContext?: string, model?: string, apiKey?: string, provider?: string) => Promise<string>;
       };
       settings?: {
         get: () => Promise<any>;
@@ -343,6 +344,7 @@ declare global {
           temperature?: number,
           baseUrl?: string,
           apiKey?: string,
+          provider?: string,
         ) => Promise<void>;
         brainCancelStream: () => Promise<boolean>;
       };

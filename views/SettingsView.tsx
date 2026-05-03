@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { AppSettings, useIntentStore } from '../store/useIntentStore';
 import { THEME_GROUPS, getThemePreset, resolveColorSchemeForTheme, type ThemePresetId } from '../lib/theme';
+import { useMultiProviderModels } from '../hooks/useMultiProviderModels';
 
 const DEFAULT_SETTINGS: AppSettings = {
   nvidiaApiKey: '',
@@ -113,10 +114,9 @@ export const SettingsView: React.FC = () => {
   const [activeSection, setActiveSection] = useState<SectionId>('api');
   const [isSaving, setIsSaving] = useState(false);
 
-  const [models, setModels] = useState<string[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState('');
   const [modelSearch, setModelSearch] = useState('');
+  const { groups: modelGroups, allModels: allCloudModels, loading: modelsLoading, error: modelsErrorRaw, refetch: refetchModels } = useMultiProviderModels(local);
+  const modelsError = modelsErrorRaw ? String(modelsErrorRaw) : '';
 
   const [validationMsg, setValidationMsg] = useState('');
   const [validationOk, setValidationOk] = useState<boolean | null>(null);
@@ -189,26 +189,14 @@ export const SettingsView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchModels = async () => {
-    if ((local.aiProvider || 'nvidia') !== 'nvidia') {
-      setModelsError('Model fetch is currently available only for NVIDIA provider.');
-      return;
-    }
-    if (!local.nvidiaApiKey) {
-      setModelsError('Enter NVIDIA API key first.');
-      return;
-    }
-    setModelsLoading(true);
-    setModelsError('');
-    try {
-      const data = await window.atheletiaAPI?.settings?.getNvidiaModels?.(local.nvidiaApiKey);
-      const ids: string[] = (data ?? []).map((m: any) => m.id ?? m).filter(Boolean).sort();
-      setModels(ids);
-    } catch (e: any) {
-      setModelsError(`Failed to fetch models: ${e.message || e}`);
-    } finally {
-      setModelsLoading(false);
-    }
+  const inferProviderFromModel = (modelId: string): string => {
+    const lower = modelId.toLowerCase();
+    if (lower.startsWith('gemini')) return 'gemini';
+    if (lower.startsWith('gpt-') || lower.startsWith('o')) return 'openai';
+    if (lower.startsWith('claude')) return 'anthropic';
+    if (lower.startsWith('meta/') || lower.startsWith('nvidia/') || lower.includes('nim')) return 'nvidia';
+    if (lower.startsWith('llama-') || lower.startsWith('mixtral')) return 'groq';
+    return 'nvidia';
   };
 
   const validateCurrentKey = async () => {
@@ -383,12 +371,12 @@ export const SettingsView: React.FC = () => {
                   />
                 </div>
                 <button
-                  onClick={fetchModels}
+                  onClick={refetchModels}
                   disabled={modelsLoading}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-[#282828] text-xs text-gray-400 hover:text-white disabled:opacity-50"
                 >
                   {modelsLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                  {models.length === 0 ? 'Fetch' : 'Refresh'}
+                  Refresh
                 </button>
               </div>
               {modelsError && <p className="text-xs text-red-400">{modelsError}</p>}
@@ -399,19 +387,60 @@ export const SettingsView: React.FC = () => {
                 className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200 font-mono"
               />
               <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                {(() => {
-                  const allModels = [...new Set([...models, local.defaultModel].filter(Boolean))];
-                  return allModels.filter((m) => m.toLowerCase().includes(modelSearch.toLowerCase())).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => set('defaultModel')(m)}
-                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl border text-left text-xs ${local.defaultModel === m ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-300' : 'border-[#1a1a1a] bg-[#141414] text-gray-400 hover:text-gray-200'}`}
-                    >
-                      <Brain size={12} />
-                      <span className="flex-1 truncate font-mono">{m}</span>
-                      {local.defaultModel === m && <CheckCircle size={12} className="text-cyan-400" />}
-                    </button>
-                  ));
+                {modelsLoading ? (
+                  <div className="px-4 py-3 flex items-center justify-center gap-2">
+                    <Loader2 size={14} className="animate-spin text-cyan-400" />
+                    <span className="text-xs text-gray-500">Loading models...</span>
+                  </div>
+                ) : (() => {
+                  const filteredGroups = modelGroups.map(group => ({
+                    ...group,
+                    models: group.models.filter(m => {
+                      const q = modelSearch.toLowerCase();
+                      return (m.name || m.id).toLowerCase().includes(q) || m.id.toLowerCase().includes(q);
+                    })
+                  })).filter(g => g.models.length > 0);
+                  const manualMatch = local.defaultModel && !filteredGroups.some(g => g.models.some(m => m.id === local.defaultModel));
+                  return (
+                    <>
+                      {filteredGroups.length === 0 && !manualMatch && (
+                        <div className="px-4 py-3 text-center">
+                          <p className="text-xs text-gray-500">No models found. Add an API key above, or type a model ID.</p>
+                        </div>
+                      )}
+                      {filteredGroups.map(group => (
+                        <div key={group.provider} className="border-b border-[#1a1a1a] last:border-b-0">
+                          <div className="px-3 py-1.5 bg-white/5">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{group.label}</p>
+                          </div>
+                          {group.models.map(m => (
+                            <button
+                              key={m.id}
+                              onClick={() => {
+                                set('defaultModel')(m.id);
+                                set('aiProvider')(group.provider);
+                              }}
+                              className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl border text-left text-xs ${local.defaultModel === m.id ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-300' : 'border-[#1a1a1a] bg-[#141414] text-gray-400 hover:text-gray-200'}`}
+                            >
+                              <Brain size={12} />
+                              <span className="flex-1 truncate font-mono">{m.name || m.id}</span>
+                              {local.defaultModel === m.id && <CheckCircle size={12} className="text-cyan-400" />}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                      {manualMatch && (
+                        <button
+                          onClick={() => set('defaultModel')(local.defaultModel)}
+                          className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl border text-left text-xs ${'border-cyan-500/30 bg-cyan-500/5 text-cyan-300'}`}
+                        >
+                          <Brain size={12} />
+                          <span className="flex-1 truncate font-mono">{local.defaultModel}</span>
+                          <CheckCircle size={12} className="text-cyan-400" />
+                        </button>
+                      )}
+                    </>
+                  );
                 })()}
               </div>
             </div>
@@ -499,6 +528,12 @@ export const SettingsView: React.FC = () => {
 
                 <Toggle label="Minimize to Tray" desc="Minimize the app to the system tray instead of taskbar." checked={!!local.minimizeToTray} onChange={set('minimizeToTray')} />
                 <Toggle label="Close to Tray" desc="Closing the window hides it to the tray." checked={!!local.closeToTray} onChange={set('closeToTray')} />
+                <Toggle
+                  label="Auto-Create Diary"
+                  desc="At midnight, automatically generate yesterday's AI diary summary. Runs silently in the background."
+                  checked={!!(local as any).autoCreateDiary}
+                  onChange={(v) => setLocal((p) => ({ ...p, autoCreateDiary: v } as any))}
+                />
               </div>
             </div>
           )}

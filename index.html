@@ -114,6 +114,15 @@
       scrollbar-color: var(--accent) transparent;
     }
 
+    /* Hide scrollbar completely */
+    .scrollbar-none::-webkit-scrollbar {
+      display: none;
+    }
+    .scrollbar-none {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
     /* Shared overlay layers: base app < dropdowns < sidebar/widgets < modals < system overlays */
     .z-dropdown { z-index: 60; }
     .z-sidebar { z-index: 70; }
@@ -310,13 +319,14 @@
 
     .border-\[\#1a1a1a\],
     .border-\[\#1e1e1e\],
+    .border-\[\#1f2329\],
     .border-\[\#222\],
     .border-\[\#262626\],
     .border-\[\#282828\],
     .border-\[\#2a2a2a\],
     .border-\[\#2a2c32\],
     .border-\[\#333\] {
-      border-color: var(--border-soft) !important;
+      border-color: var(--border-strong) !important;
     }
 
     .hover\:bg-\[\#161616\]:hover,
@@ -380,6 +390,21 @@
     select {
       color-scheme: inherit;
     }
+
+    /* ── Global border-default for inline-style usage ── */
+    :root {
+      --border-default: var(--border-strong);
+    }
+
+    /* Divide (section separators) */
+    .divide-\\[\\#1a1a1a\\] > :not([hidden]) ~ :not([hidden]) {
+      border-color: var(--border-strong) !important;
+    }
+
+    /* Opacity-variant border classes used in ChatPage controls */
+    .border-\\[\\#333\\]\\/50 { border-color: var(--border-soft) !important; }
+    .border-\\[\\#333\\]\\/70 { border-color: var(--border-strong) !important; }
+
   </style>
 
   <!-- Global styles injected by Vite build -->

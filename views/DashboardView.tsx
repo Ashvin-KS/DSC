@@ -6,12 +6,12 @@ import { GoalsCard } from '../components/dashboard/GoalsCard';
 import { NewsCard } from '../components/dashboard/NewsCard';
 import { ProjectsCard } from '../components/dashboard/ProjectsCard';
 import { DetailModal } from '../components/dashboard/DetailModal';
-import { GraduationCap, Mail, CheckCircle, AlertTriangle, Sparkles, MessageSquare, RefreshCw } from 'lucide-react';
+import { GraduationCap, AlertTriangle, Sparkles, RefreshCw } from 'lucide-react';
 import { NewsManager } from '../components/dashboard/NewsManager';
 import { StatusBanner } from '../components/ui/StatusBanner';
 
 type ViewMode = 'grid' | 'goals' | 'news';
-type ModalType = 'assignments' | 'projects' | 'gatekeeper' | null;
+type ModalType = 'assignments' | 'projects' | null;
 const DASHBOARD_AUTO_REFRESH_MS = 5 * 60 * 60 * 1000;
 
 type ExpandedDetail = {
@@ -47,7 +47,6 @@ export const DashboardView: React.FC = () => {
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState({ name: '', update: '', files_changed: 0 });
   const primaryDeadline = overview?.deadlines?.[0] ?? null;
-  const primaryContact = overview?.contacts?.[0] ?? null;
 
   React.useEffect(() => {
     const loadOverview = async () => {
@@ -172,18 +171,6 @@ export const DashboardView: React.FC = () => {
       title: project?.name || 'Project',
       subtitle: `${project?.files_changed ?? 0} file change(s) detected`,
       body: `${project?.update || 'No project update details available.'}${otherProjects ? `\n\nOther detected projects:\n${otherProjects}` : ''}`,
-      loadingSummary: true,
-    };
-    setExpandedDetail(detail);
-    summarizeExpandedDetail(detail);
-  };
-
-  const openContactDetail = (contact: any) => {
-    const detail: ExpandedDetail = {
-      kind: 'contact',
-      title: contact?.name || 'Contact',
-      subtitle: contact?.last_seen ? `Last seen: ${agoFromUnix(contact.last_seen)}` : 'Last seen: recently',
-      body: contact?.context || 'No conversation context available.',
       loadingSummary: true,
     };
     setExpandedDetail(detail);
@@ -337,78 +324,12 @@ export const DashboardView: React.FC = () => {
           </Card>
         </button>
 
-        {/* 6. Cleaner (1 col) — click opens modal */}
-        {/* --- BOTTOM ROW --- */}
-
-        {/* 7. Email Gatekeeper (2 cols) — click opens modal */}
-        <button
-          onClick={() => setOpenModal('gatekeeper')}
-          className="col-span-1 md:col-span-2 text-left"
-        >
-          <Card title="Gatekeeper" icon={Mail} className="col-span-1 md:col-span-2 h-full hover:border-blue-500/20 transition-colors cursor-pointer">
-            {primaryContact ? (
-              <div className="flex flex-col items-center justify-center h-full py-2 text-center">
-                <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center mb-2">
-                  <MessageSquare size={22} className="text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.4)]" />
-                </div>
-                <h2 className="text-lg font-bold text-white mb-0.5 line-clamp-1">{primaryContact.name}</h2>
-                <p className="text-xs text-gray-500 line-clamp-2">{primaryContact.context}</p>
-                <p className="text-[10px] text-gray-600 mt-1">{overview?.contacts?.length || 0} communication contact(s) detected</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full py-2">
-                <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center mb-2">
-                  <CheckCircle size={24} className="text-blue-500 drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
-                </div>
-                <h2 className="text-lg font-bold text-white mb-0.5">No Communication Alerts</h2>
-                <p className="text-xs text-gray-500">WhatsApp/Telegram/Slack activity will surface here.</p>
-              </div>
-            )}
-          </Card>
-        </button>
-
-        {/* 8. Projects Hub (2 cols) — has its own internal expand */}
+        {/* 6. Projects Hub (2 cols) — has its own internal expand */}
         <ProjectsCard
           projects={overview?.projects || []}
           onProjectClick={openProjectDetail}
           onManage={() => setOpenModal('projects')}
         />
-
-        {/* --- PEOPLE CHATTED WITH ROW (last) --- */}
-        <div className="col-span-1 md:col-span-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={14} className="text-cyan-500" />
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">People You Chatted With</span>
-            <div className="flex-1 h-px bg-[#1e1e1e]" />
-          </div>
-          {(!overview?.contacts || overview.contacts.length === 0) ? (
-            <div className="w-full p-4 rounded-xl bg-[#0d0d0d] border border-[#222] text-center">
-              <MessageSquare size={20} className="text-gray-600 mx-auto mb-2" />
-              <p className="text-xs text-gray-500">No chat contacts detected yet (WhatsApp/Telegram/Slack/Teams).</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              {overview.contacts.slice(0, 12).map((contact: any, i: number) => (
-                <button
-                  key={`${contact.name}-${i}`}
-                  onClick={() => openContactDetail(contact)}
-                  className="flex flex-col gap-1.5 p-3 rounded-xl bg-[#0d0d0d] border border-[#222] hover:border-cyan-500/30 hover:bg-[#111] transition-all text-left group"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <MessageSquare size={11} className="text-cyan-500 flex-shrink-0" />
-                    <span className="text-[10px] text-gray-600 font-medium">{agoFromUnix(contact.last_seen)}</span>
-                  </div>
-                  <p className="text-[11px] text-gray-300 font-semibold leading-snug line-clamp-1 group-hover:text-white transition-colors">
-                    {contact.name || 'Unknown'}
-                  </p>
-                  <p className="text-[10px] text-gray-500 leading-snug line-clamp-2">
-                    {contact.context || 'Communication activity detected'}
-                  </p>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ─── Detail Modals ─────────────────────────────────────────── */}
@@ -603,38 +524,7 @@ export const DashboardView: React.FC = () => {
         </div>
       </DetailModal>
 
-      <DetailModal
-        title="Email Gatekeeper"
-        isOpen={openModal === 'gatekeeper'}
-        onClose={() => setOpenModal(null)}
-      >
-        <div className="space-y-3">
-          {(!overview?.contacts || overview.contacts.length === 0) ? (
-            <div className="flex items-center gap-3 p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl">
-              <CheckCircle size={18} className="text-blue-500 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-gray-200">No communication contacts today</p>
-                <p className="text-xs text-gray-500 mt-0.5">WhatsApp/Telegram/Slack contacts will appear when detected.</p>
-              </div>
-            </div>
-          ) : (
-            overview.contacts.map((c: any, i: number) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => openContactDetail(c)}
-                className="w-full text-left flex items-start gap-3 p-3 bg-[#0a0a0a] border border-[#222] rounded-xl hover:border-blue-500/30 transition-colors"
-              >
-                <MessageSquare size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-semibold text-gray-200">{c.name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{c.context}</p>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      </DetailModal>
+
 
       <DetailModal
         title={expandedDetail?.title || 'Details'}

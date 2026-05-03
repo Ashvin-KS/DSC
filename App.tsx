@@ -12,6 +12,7 @@ import { TrayPanelView } from './views/TrayPanelView';
 import { useCodeStore } from './store/useCodeStore';
 import { preloadBrainVaultCache } from './lib/brainVaultBootstrap';
 import { applyThemePreset } from './lib/theme';
+import { Onboarding } from './components/Onboarding';
 
 // Lazy-load heavy views to avoid blocking initial render
 const CodeView = React.lazy(() => import('./views/CodeView').then(m => ({ default: m.CodeView })));
@@ -46,7 +47,7 @@ const App: React.FC = () => {
             setSettings({
               ...current,
               ...data,
-              colorScheme: data.colorScheme || current.colorScheme || 'dark',
+              colorScheme: data.colorScheme || (current as any).colorScheme || 'dark',
               themePreset: data.themePreset || (data.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
             });
           }
@@ -271,6 +272,7 @@ const App: React.FC = () => {
         {renderContent()}
       </Suspense>
       <GlobalWidgets />
+      <Onboarding />
     </AppLayout>
   );
 };

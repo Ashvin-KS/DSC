@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -49,6 +49,7 @@ import {
 } from 'lucide-react';
 import { BrainActionType, BrainChatMessage, BrainChatOption, ParsedActionPayload, buildBrainNoteContext, buildModelConversation, inferActionContentFromResponse, isUiTranscriptNoise, parseActionPayload, sanitizeProposedMarkdown } from '../services/brainAiService';
 import { useIntentStore } from '../store/useIntentStore';
+import { useMultiProviderModels, getStoredModelWithProvider, setStoredModelWithProvider, inferProviderFromModel } from '../hooks/useMultiProviderModels';
 import { MermaidBlock } from '../components/MermaidBlock';
 import { buildFileTreeSignature, cacheFileContent, cacheFileTree, getCachedFileContent, getCachedFileTree, invalidateFileTreeCache } from '../lib/notesCache';
 import { ChatInputBox, FileTreeItemReal, MarkdownRenderer, ChatBubble } from './brain/BrainViewSupportComponents';
@@ -136,19 +137,22 @@ export const BrainView: React.FC = () => {
   });
   const [vaultIndexProgress, setVaultIndexProgress] = useState<VaultIndexProgress | null>(null);
   const [, setVaultStatusMessage] = useState('Vault mode can search the whole markdown vault and prepare note or folder actions from the index root.');
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || DEFAULT_NIM_MODEL);
+  const storedBrainModel = getStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY);
+  const [selectedModel, setSelectedModel] = useState(() => storedBrainModel?.model || localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || DEFAULT_NIM_MODEL);
+  const [selectedProvider, setSelectedProvider] = useState(() => storedBrainModel?.provider || '');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
-  const [availableModels, setAvailableModels] = useState<{ id: string, name?: string }[]>([]);
   const [aiProvider, setAiProvider] = useState<'nvidia' | 'local' | 'lmstudio'>('nvidia');
   const { settings } = useIntentStore();
   const [modelsLoading, setModelsLoading] = useState(true);
 
+  const { groups: cloudGroups, allModels: allCloudModels, loading: cloudLoading, error: cloudErrorRaw } = useMultiProviderModels(settings);
+  const cloudModels = useMemo(() => allCloudModels.map(m => ({ id: m.id, name: m.name })), [allCloudModels]);
+  const cloudError = cloudErrorRaw ? String(cloudErrorRaw) : null;
+
   // Cloud/Local model lists
   const [lmStudioModels, setLmStudioModels] = useState<{ id: string, name?: string }[]>([]);
-  const [cloudModels, setCloudModels] = useState<{ id: string, name?: string }[]>([]);
   const [lmStudioLoading, setLmStudioLoading] = useState(false);
-  const [cloudLoading, setCloudLoading] = useState(false);
   const [lmStudioError, setLmStudioError] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [streamingMsgIndex, setStreamingMsgIndex] = useState<number | null>(null);
@@ -451,140 +455,57 @@ export const BrainView: React.FC = () => {
         .map((m: any) => ({ id: m?.id || String(m), name: m?.name || m?.id || String(m) }))
         .filter((m: { id: string }) => !!m.id);
       setLmStudioModels(normalized);
-      setAvailableModels(normalized);
-      if (normalized.length > 0) {
+      if (normalized.length > 0 && !selectedModel) {
         const lastModel = localStorage.getItem(`${BRAIN_LAST_MODEL_STORAGE_KEY}_local`) || localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || '';
         const hasLast = normalized.some((m: any) => m.id === lastModel);
         if (hasLast) {
           setSelectedModel(lastModel);
+          setSelectedProvider('local');
+          setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, lastModel, 'local');
         } else {
           setSelectedModel(normalized[0].id);
+          setSelectedProvider('local');
+          setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, normalized[0].id, 'local');
         }
       }
     } catch (err) {
       console.error('Failed to fetch LM Studio models:', err);
       setLmStudioError('LM Studio not reachable. Make sure it is running.');
       setLmStudioModels([]);
-      setAvailableModels([]);
     } finally {
       setLmStudioLoading(false);
       setModelsLoading(false);
     }
-  }, []);
+  }, [selectedModel]);
 
-  // Fetch NVIDIA cloud models
-  const fetchCloudModels = useCallback(async () => {
-    setCloudLoading(true);
-    try {
-      const key = settings?.nvidiaApiKey || '';
-
-      if (!key) {
-        setCloudModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-        setAvailableModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-        return;
-      }
-
-      const modelsRaw = window.atheletiaAPI?.settings?.getNvidiaModels
-        ? await window.atheletiaAPI.settings.getNvidiaModels(key)
-        : await (async () => {
-          const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
-            headers: { Authorization: `Bearer ${key}` }
-          });
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API error (${response.status}): ${errorText.slice(0, 100)}`);
-          }
-          return response.json();
-        })();
-
-      const normalized = (Array.isArray(modelsRaw) ? modelsRaw : (modelsRaw?.data || []))
-        .map((m: any) => ({ id: m?.id || String(m), name: m?.name || m?.id || String(m) }))
-        .filter((m: { id: string }) => !!m.id);
-
-      if (normalized.length > 0) {
-        setCloudModels(normalized);
-        setAvailableModels(normalized);
-        const lastModel = localStorage.getItem(`${BRAIN_LAST_MODEL_STORAGE_KEY}_cloud`) || localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || '';
-        const hasLast = normalized.some((m: any) => m.id === lastModel);
-        if (hasLast) {
-          setSelectedModel(lastModel);
-        } else {
-          setSelectedModel(normalized[0].id);
-        }
-      } else {
-        setCloudModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-        setAvailableModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-      }
-    } catch (error) {
-      console.error('Failed to fetch cloud models:', error);
-      setCloudModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-      setAvailableModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-    } finally {
-      setCloudLoading(false);
+  // Detect initial provider on mount
+  useEffect(() => {
+    const provider = ((settings?.aiProvider || 'nvidia').toLowerCase() as 'nvidia' | 'local' | 'lmstudio');
+    const localProvider = provider === 'local' || provider === 'lmstudio';
+    setAiProvider(localProvider ? 'lmstudio' : 'nvidia');
+    if (localProvider) {
+      fetchLMStudioModels();
+    } else {
       setModelsLoading(false);
     }
-  }, [settings?.nvidiaApiKey]);
-
-  // Detect initial provider and fetch models on mount
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const provider = ((settings?.aiProvider || 'nvidia').toLowerCase() as 'nvidia' | 'local' | 'lmstudio');
-        const localProvider = provider === 'local' || provider === 'lmstudio';
-        setAiProvider(localProvider ? 'lmstudio' : 'nvidia');
-        const lastModel = localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || settings?.defaultModel || DEFAULT_NIM_MODEL;
-        setSelectedModel(lastModel);
-        if (localProvider) {
-          fetchLMStudioModels();
-        } else {
-          fetchCloudModels();
-        }
-      } catch (error) {
-        console.error('Failed to init models:', error);
-        setAvailableModels([{ id: DEFAULT_NIM_MODEL, name: DEFAULT_NIM_MODEL }]);
-        setSelectedModel(localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || DEFAULT_NIM_MODEL);
-        setModelsLoading(false);
-      }
-    };
-    init();
-  }, [settings?.aiProvider, settings?.defaultModel, fetchLMStudioModels, fetchCloudModels]);
+  }, [settings?.aiProvider, fetchLMStudioModels]);
 
   // Switch provider at runtime
   const switchProvider = useCallback((mode: 'nvidia' | 'lmstudio') => {
     setAiProvider(mode);
     setModelsLoading(true);
     if (mode === 'lmstudio') {
-      if (lmStudioModels.length > 0) {
-        setAvailableModels(lmStudioModels);
-        const lastLocal = localStorage.getItem(`${BRAIN_LAST_MODEL_STORAGE_KEY}_local`) || lmStudioModels[0]?.id || '';
-        const hasLocal = lmStudioModels.some(m => m.id === lastLocal);
-        setSelectedModel(hasLocal ? lastLocal : (lmStudioModels[0]?.id || ''));
-        setModelsLoading(false);
-      } else {
-        fetchLMStudioModels();
-      }
+      fetchLMStudioModels();
     } else {
-      if (cloudModels.length > 0) {
-        setAvailableModels(cloudModels);
-        const lastCloud = localStorage.getItem(`${BRAIN_LAST_MODEL_STORAGE_KEY}_cloud`) || cloudModels[0]?.id || '';
-        const hasCloud = cloudModels.some(m => m.id === lastCloud);
-        setSelectedModel(hasCloud ? lastCloud : (cloudModels[0]?.id || ''));
-        setModelsLoading(false);
-      } else {
-        fetchCloudModels();
-      }
+      setModelsLoading(false);
     }
-  }, [lmStudioModels, cloudModels, fetchLMStudioModels, fetchCloudModels]);
+  }, [fetchLMStudioModels]);
 
   useEffect(() => {
     if (!selectedModel?.trim()) return;
-    if (aiProvider === 'lmstudio' || aiProvider === 'local') {
-      localStorage.setItem(`${BRAIN_LAST_MODEL_STORAGE_KEY}_local`, selectedModel);
-    } else {
-      localStorage.setItem(`${BRAIN_LAST_MODEL_STORAGE_KEY}_cloud`, selectedModel);
-    }
+    setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, selectedModel, selectedProvider);
     localStorage.setItem(BRAIN_LAST_MODEL_STORAGE_KEY, selectedModel); // Legacy fallback
-  }, [selectedModel, aiProvider]);
+  }, [selectedModel, selectedProvider]);
 
   const selectedTreeNode = findNodeByPath(fileTree, selectedTreePath);
   const selectedDirectoryPath = getDirectoryForNodePath(createTargetPath || selectedTreePath, fileTree, vaultPath);
@@ -599,6 +520,10 @@ export const BrainView: React.FC = () => {
   const selectedModelDisplayName = selectedModel
     ? (selectedModel.split('/').filter(Boolean).pop() || selectedModel)
     : 'Select model';
+  const allModels = useMemo(() => {
+    if (aiProvider === 'lmstudio' || aiProvider === 'local') return lmStudioModels;
+    return cloudModels;
+  }, [aiProvider, lmStudioModels, cloudModels]);
   const showVaultIndexDoneMark = brainScope === 'vault' && !isVaultReindexing && vaultIndexProgress?.stage === 'completed';
   const showVaultProgressInHeader = isVaultReindexing || vaultIndexProgress?.stage === 'indexing' || vaultIndexProgress?.stage === 'started';
 
@@ -1472,7 +1397,7 @@ export const BrainView: React.FC = () => {
     selectedContext, selectionRange, tiptapRange, isEditing, setSelectedContext, setTiptapRange,
     setSelectionRange, setIsAiLoading, setProposedAction, setVaultSearchMeta, setIsVaultSearchLoading,
     setVaultStatusMessage, tryHandleVaultMultiFileChainIntent, tryHandleVaultFileListIntent, editContent,
-    fileContent, availableModels, selectedModel, DEFAULT_NIM_MODEL, buildBrainVaultContext, aiMode,
+    fileContent, availableModels: allModels, selectedModel, DEFAULT_NIM_MODEL, buildBrainVaultContext, aiMode,
     selectedFile, buildBrainNoteContext, buildModelConversation, currentMessages, setStreamingMsgIndex,
     sanitizeVisibleBrainResponse, parseActionPayload, normalizeClarificationOptions, isExplicitWholeRewriteIntent,
     sanitizeProposedMarkdown, inferActionContentFromResponse, requestsCreateAndWriteInVault, extractRequestedNoteTitle,
@@ -1853,8 +1778,8 @@ export const BrainView: React.FC = () => {
                         <Loader2 size={14} className="animate-spin text-purple-400" />
                         <span className="text-sm text-gray-500">Loading models...</span>
                       </div>
-                    ) : (
-                      availableModels
+                    ) : (aiProvider === 'lmstudio' || aiProvider === 'local') ? (
+                      allModels
                         .filter(model => {
                           const searchLower = modelSearchQuery.toLowerCase();
                           return (model.name || model.id).toLowerCase().includes(searchLower)
@@ -1865,19 +1790,101 @@ export const BrainView: React.FC = () => {
                             key={model.id}
                             onClick={() => {
                               setSelectedModel(model.id);
+                              setSelectedProvider('local');
+                              setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, model.id, 'local');
                               setShowModelDropdown(false);
                               setModelSearchQuery('');
                             }}
                             className={`w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-[#262626] transition-colors ${selectedModel === model.id ? 'bg-purple-900/30 text-purple-300' : 'text-gray-300'}`}
                           >
-                            {(aiProvider === 'lmstudio' || aiProvider === 'local')
-                              ? <Cpu size={13} className="shrink-0 text-emerald-400/60" />
-                              : <Cloud size={13} className="shrink-0 text-blue-400/60" />}
+                            <Cpu size={13} className="shrink-0 text-emerald-400/60" />
                             <span className="truncate">{model.name || model.id}</span>
                           </button>
                         ))
+                    ) : (
+                      (() => {
+                        const filteredGroups = cloudGroups.map(group => ({
+                          ...group,
+                          models: group.models.filter(model => {
+                            const searchLower = modelSearchQuery.toLowerCase();
+                            return (model.name || model.id).toLowerCase().includes(searchLower)
+                              || model.id.toLowerCase().includes(searchLower);
+                          })
+                        })).filter(g => g.models.length > 0);
+                        if (filteredGroups.length === 0) {
+                          return (
+                            <div className="px-3 py-4 text-center">
+                              <p className="text-xs text-gray-500">No matching models</p>
+                              <p className="text-[10px] text-gray-600 mt-1">Type a model ID below to use any model</p>
+                            </div>
+                          );
+                        }
+                        return filteredGroups.map(group => (
+                          <div key={group.provider} className="border-b border-[#333]/30 last:border-b-0">
+                            <div className="px-3 py-1.5 bg-white/5">
+                              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{group.label}</p>
+                            </div>
+                            {group.models.map(model => (
+                              <button
+                                key={model.id}
+                                onClick={() => {
+                                  setSelectedModel(model.id);
+                                  setSelectedProvider(group.provider);
+                                  setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, model.id, group.provider);
+                                  setShowModelDropdown(false);
+                                  setModelSearchQuery('');
+                                }}
+                                className={`w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-[#262626] transition-colors ${selectedModel === model.id ? 'bg-purple-900/30 text-purple-300' : 'text-gray-300'}`}
+                              >
+                                <Cloud size={13} className="shrink-0 text-blue-400/60" />
+                                <span className="truncate">{model.name || model.id}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ));
+                      })()
                     )}
                   </div>
+                  {/* Custom model ID input — for non-NVIDIA or any provider */}
+                  {aiProvider !== 'lmstudio' && aiProvider !== 'local' && (
+                    <div className="px-3 py-2 border-t border-[#2b2b2b]">
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Use Any Model ID</p>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          value={modelSearchQuery}
+                          onChange={(e) => setModelSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && modelSearchQuery.trim()) {
+                              e.preventDefault();
+                              const inferred = inferProviderFromModel(modelSearchQuery.trim());
+                              setSelectedModel(modelSearchQuery.trim());
+                              setSelectedProvider(inferred);
+                              setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, modelSearchQuery.trim(), inferred);
+                              setShowModelDropdown(false);
+                              setModelSearchQuery('');
+                            }
+                          }}
+                          placeholder="e.g. gemini-2.0-flash"
+                          className="flex-1 bg-[#0a0a0a] border border-[#333] rounded px-2 py-1.5 text-[11px] text-gray-100 placeholder-gray-600 focus:outline-none focus:border-purple-500/40"
+                        />
+                        <button
+                          onClick={() => {
+                            if (modelSearchQuery.trim()) {
+                              const inferred = inferProviderFromModel(modelSearchQuery.trim());
+                              setSelectedModel(modelSearchQuery.trim());
+                              setSelectedProvider(inferred);
+                              setStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY, modelSearchQuery.trim(), inferred);
+                              setShowModelDropdown(false);
+                              setModelSearchQuery('');
+                            }
+                          }}
+                          className="px-2.5 py-1.5 rounded bg-purple-600 text-[11px] text-white hover:bg-purple-500 transition-colors"
+                        >
+                          Use
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1926,28 +1933,43 @@ export const BrainView: React.FC = () => {
             {/* Chat History */}
             <div className="flex-1 overflow-y-auto flex flex-col gap-4 mb-4 pr-1 custom-scrollbar">
               {currentMessages.map((msg, i) => (
-                <ChatBubble
-                  key={i}
-                  sender={msg.sender}
-                  text={msg.text}
-                  context={msg.context}
-                  isAction={msg.isAction}
-                  options={msg.options}
-                  onOptionSelect={msg.options?.length
-                    ? (option) => {
-                      handleChatOptionSelect(option, i, msg.questionPrompt, msg.questionId);
-                    }
-                    : undefined}
-                  allowFreeTextReply={msg.sender === 'ai' && !!msg.allowFreeTextReply}
-                  freeTextReplyPlaceholder={msg.freeTextReplyPlaceholder}
-                  onFreeTextReply={msg.sender === 'ai' && msg.allowFreeTextReply
-                    ? (reply) => {
-                      handleChatFreeTextReply(reply, i, msg.questionPrompt, msg.questionId);
-                    }
-                    : undefined}
-                  isStreaming={i === streamingMsgIndex}
-                  onStreamingDone={() => { if (i === streamingMsgIndex) setStreamingMsgIndex(null); }}
-                />
+                <div key={i} className="group/msg relative">
+                  <ChatBubble
+                    sender={msg.sender}
+                    text={msg.text}
+                    context={msg.context}
+                    isAction={msg.isAction}
+                    options={msg.options?.length
+                      ? msg.options
+                      : undefined}
+                    onOptionSelect={msg.options?.length
+                      ? (option) => {
+                        handleChatOptionSelect(option, i, msg.questionPrompt, msg.questionId);
+                      }
+                      : undefined}
+                    allowFreeTextReply={msg.sender === 'ai' && !!msg.allowFreeTextReply}
+                    freeTextReplyPlaceholder={msg.freeTextReplyPlaceholder}
+                    onFreeTextReply={msg.sender === 'ai' && msg.allowFreeTextReply
+                      ? (reply) => {
+                        handleChatFreeTextReply(reply, i, msg.questionPrompt, msg.questionId);
+                      }
+                      : undefined}
+                    isStreaming={i === streamingMsgIndex}
+                    onStreamingDone={() => { if (i === streamingMsgIndex) setStreamingMsgIndex(null); }}
+                  />
+                  {msg.sender === 'user' && !isAiLoading && (
+                    <button
+                      onClick={() => {
+                        // Rewind: remove this message and everything after, no text reload (BrainView uses its own ChatInputBox)
+                        setCurrentMessages(prev => prev.slice(0, i));
+                      }}
+                      className="absolute top-2 right-2 opacity-0 group-hover/msg:opacity-100 w-6 h-6 flex items-center justify-center rounded-md text-gray-600 hover:text-amber-400 hover:bg-white/5 transition-all"
+                      title="Undo — remove this message and re-ask"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
               ))}
               {isAiLoading && currentMessages[currentMessages.length - 1]?.sender !== 'ai' && (
                 <div className="flex items-start">

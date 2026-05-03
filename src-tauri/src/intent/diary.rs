@@ -347,6 +347,13 @@ fn resolve_diary_ai_endpoint(provider: &str, user_model: Option<&str>) -> (Strin
             "https://api.groq.com/openai/v1/chat/completions".to_string(),
             user_model.unwrap_or("llama-3.3-70b-versatile").to_string(),
         ),
+        "gemini" => {
+            let model = user_model.unwrap_or("gemini-2.0-flash");
+            (
+                format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model),
+                model.to_string(),
+            )
+        },
         _ => (
             "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
             user_model.unwrap_or("meta/llama-3.3-70b-instruct").to_string(),
@@ -358,12 +365,16 @@ fn resolve_diary_ai_endpoint(provider: &str, user_model: Option<&str>) -> (Strin
 
 #[tauri::command]
 pub async fn diary_get_entries(app_handle: AppHandle, date: Option<String>) -> Result<Vec<DiaryEntry>, String> {
+    eprintln!("[diary_get_entries] Fetching entries for date: {:?}", date);
     let conn = crate::intent::db::open(&app_handle)?;
-    db_get_entries(&conn, date.as_deref())
+    let entries = db_get_entries(&conn, date.as_deref())?;
+    eprintln!("[diary_get_entries] Returning {} entries", entries.len());
+    Ok(entries)
 }
 
 #[tauri::command]
 pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Result<DiaryEntry, String> {
+    eprintln!("[diary_save_entry] Saving entry id={}, date={}, is_ai={}", entry.id, entry.date, entry.is_ai_generated);
     let conn = crate::intent::db::open(&app_handle)?;
     let now  = Utc::now().timestamp();
 
@@ -373,11 +384,12 @@ pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Resul
     ).unwrap_or(false);
 
     if exists {
+        eprintln!("[diary_save_entry] Updating existing entry");
         crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "diary_entry", &entry.id)?;
         conn.execute(
             "UPDATE diary_entries SET date=?1,content=?2,is_ai_generated=?3,updated_at=?4 WHERE id=?5",
             rusqlite::params![entry.date, entry.content, entry.is_ai_generated as i64, now, entry.id],
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| { eprintln!("[diary_save_entry] UPDATE error: {}", e); e.to_string() })?;
         let saved = DiaryEntry { updated_at: now, ..entry };
         let summary = format!(
             "{} diary entry for {}",
@@ -399,10 +411,21 @@ pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Resul
         Ok(saved)
     } else {
         let id = if entry.id.is_empty() { Uuid::new_v4().to_string() } else { entry.id.clone() };
+        eprintln!("[diary_save_entry] Inserting new entry with id={}", id);
         conn.execute(
             "INSERT INTO diary_entries (id,date,content,is_ai_generated,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
             rusqlite::params![id, entry.date, entry.content, entry.is_ai_generated as i64, now],
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| { eprintln!("[diary_save_entry] INSERT error: {}", e); e.to_string() })?;
+        eprintln!("[diary_save_entry] INSERT successful for id={}", id);
+        
+        // Verify the insert
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM diary_entries WHERE date = ?1",
+            rusqlite::params![entry.date],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        eprintln!("[diary_save_entry] Total entries for date {}: {}", entry.date, count);
+        
         let saved = DiaryEntry { id, created_at: now, updated_at: now, ..entry };
         let summary = format!(
             "{} diary entry for {}",
@@ -437,11 +460,13 @@ pub async fn diary_delete_entry(app_handle: AppHandle, id: String) -> Result<boo
 pub async fn diary_generate_entry(
     app_handle: AppHandle,
     date: String,
+    extra_context: Option<String>,
     model: Option<String>,
     api_key: Option<String>,
+    provider: Option<String>,
 ) -> Result<String, String> {
     // Phase 1: sync DB — collect all data into owned Strings, then conn is dropped
-    let (activity_context, db_api_key, db_model, ai_provider) = tokio::task::spawn_blocking({
+    let (mut activity_context, db_api_key, db_model, db_ai_provider) = tokio::task::spawn_blocking({
         let app2 = app_handle.clone();
         let date2 = date.clone();
         move || -> Result<(String, Option<String>, String, String), String> {
@@ -449,6 +474,13 @@ pub async fn diary_generate_entry(
             db_gather_generate_context(&conn, &date2)
         }
     }).await.map_err(|e| e.to_string())??;
+    
+    if let Some(extra) = extra_context {
+        if !extra.trim().is_empty() {
+             activity_context.push_str("\n\nExtra Context (LeetCode/Music/Etc):\n");
+             activity_context.push_str(&extra);
+        }
+    }
 
     // Use passed api_key if provided, otherwise use db_api_key
     let api_key = if api_key.as_ref().filter(|k| !k.is_empty()).is_some() {
@@ -456,6 +488,12 @@ pub async fn diary_generate_entry(
     } else {
         db_api_key
     };
+
+    // Use explicit provider > db provider
+    let ai_provider = provider.as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&db_ai_provider)
+        .to_string();
 
     // Phase 2: async API call (no Connection held)
     // Use explicit model > db model > provider default
@@ -536,6 +574,50 @@ pub async fn diary_generate_entry(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .ok_or_else(|| "Empty diary generation response".to_string())?;
+
+        Ok(content)
+    } else if provider_norm == "gemini" {
+        // Gemini uses a different REST schema: contents/parts, key as query param
+        let gemini_url = format!("{}?key={}", endpoint, key);
+
+        let body = serde_json::json!({
+            "contents": [{
+                "parts": [{ "text": prompt }]
+            }],
+            "generationConfig": {
+                "temperature": 0.65,
+                "maxOutputTokens": 1024
+            }
+        });
+
+        let resp = client
+            .post(&gemini_url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("AI {} — {}", status, &text[..text.len().min(300)]));
+        }
+
+        let parsed: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        let content = parsed
+            .get("candidates")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("content"))
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array())
+            .and_then(|parts| parts.first())
+            .and_then(|part| part.get("text"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "Empty diary generation response from Gemini".to_string())?;
 
         Ok(content)
     } else {

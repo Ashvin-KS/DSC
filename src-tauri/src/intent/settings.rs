@@ -87,6 +87,7 @@ pub struct AppSettings {
     #[serde(rename = "themePreset",       default = "default_theme_preset")] pub theme_preset: String,
     #[serde(rename = "locale",            default = "default_locale")] pub locale: String,
     #[serde(rename = "dateFormat",        default = "default_date_format")] pub date_format: String,
+    #[serde(rename = "autoCreateDiary",   default)] pub auto_create_diary: bool,
 }
 
 fn default_true()  -> bool { true  }
@@ -193,6 +194,7 @@ fn load_settings_inner(conn: &rusqlite::Connection) -> AppSettings {
     s.enable_summary_alerts = get_bool("enable_summary_alerts", true);
     s.compact_mode = get_bool("compact_mode", false);
     s.font_scale = get_i64("font_scale_percent", 100) as f32 / 100.0;
+    s.auto_create_diary = get_bool("auto_create_diary", false);
 
     s
 }
@@ -248,6 +250,7 @@ pub async fn settings_save(
         ("theme_preset",         settings.theme_preset.clone()),
         ("locale",               settings.locale.clone()),
         ("date_format",          settings.date_format.clone()),
+        ("auto_create_diary",    settings.auto_create_diary.to_string()),
     ];
 
     for (key, val) in pairs {
@@ -552,19 +555,24 @@ pub async fn brain_chat_stream(
     use_local: bool,
     base_url: Option<String>,
     api_key: Option<String>,
+    provider: Option<String>,
 ) -> Result<(), String> {
     use tauri::Emitter;
 
     BRAIN_STREAM_CANCELLED.store(false, Ordering::Relaxed);
 
-    // Determine provider from stored settings
-    let provider = {
-        let conn = crate::intent::db::open(&app_handle).ok();
-        conn.as_ref()
-            .and_then(|c| c.query_row("SELECT value FROM app_settings WHERE key = 'ai_provider'", [], |row| row.get::<_, String>(0)).ok())
-            .unwrap_or_else(|| "nvidia".to_string())
-            .to_lowercase()
-    };
+    // Determine provider: explicit param > stored settings > default nvidia
+    let provider = provider
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_else(|| {
+            let conn = crate::intent::db::open(&app_handle).ok();
+            conn.as_ref()
+                .and_then(|c| c.query_row("SELECT value FROM app_settings WHERE key = 'ai_provider'", [], |row| row.get::<_, String>(0)).ok())
+                .unwrap_or_else(|| "nvidia".to_string())
+                .to_lowercase()
+        });
 
     // Get the right API key from keyring based on provider, or use passed api_key
     let api_key = if !use_local {
@@ -655,12 +663,78 @@ pub async fn brain_chat_stream(
         return Ok(());
     }
 
+    // ─── Anthropic Path ─────────────────────────
+    if !use_local && provider == "anthropic" {
+        let mut system_prompt = String::new();
+        let mut api_messages = Vec::new();
+        for msg in &messages {
+            if msg.role == "system" {
+                system_prompt.push_str(&msg.content);
+                system_prompt.push('\n');
+            } else {
+                api_messages.push(serde_json::json!({ "role": msg.role, "content": msg.content }));
+            }
+        }
+        
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": api_messages,
+            "max_tokens": max_tokens.unwrap_or(8192),
+            "stream": true
+        });
+        if !system_prompt.trim().is_empty() {
+            body.as_object_mut().unwrap().insert("system".to_string(), serde_json::Value::String(system_prompt.trim().to_string()));
+        }
+
+        let mut response = client.post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body).send().await
+            .map_err(|e| format!("Net err: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API Error {}: {}", status, text));
+        }
+
+        let mut buffer = String::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            if BRAIN_STREAM_CANCELLED.load(Ordering::Relaxed) {
+                let _ = app_handle.emit("brain://done", "");
+                return Ok(());
+            }
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&chunk_str);
+            let lines: Vec<&str> = buffer.split('\n').collect();
+            let last_part = if chunk_str.ends_with('\n') { String::new() } else { lines.last().unwrap_or(&"").to_string() };
+            for line in &lines[..lines.len().saturating_sub(1)] {
+                let line = line.trim();
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" { break; }
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                        if parsed.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                            if let Some(text) = parsed.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                                if !text.is_empty() { let _ = app_handle.emit("brain://token", text); }
+                            }
+                        }
+                    }
+                }
+            }
+            buffer = last_part;
+        }
+        let _ = app_handle.emit("brain://done", "");
+        return Ok(());
+    }
+
+    // ─── Generic OpenAI Path (NVIDIA, OpenAI, Groq, LM Studio) ─────────
     let endpoint = if use_local {
         format!("{}/v1/chat/completions", lm_url_trimmed)
     } else {
         match provider.as_str() {
             "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
-            "anthropic" => "https://api.anthropic.com/v1/messages".to_string(),
             "groq" => "https://api.groq.com/openai/v1/chat/completions".to_string(),
             _ => "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
         }
@@ -680,13 +754,7 @@ pub async fn brain_chat_stream(
         .json(&payload);
 
     if !use_local {
-        if provider == "anthropic" {
-            req = req.header("x-api-key", &api_key)
-                     .header("anthropic-version", "2023-06-01")
-                     .header("anthropic-beta", "messages-2023-06-01");
-        } else {
-            req = req.header("Authorization", format!("Bearer {}", api_key));
-        }
+        req = req.header("Authorization", format!("Bearer {}", api_key));
     }
 
     let mut response = req.send().await.map_err(|e| format!("Net error: {}", e))?;

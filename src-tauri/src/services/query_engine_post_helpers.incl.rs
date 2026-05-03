@@ -667,6 +667,145 @@ where
         .build()
         .map_err(|e| format!("Failed to init HTTP client: {}", e))?;
 
+    let provider_lower = provider.to_lowercase();
+
+    // ─── Gemini: completely different schema ───────────────────────────────
+    if !use_local_llm && provider_lower == "gemini" {
+        let mut contents = Vec::new();
+        let mut system_text = String::new();
+        for msg in messages {
+            if msg.role == "system" {
+                system_text.push_str(&msg.content);
+                system_text.push('\n');
+                continue;
+            }
+            let role = if msg.role == "assistant" { "model" } else { "user" };
+            let mut text = msg.content.clone();
+            if !system_text.is_empty() && msg.role == "user" && contents.is_empty() {
+                text = format!("{}\n\n{}", system_text.trim(), text);
+                system_text.clear();
+            }
+            contents.push(serde_json::json!({
+                "role": role,
+                "parts": [{ "text": text }]
+            }));
+        }
+        if !system_text.is_empty() {
+            contents.insert(0, serde_json::json!({
+                "role": "user",
+                "parts": [{ "text": system_text.trim() }]
+            }));
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+            model, api_key
+        );
+        let body = serde_json::json!({
+            "contents": contents,
+            "generationConfig": { "temperature": 0.0, "maxOutputTokens": 8192 }
+        });
+
+        let mut response = client.post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body).send().await
+            .map_err(|e| format!("Net err: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API Error {}: {}", status, text));
+        }
+
+        let mut buffer = String::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&chunk_str);
+            let lines: Vec<&str> = buffer.split('\n').collect();
+            let last_part = if chunk_str.ends_with('\n') { String::new() } else { lines.last().unwrap_or(&"").to_string() };
+            for line in &lines {
+                let line = line.trim();
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" { break; }
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(text) = parsed.get("candidates").and_then(|v| v.as_array()).and_then(|a| a.first())
+                            .and_then(|c| c.get("content")).and_then(|c| c.get("parts")).and_then(|p| p.as_array())
+                            .and_then(|parts| parts.first()).and_then(|part| part.get("text")).and_then(|t| t.as_str())
+                        {
+                            output_buffer.push_str(text);
+                            on_token(text);
+                        }
+                    }
+                }
+            }
+            buffer = last_part;
+        }
+        return Ok(());
+    }
+
+    // ─── Anthropic: different schema + SSE events ─────────────────────────
+    if !use_local_llm && provider_lower == "anthropic" {
+        let mut system_prompt = String::new();
+        let mut api_messages = Vec::new();
+        for msg in messages {
+            if msg.role == "system" {
+                system_prompt.push_str(&msg.content);
+                system_prompt.push('\n');
+            } else {
+                api_messages.push(serde_json::json!({ "role": msg.role, "content": msg.content }));
+            }
+        }
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": api_messages,
+            "max_tokens": 8192,
+            "stream": true
+        });
+        if !system_prompt.trim().is_empty() {
+            body.as_object_mut().unwrap().insert("system".to_string(), serde_json::Value::String(system_prompt.trim().to_string()));
+        }
+
+        let mut response = client.post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body).send().await
+            .map_err(|e| format!("Net err: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API Error {}: {}", status, text));
+        }
+
+        let mut buffer = String::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&chunk_str);
+            let lines: Vec<&str> = buffer.split('\n').collect();
+            let last_part = if chunk_str.ends_with('\n') { String::new() } else { lines.last().unwrap_or(&"").to_string() };
+            for line in &lines {
+                let line = line.trim();
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" { break; }
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                        if parsed.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                            if let Some(text) = parsed.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                                output_buffer.push_str(text);
+                                on_token(text);
+                            }
+                        }
+                    }
+                }
+            }
+            buffer = last_part;
+        }
+        return Ok(());
+    }
+
+    // ─── OpenAI-compatible: NVIDIA, OpenAI, Groq ──────────────────────────
     let request = ChatRequest {
         model: model.to_string(),
         messages: messages.to_vec(),
@@ -679,59 +818,37 @@ where
         let base = lmstudio_url.unwrap_or("http://127.0.0.1:1234");
         format!("{}/v1/chat/completions", base.trim_end_matches('/'))
     } else {
-        match provider.to_lowercase().as_str() {
+        match provider_lower.as_str() {
             "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
             "groq" => "https://api.groq.com/openai/v1/chat/completions".to_string(),
-            "anthropic" => panic!("Anthropic requires different JSON schema (not supported in generic block)"),
-            "gemini" => panic!("Gemini requires different JSON schema (not supported in generic block)"),
             _ => "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
         }
     };
 
-    let mut req = client
-        .post(&endpoint)
-        .header("Content-Type", "application/json")
-        .json(&request);
-
+    let mut req = client.post(&endpoint).header("Content-Type", "application/json").json(&request);
     if !use_local_llm || !api_key.is_empty() {
         req = req.header("Authorization", format!("Bearer {}", api_key));
     }
 
-    let mut response = req
-        .send()
-        .await
-        .map_err(|e| format!("Net err: {}", e))?;
-
+    let mut response = req.send().await.map_err(|e| format!("Net err: {}", e))?;
     if !response.status().is_success() {
-        // Read full body error
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         return Err(format!("API Error {}: {}", status, text));
     }
 
-    // Process stream line by line
     let mut buffer = String::new();
     let mut reasoning_open = false;
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         let chunk_str = String::from_utf8_lossy(&chunk);
         buffer.push_str(&chunk_str);
-        
-        // Split by lines
         let lines: Vec<&str> = buffer.split('\n').collect();
-        // Keep the last part if it doesn't end with \n
-        let last_part = if chunk_str.ends_with('\n') {
-            String::new()
-        } else {
-            lines.last().unwrap_or(&"").to_string()
-        };
-        
-        // Process complete lines
+        let last_part = if chunk_str.ends_with('\n') { String::new() } else { lines.last().unwrap_or(&"").to_string() };
         for line in lines {
             let line = line.trim();
             if line.starts_with("data: ") {
                 let data = &line[6..];
                 if data == "[DONE]" { break; }
-                
                 if let Ok(stream_resp) = serde_json::from_str::<ChatStreamResponse>(data) {
                     if let Some(choice) = stream_resp.choices.first() {
                         if let Some(ref reasoning) = choice.delta.reasoning_content {
@@ -758,7 +875,6 @@ where
                 }
             }
         }
-        
         buffer = last_part;
     }
 

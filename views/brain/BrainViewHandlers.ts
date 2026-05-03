@@ -286,6 +286,7 @@ export const createHandleAiSend =
       vaultPath,
       setCurrentMessages,
       aiProvider,
+      selectedProvider,
       nvidiaApiKey,
       abortControllerRef,
       selectedContext,
@@ -561,6 +562,7 @@ Output rules:
           aiMode === 'edit' ? 0.15 : 0.45,
           undefined,
           nvidiaApiKey,
+          selectedProvider || aiProvider,
         );
       } catch (err: any) {
         setCurrentMessages((prev: any[]) => prev.filter((_, i) => i !== msgIdx));
