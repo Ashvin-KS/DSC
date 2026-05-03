@@ -5,6 +5,21 @@ use crate::models::{Settings, ActivityMetadata};
 use tauri::Emitter;
 use chrono::{Datelike, Duration, Local, TimeZone};
 use std::time::Duration as StdDuration;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static CHAT_STREAM_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+pub fn check_chat_cancelled() -> bool {
+    CHAT_STREAM_CANCELLED.load(Ordering::Relaxed)
+}
+
+pub fn reset_chat_cancel() {
+    CHAT_STREAM_CANCELLED.store(false, Ordering::Relaxed);
+}
+
+pub fn cancel_chat_stream() {
+    CHAT_STREAM_CANCELLED.store(true, Ordering::Relaxed);
+}
 
 // ─── Constants ───
 
@@ -634,6 +649,14 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     let mut forced_parallel_runs = 0usize;
 
     for turn in 0..MAX_TURNS {
+        if check_chat_cancelled() {
+            let _ = app_handle.emit("chat://done", "cancelled");
+            return Ok(AgentResult {
+                answer: String::new(),
+                steps,
+                activities_referenced: all_activities,
+            });
+        }
         let _ = app_handle.emit("chat://status", format!("Thinking (step {}/{})", turn + 1, MAX_TURNS));
         // 1. Call LLM with streaming callback
         // We accumulate the full content here, while also streaming it to the frontend
@@ -667,6 +690,15 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         };
 
         call_llm_stream_with_provider(&provider, model, &api_key, use_local_llm, lmstudio_url, &messages, &mut full_response, on_token).await?;
+
+        if check_chat_cancelled() {
+            let _ = app_handle.emit("chat://done", "cancelled");
+            return Ok(AgentResult {
+                answer: String::new(),
+                steps,
+                activities_referenced: all_activities,
+            });
+        }
 
         // 2. Parse Response
         let parsed_response = try_parse_tool_call_response(&full_response)
@@ -950,6 +982,15 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     role: "user".to_string(),
                     content: format!("<TOOL_RESULT>\n{}\n</TOOL_RESULT>", truncated_output),
                 });
+
+                if check_chat_cancelled() {
+                    let _ = app_handle.emit("chat://done", "cancelled");
+                    return Ok(AgentResult {
+                        answer: String::new(),
+                        steps,
+                        activities_referenced: all_activities,
+                    });
+                }
             }
         }
     }

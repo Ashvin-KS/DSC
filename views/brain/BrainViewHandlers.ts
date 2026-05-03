@@ -359,7 +359,7 @@ export const createHandleAiSend =
 
     const effectiveProvider = selectedProvider || aiProvider;
     const effectiveApiKey = apiKey || nvidiaApiKey || '';
-    const isCloudProvider = aiProvider !== 'local' && aiProvider !== 'lmstudio';
+    const isCloudProvider = effectiveProvider !== 'local' && effectiveProvider !== 'lmstudio';
     if (isCloudProvider && !effectiveApiKey) {
       setCurrentMessages((prev: any[]) => [...prev, {
         sender: 'ai',

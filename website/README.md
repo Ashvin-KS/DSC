@@ -1,31 +1,49 @@
-# Atheletia Website Screenshot Checklist
+# Atheletia Website
 
-The sales page is a standalone static site:
+This is the landing page for Atheletia — a private, local-first AI-powered desktop app.
 
-```text
-website/index.html
-website/styles.css
-website/assets/
+## Files
+
+```
+website/
+├── index.html    # Main landing page
+├── styles.css    # All styles
+├── assets/       # Screenshots and installer files
+│   ├── dashboard-hero.png
+│   ├── brain-notes.png
+│   ├── leetcode-desk.png
+│   ├── diary-view.png
+│   ├── music-player.png
+│   ├── zen-focus.png
+│   └── Atheletia_0.1.0_x64_en-US.msi
+└── README.md
 ```
 
-Open `website/index.html` in a browser to preview it.
+## Preview
 
-## Screenshots To Capture
+Open `index.html` in a browser to preview locally.
 
-Paste these screenshots into `website/assets/` with the exact filenames below:
+## Screenshots
 
-| Filename | Suggested Screen |
-| --- | --- |
-| `dashboard-hero.png` | Main Dashboard with cards visible. This is the hero image. |
-| `brain-notes.png` | Brain vault with file tree, editor, and AI panel. |
-| `chat-context.png` | Chat view with model/context controls and a useful response. |
-| `schedule-week.png` | Schedule view showing a week/day plan with tasks. |
-| `zen-music.png` | Zen mode or Music view showing focus timer/playback. |
+Add screenshots to `assets/` with these filenames:
 
-Use wide screenshots when possible, around 1600x1000 or larger. The page will crop them into desktop frames automatically.
+| Filename | Description |
+|----------|-------------|
+| `dashboard-hero.png` | Main dashboard view |
+| `brain-notes.png` | Brain vault with editor and AI panel |
+| `leetcode-desk.png` | LeetCode study desk |
+| `diary-view.png` | AI diary view |
+| `music-player.png` | Music player |
+| `zen-focus.png` | Zen focus timer |
 
-## Text To Replace Before Launch
+## Deployment
 
-- Replace `hello@example.com` in `index.html` with your sales/contact email.
-- Replace placeholder prices in the Pricing section.
-- Replace `<repo-url>` only in product docs, not this website.
+This is a static site — deploy to any static host (Netlify, Vercel, GitHub Pages, etc.).
+
+## Theme
+
+The website uses a warm, neutral color palette:
+- Background: Near-black (#0f0f0f)
+- Accent: Warm coral (#e07a5f)
+- Secondary: Soft green (#81b29a)
+- Highlight: Warm yellow (#f2cc8f)

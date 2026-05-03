@@ -6,8 +6,15 @@ use keyring::Entry;
 
 use crate::services::query_engine::{
     run_agentic_search_with_steps_and_history_and_scope, AgentResult, AgentStep, ChatMessage as QEMessage,
+    cancel_chat_stream, reset_chat_cancel,
 };
 use crate::models::{Settings, AISettings};
+
+#[tauri::command]
+pub fn cancel_chat() -> Result<bool, String> {
+    cancel_chat_stream();
+    Ok(true)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSession {
@@ -266,6 +273,7 @@ pub async fn send_chat_message(
     sources: Option<Vec<String>>,
     api_key: Option<String>,
 ) -> Result<ChatMessageResponse, String> {
+    reset_chat_cancel();
     let now = Utc::now().timestamp();
     let effective_sources = if sources.is_some() { sources } else { selected_sources };
 

@@ -2086,6 +2086,7 @@ pub fn run() {
             intent::chat::delete_chat_session,
             intent::chat::get_chat_messages,
             intent::chat::send_chat_message,
+            intent::chat::cancel_chat,
             intent::diary::diary_get_entries,
             intent::diary::diary_save_entry,
             intent::diary::diary_delete_entry,

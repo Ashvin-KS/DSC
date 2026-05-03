@@ -36,11 +36,9 @@ export function resolveProviderForModel(
   fallbackProvider?: string | null
 ): string {
   const explicit = normalizeProvider(explicitProvider);
+  if (explicit) return explicit;
   if (modelId?.trim()) {
-    const inferred = inferProviderFromModel(modelId.trim());
-    if (inferred !== 'nvidia') return inferred;
-    if (explicitProvider && explicit !== 'nvidia') return explicit;
-    return inferred;
+    return inferProviderFromModel(modelId.trim());
   }
   return normalizeProvider(fallbackProvider);
 }

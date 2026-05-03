@@ -173,33 +173,29 @@ export const DiaryView: React.FC = () => {
         }
     };
 
-    // ── Auto-create yesterday's diary at midnight ──────────────────────────────
+    // ── Auto-create today's diary at 8 PM ──────────────────────────────────────
     useEffect(() => {
         if (!autoCreateEnabled) return;
 
-        const runAutoCreate = async () => {
-            const yesterday = yesterdayStr();
-            const key = getAutoCreateKey(yesterday);
-            if (localStorage.getItem(key)) return; // already auto-created for this yesterday
+        const runAutoCreate = async (targetDate: string) => {
+            const key = getAutoCreateKey(targetDate);
+            if (localStorage.getItem(key)) return;
 
             try {
-                // Check if yesterday already has an AI entry
                 if (window.atheletiaAPI?.diary) {
-                    const existing: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(yesterday);
-                    const hasAi = (existing || []).some((e: DiaryEntry) => e.isAiGenerated && e.date === yesterday);
+                    const existing: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(targetDate);
+                    const hasAi = (existing || []).some((e: DiaryEntry) => e.isAiGenerated && e.date === targetDate);
                     if (hasAi) {
                         localStorage.setItem(key, '1');
                         return;
                     }
                 }
-                // Run silently in the background — no banner
-                console.log(`[Diary] Auto-creating diary for ${yesterday}...`);
-                const result = await generateSummaryForDate(yesterday, true);
+                console.log(`[Diary] Auto-creating diary for ${targetDate}...`);
+                const result = await generateSummaryForDate(targetDate, true);
                 if (result) {
                     localStorage.setItem(key, '1');
-                    console.log(`[Diary] Auto-created diary for ${yesterday}`);
-                    // If the user is currently viewing yesterday, refresh the entries
-                    if (activeDate === yesterday) {
+                    console.log(`[Diary] Auto-created diary for ${targetDate}`);
+                    if (activeDate === targetDate) {
                         setAiSummary(result);
                         setEntries(p => [result, ...p.filter(e => e.id !== result.id)]);
                     }
@@ -207,18 +203,31 @@ export const DiaryView: React.FC = () => {
             } catch { /* ignore */ }
         };
 
-        // Run once immediately (silently)
-        runAutoCreate();
-
-        // Schedule at midnight
         const now = new Date();
-        const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
-        const msUntilMidnight = midnight.getTime() - now.getTime();
-        const midnightTimer = setTimeout(() => {
-            runAutoCreate();
-        }, msUntilMidnight);
+        const today = todayStr();
+        const yesterday = yesterdayStr();
 
-        return () => clearTimeout(midnightTimer);
+        // If it's past 8 PM, auto-create for today
+        if (now.getHours() >= 20) {
+            runAutoCreate(today);
+        }
+
+        // Also catch up yesterday if missed
+        if (!localStorage.getItem(getAutoCreateKey(yesterday))) {
+            runAutoCreate(yesterday);
+        }
+
+        // Schedule at 8 PM today (or tomorrow if already past 8 PM)
+        const next8pm = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 5);
+        if (next8pm <= now) {
+            next8pm.setDate(next8pm.getDate() + 1);
+        }
+        const msUntil8pm = next8pm.getTime() - now.getTime();
+        const timer = setTimeout(() => {
+            runAutoCreate(todayStr());
+        }, msUntil8pm);
+
+        return () => clearTimeout(timer);
     }, [autoCreateEnabled, generateSummaryForDate, activeDate]);
 
     const handleAddManual = async () => {
@@ -281,7 +290,7 @@ export const DiaryView: React.FC = () => {
                 <div className="flex items-center gap-2">
                     <button
                         onClick={toggleAutoCreate}
-                        title="Auto-create diary entry for yesterday at midnight"
+                        title="Auto-create diary entry for today at 8 PM"
                         className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
                             autoCreateEnabled
                                 ? 'bg-[var(--accent-soft)] border-accent/30 text-accent'
@@ -358,7 +367,7 @@ export const DiaryView: React.FC = () => {
                             </p>
                             {autoCreateEnabled && (
                                 <p className="text-xs text-gray-600">
-                                    <span className="text-accent font-medium">Auto-Create is ON</span> — a summary for today will be automatically generated at midnight.
+                                    <span className="text-accent font-medium">Auto-Create is ON</span> — a summary for today will be automatically generated at 8 PM.
                                 </p>
                             )}
                         </div>

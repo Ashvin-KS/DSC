@@ -388,17 +388,20 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         async function setupListener() {
             const unlistenToken = await listen<string>('chat://token', (event) => {
                 if (signal.aborted) return;
+                if (stoppedRequestIdsRef.current.has(activeRequestIdRef.current)) return;
                 tokenBuffer += event.payload;
                 
                 if (flushTimeout) clearTimeout(flushTimeout);
                 flushTimeout = setTimeout(() => {
                     if (signal.aborted) return;
+                    if (stoppedRequestIdsRef.current.has(activeRequestIdRef.current)) return;
                     setStreamingContent((prev) => prev + tokenBuffer);
                     tokenBuffer = '';
-                }, 30); // 30ms debounce
+                }, 30);
             });
             const unlistenStatus = await listen<string>('chat://status', (event) => {
                 if (signal.aborted) return;
+                if (stoppedRequestIdsRef.current.has(activeRequestIdRef.current)) return;
                 setAgentStatus(event.payload || '');
             });
             const unlistenDone = await listen<string>('chat://done', () => {
@@ -454,6 +457,17 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     };
 
     const handleNewSession = async () => {
+        if (isSending) {
+            const currentRequestId = activeRequestIdRef.current;
+            stoppedRequestIdsRef.current.add(currentRequestId);
+            if (window.atheletiaAPI?.intent?.cancelChat) {
+                window.atheletiaAPI.intent.cancelChat();
+            }
+            setIsSending(false);
+            setStreamingContent('');
+            setAgentStatus('');
+            setDisplayedStatus('');
+        }
         try {
             const session = await createChatSession();
             setSessions((prev) => [session, ...prev]);
@@ -461,6 +475,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             setMessages([]);
             setInput('');
             setStreamingContent('');
+            streamingContentRef.current = '';
             inputRef.current?.focus();
         } catch (error) {
             console.error('Failed to create session:', error);
@@ -594,11 +609,25 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         stoppedRequestIdsRef.current.add(currentRequestId);
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
+        if (window.atheletiaAPI?.intent?.cancelChat) {
+            window.atheletiaAPI.intent.cancelChat();
+        }
+        const capturedStreaming = streamingContentRef.current;
+        if (capturedStreaming.trim()) {
+            const partialMsg: ChatMessageType = {
+                id: Date.now(),
+                session_id: activeSessionId || '',
+                role: 'assistant',
+                content: capturedStreaming.trim(),
+                created_at: Math.floor(Date.now() / 1000),
+            };
+            setMessages((prev) => [...prev, partialMsg]);
+        }
         setIsSending(false);
         setStreamingContent('');
         setAgentStatus('');
         setDisplayedStatus('');
-    }, []);
+    }, [activeSessionId]);
 
     /** Rewind conversation to a specific user message — delete it and all after, load text into input */
     const handleRewindToMessage = useCallback(async (messageId: number) => {
@@ -726,6 +755,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             : resolveProviderForModel(normalizedId, provider);
         setSelectedModel(normalizedId);
         setSelectedProvider(resolvedProvider);
+        setStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY, normalizedId, resolvedProvider);
         addFavorite({ id: normalizedId, name: modelName || normalizedId });
         setShowModelDropdown(false);
         setModelSearch('');
@@ -1080,7 +1110,21 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                             sessions.map((session) => (
                                 <button
                                     key={session.id}
-                                    onClick={() => setActiveSessionId(session.id)}
+                                    onClick={() => {
+                                        if (isSending) {
+                                            const currentRequestId = activeRequestIdRef.current;
+                                            stoppedRequestIdsRef.current.add(currentRequestId);
+                                            if (window.atheletiaAPI?.intent?.cancelChat) {
+                                                window.atheletiaAPI.intent.cancelChat();
+                                            }
+                                            setIsSending(false);
+                                            setStreamingContent('');
+                                            streamingContentRef.current = '';
+                                            setAgentStatus('');
+                                            setDisplayedStatus('');
+                                        }
+                                        setActiveSessionId(session.id);
+                                    }}
                                     className={`group w-full flex items-start gap-2 px-3 py-2.5 text-left transition-all ${
                                         activeSessionId === session.id
                                             ? 'bg-cyan-500/10 border-l-2 border-cyan-500/60'

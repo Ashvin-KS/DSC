@@ -258,7 +258,7 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
             { label: 'Screen OCR', desc: 'Read text from screen snapshots for richer AI context.', checked: trackScreenOcr, onChange: setTrackScreenOcr, settingsKey: 'trackScreenOcr' },
             { label: 'Media Tracking', desc: 'Track media playback context (music, videos).', checked: trackMedia, onChange: setTrackMedia, settingsKey: 'trackMedia' },
             { label: 'Browser Tracking', desc: 'Track browser title/URL metadata.', checked: trackBrowser, onChange: setTrackBrowser, settingsKey: 'trackBrowser' },
-            { label: 'Auto-Create Diary', desc: 'At midnight, auto-generate yesterday\'s AI diary entry.', checked: autoCreateDiary, onChange: setAutoCreateDiary, settingsKey: 'autoCreateDiary' },
+            { label: 'Auto-Create Diary', desc: 'At 8 PM, auto-generate today\'s AI diary entry.', checked: autoCreateDiary, onChange: setAutoCreateDiary, settingsKey: 'autoCreateDiary' },
         ];
 
         const handleToggle = (item: typeof toggleItems[0], val: boolean) => {
@@ -310,7 +310,7 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
                     `🎨 Theme: ${THEME_PREVIEWS.find(t => t.id === selectedTheme)?.name || selectedTheme}`,
                     trackApps ? '📊 App tracking enabled' : '📊 App tracking disabled',
                     trackScreenOcr ? '🔍 Screen OCR enabled — richer AI context' : '🔍 Screen OCR disabled',
-                    autoCreateDiary ? '📖 Diary auto-generates at midnight for yesterday' : '📖 Diary auto-create disabled',
+                    autoCreateDiary ? '📖 Diary auto-generates at 8 PM for today' : '📖 Diary auto-create disabled',
                     '🎵 Open Music tab to search and play songs',
                 ].map((text) => (
                     <div key={text} className="flex items-center gap-2 text-sm text-gray-300">
