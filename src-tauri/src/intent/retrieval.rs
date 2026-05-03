@@ -221,7 +221,12 @@ fn make_fts_query(query: &str) -> Option<String> {
             terms
                 .into_iter()
                 .take(6)
-                .map(|term| format!("{term}*"))
+                .map(|term| {
+                    // Sanitize: ensure term doesn't contain FTS5 specials
+                    let clean: String = term.chars().filter(|c| c.is_alphanumeric()).collect();
+                    format!("{clean}*")
+                })
+                .filter(|s| s.len() > 1)
                 .collect::<Vec<_>>()
                 .join(" OR "),
         )
@@ -496,6 +501,9 @@ fn fetch_semantic_candidates(
             continue;
         };
         candidate.semantic_score = cosine_similarity(query_embedding, &vector);
+        if candidate.semantic_score < 0.45 {
+            continue;
+        }
         if filter.map(|value| value.allows(&candidate)).unwrap_or(true) {
             candidates.push(candidate);
         }
@@ -575,6 +583,8 @@ fn file_modified_ts(path: &Path) -> Option<i64> {
         .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_secs() as i64)
 }
+
+include!("retrieval_vault_index_helpers.incl.rs");
 
 fn delete_vault_chunks_for_root(conn: &Connection, vault_root: &str) -> Result<(), String> {
     conn.execute(
@@ -723,6 +733,7 @@ fn delete_vault_chunks_for_subtree(
     Ok(deleted)
 }
 
+#[allow(dead_code)]
 pub fn upsert_markdown_note(
     app: &AppHandle,
     vault_path: &str,
@@ -756,6 +767,7 @@ pub fn upsert_markdown_note(
     index_single_vault_note(&conn, &vault_root, &canonical_note, &relative_path, &content)
 }
 
+#[allow(dead_code)]
 pub fn delete_markdown_note(
     app: &AppHandle,
     vault_path: &str,
@@ -775,6 +787,7 @@ pub fn delete_markdown_note(
     delete_vault_chunks_for_note(&conn, &vault_root, &note_path.to_string_lossy())
 }
 
+#[allow(dead_code)]
 pub fn delete_markdown_subtree(
     app: &AppHandle,
     vault_path: &str,
@@ -1205,19 +1218,9 @@ pub fn delete_retrieval_chunks_for_entity(
     entity_type: &str,
     entity_id: &str,
 ) -> Result<(), String> {
-    let mut stmt = conn
-        .prepare("SELECT id FROM retrieval_chunks WHERE entity_type = ?1 AND entity_id = ?2")
-        .map_err(|e| e.to_string())?;
-    let ids: Vec<i64> = stmt
-        .query_map(params![entity_type, entity_id], |row| row.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    for id in ids {
-        conn.execute("DELETE FROM retrieval_chunks_fts WHERE rowid = ?1", params![id])
-            .map_err(|e| e.to_string())?;
-    }
+    // retrieval_chunks_fts is contentless FTS5 in this project; direct DELETE on the
+    // FTS table can fail at runtime. Delete from base table and rely on JOIN-based
+    // retrieval queries to ignore removed base rows.
     conn.execute(
         "DELETE FROM retrieval_chunks WHERE entity_type = ?1 AND entity_id = ?2",
         params![entity_type, entity_id],
@@ -1246,18 +1249,7 @@ pub fn replace_activity_evidence(
     activity_id: i64,
     evidences: &[EvidenceInput],
 ) -> Result<(), String> {
-    let mut stmt = conn
-        .prepare("SELECT id FROM activity_evidence WHERE activity_id = ?1")
-        .map_err(|e| e.to_string())?;
-    let existing_ids: Vec<i64> = stmt
-        .query_map(params![activity_id], |row| row.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-    for id in existing_ids {
-        conn.execute("DELETE FROM activity_evidence_fts WHERE rowid = ?1", params![id])
-            .map_err(|e| e.to_string())?;
-    }
+    // activity_evidence_fts is contentless FTS5; avoid direct DELETE from FTS table.
     conn.execute("DELETE FROM activity_evidence WHERE activity_id = ?1", params![activity_id])
         .map_err(|e| e.to_string())?;
 
@@ -1564,14 +1556,7 @@ pub fn build_vault_context(
     let vault_root = canonical_vault.to_string_lossy().to_string();
     let conn = crate::intent::db::open(app)?;
 
-    let indexed_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM retrieval_chunks WHERE entity_type = 'vault_note' AND project_root = ?1",
-            params![vault_root],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    if indexed_count == 0 {
+    if vault_index_needs_rebuild(&conn, &canonical_vault, &vault_root)? {
         let _ = reindex_markdown_vault(app, vault_path)?;
     }
 
@@ -1700,6 +1685,7 @@ pub fn build_vault_context(
         semantic.truncate(12);
     }
 
+    let structured_count = structured.len();
     let mut deduped: std::collections::HashMap<i64, RetrievalCandidate> = std::collections::HashMap::new();
     for mut candidate in structured.into_iter().chain(lexical.iter().cloned()).chain(semantic.iter().cloned()) {
         let overlap = lexical_overlap_score(
@@ -1768,7 +1754,7 @@ pub fn build_vault_context(
         route,
         lexical_hits: lexical.len(),
         semantic_hits: semantic.len(),
-        structured_hits: indexed_count as usize,
+        structured_hits: structured_count,
         prompt_context: if prompt_lines.is_empty() {
             "No markdown notes matched this vault query.".to_string()
         } else {
@@ -2126,6 +2112,7 @@ pub fn start_rollup_worker(app_handle: AppHandle) {
     });
 }
 
+#[allow(dead_code)]
 pub fn get_chunk_id(
     conn: &Connection,
     entity_type: &str,
@@ -2169,6 +2156,26 @@ mod tests {
 
         assert!(filter.allows(&candidate("activity_window", "activity")));
         assert!(!filter.allows(&candidate("vault_note_chunk", "note_chunk")));
+    }
+
+    #[test]
+    fn chat_filter_allows_vault_chunks_only_with_files_source() {
+        let selected_sources = vec!["files".to_string()];
+        let filter = build_chat_retrieval_filter(Some(selected_sources.as_slice()));
+
+        assert!(filter.allows(&candidate("vault_note_chunk", "vault_note")));
+        assert!(filter.allows(&candidate("file_change", "code_file_event")));
+        assert!(!filter.allows(&candidate("screen_ocr", "activity")));
+    }
+
+    #[test]
+    fn chat_filter_keeps_media_and_screen_separate() {
+        let selected_sources = vec!["media".to_string()];
+        let filter = build_chat_retrieval_filter(Some(selected_sources.as_slice()));
+
+        assert!(filter.allows(&candidate("media", "activity")));
+        assert!(!filter.allows(&candidate("screen_ocr", "activity")));
+        assert!(!filter.allows(&candidate("activity_window", "activity")));
     }
 
     #[test]

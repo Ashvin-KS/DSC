@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavStore } from '../store/useNavStore';
+import { useIntentStore } from '../store/useIntentStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import { BookOpen, Sparkles, PenLine, ChevronLeft, ChevronRight, Loader2, Trash2, CalendarClock } from 'lucide-react';
 
 interface DiaryEntry {
@@ -28,6 +31,8 @@ function addDays(dateStr: string, n: number): string {
 }
 
 export const DiaryView: React.FC = () => {
+    const setHasUnsavedChanges = useNavStore(s => s.setHasUnsavedChanges);
+    const { settings } = useIntentStore();
     const [activeDate, setActiveDate] = useState(todayStr());
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
     const [yesterdaySummary, setYesterdaySummary] = useState<DiaryEntry | null>(null);
@@ -39,6 +44,10 @@ export const DiaryView: React.FC = () => {
     const [isGeneratingYesterday, setIsGeneratingYesterday] = useState(false);
     const textRef = useRef<HTMLTextAreaElement>(null);
 
+    useEffect(() => {
+        setHasUnsavedChanges(newContent.trim().length > 0 || (editingId !== null && editContent.trim().length > 0));
+    }, [newContent, editingId, editContent, setHasUnsavedChanges]);
+
     const currentDateEntries = entries.filter(e => e.date === activeDate);
     const aiEntries = currentDateEntries.filter(e => e.isAiGenerated);
     const manualEntries = currentDateEntries.filter(e => !e.isAiGenerated);
@@ -48,22 +57,12 @@ export const DiaryView: React.FC = () => {
     useEffect(() => {
         const load = async () => {
             try {
-                if (window.nexusAPI?.diary) {
-                    const data = await window.nexusAPI.diary.getEntries(activeDate);
+                if (window.atheletiaAPI?.diary) {
+                    const data = await window.atheletiaAPI.diary.getEntries(activeDate);
                     setEntries(data);
                 } else {
-                    // Stub offline preview
-                    if (activeDate === todayStr() && entries.length === 0) {
-                        const now = Math.floor(Date.now() / 1000);
-                        setEntries([{
-                            id: 'stub-1',
-                            date: todayStr(),
-                            content: '*(This is a sample AI-generated diary entry. Connect the backend to load your real activity-based diary.)*\n\nToday was productive. You spent most of your morning in VS Code working on the Allentire project — specifically implementing the ChatView and ActivityView components. In the afternoon you explored the IntentFlow architecture documentation. Lofi Hip Hop played in the background for about 2 hours.',
-                            isAiGenerated: true,
-                            createdAt: Date.now() / 1000,
-                            updatedAt: Date.now() / 1000,
-                        }]);
-                    }
+                    setEntries([]);
+                    return;
                 }
             } catch { /* offline */ }
         };
@@ -73,11 +72,11 @@ export const DiaryView: React.FC = () => {
     useEffect(() => {
         const loadYesterdaySummary = async () => {
             try {
-                if (!window.nexusAPI?.diary) {
+                if (!window.atheletiaAPI?.diary) {
                     setYesterdaySummary(null);
                     return;
                 }
-                const data = await window.nexusAPI.diary.getEntries(yesterdayDate);
+                const data = await window.atheletiaAPI.diary.getEntries(yesterdayDate);
                 const latestAi = (data || []).find((entry: DiaryEntry) => entry.isAiGenerated) || null;
                 setYesterdaySummary(latestAi);
             } catch {
@@ -91,8 +90,19 @@ export const DiaryView: React.FC = () => {
         setIsGeneratingYesterday(true);
         setYesterdaySummaryError(null);
         try {
-            if (window.nexusAPI?.diary) {
-                const content = await window.nexusAPI.diary.generateEntry(yesterdayDate);
+            if (window.atheletiaAPI?.diary) {
+                const apiKey = (() => {
+                    const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
+                    switch (provider) {
+                        case 'openai': return settings?.openaiApiKey?.trim() || '';
+                        case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
+                        case 'groq': return settings?.groqApiKey?.trim() || '';
+                        case 'gemini': return settings?.geminiApiKey?.trim() || '';
+                        default: return settings?.nvidiaApiKey?.trim() || '';
+                    }
+                })();
+
+                const content = await window.atheletiaAPI.diary.generateEntry(yesterdayDate, undefined, apiKey);
                 const now = Date.now() / 1000;
                 const generated: DiaryEntry = {
                     id: `ai-yesterday-${Date.now()}`,
@@ -103,7 +113,7 @@ export const DiaryView: React.FC = () => {
                     updatedAt: now,
                 };
                 try {
-                    const saved = await window.nexusAPI.diary.saveEntry(generated);
+                    const saved = await window.atheletiaAPI.diary.saveEntry(generated);
                     setYesterdaySummary(saved);
                     if (activeDate === yesterdayDate) {
                         setEntries(p => [saved, ...p.filter(e => e.id !== saved.id)]);
@@ -133,35 +143,44 @@ export const DiaryView: React.FC = () => {
             isAiGenerated: false, createdAt: Date.now() / 1000, updatedAt: Date.now() / 1000,
         };
         try {
-            if (window.nexusAPI?.diary) {
-                const saved = await window.nexusAPI.diary.saveEntry(entry);
+            if (window.atheletiaAPI?.diary) {
+                const saved = await window.atheletiaAPI.diary.saveEntry(entry);
                 setEntries(p => [saved, ...p]);
-            } else {
-                setEntries(p => [entry, ...p]);
+                setNewContent('');
             }
-        } catch {
-            setEntries(p => [entry, ...p]);
+        } catch (e) {
+            console.error("Failed to save entry:", e);
+            // Optimistic update removed to avoid data loss
+        } finally {
+            setIsSavingManual(false);
         }
-        setNewContent('');
-        setIsSavingManual(false);
     };
 
     const handleSaveEdit = async () => {
         if (!editingId) return;
         const now = Date.now() / 1000;
-        setEntries(p => p.map(e => e.id === editingId ? { ...e, content: editContent, updatedAt: now } : e));
+        
         try {
             const entry = entries.find(e => e.id === editingId);
-            if (entry && window.nexusAPI?.diary) {
-                await window.nexusAPI.diary.saveEntry({ ...entry, content: editContent, updatedAt: now });
+            if (entry && window.atheletiaAPI?.diary) {
+                const saved = await window.atheletiaAPI.diary.saveEntry({ ...entry, content: editContent, updatedAt: now });
+                setEntries(p => p.map(e => e.id === editingId ? saved : e));
             }
-        } catch { /* offline */ }
+        } catch (e) {
+            console.error("Failed to save edit:", e);
+        }
         setEditingId(null);
     };
 
     const handleDelete = async (id: string) => {
-        setEntries(p => p.filter(e => e.id !== id));
-        try { await window.nexusAPI?.diary?.deleteEntry(id); } catch { /* offline */ }
+        try {
+            if (window.atheletiaAPI?.diary) {
+                await window.atheletiaAPI.diary.deleteEntry(id);
+                setEntries(p => p.filter(e => e.id !== id));
+            }
+        } catch (e) {
+            console.error("Failed to delete entry:", e);
+        }
     };
 
     return (
@@ -220,7 +239,7 @@ export const DiaryView: React.FC = () => {
 
                     {yesterdaySummary ? (
                         <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-[#121212] prose-code:text-cyan-300 prose-code:before:content-none prose-code:after:content-none text-gray-300">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{yesterdaySummary.content}</ReactMarkdown>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{yesterdaySummary.content}</ReactMarkdown>
                         </div>
                     ) : (
                         <p className="text-sm text-gray-500">No AI summary yet for yesterday. Click “Generate Summary”.</p>

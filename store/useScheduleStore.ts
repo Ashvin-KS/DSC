@@ -90,6 +90,8 @@ const buildTaskCalendarRange = (dueDate?: string, dueTime?: string): { start: st
     };
 };
 
+const googleApi = () => window.atheletiaAPI?.google;
+
 export const useScheduleStore = create<ScheduleState>()(
     persist(
         (set, get) => ({
@@ -103,29 +105,22 @@ export const useScheduleStore = create<ScheduleState>()(
                 let googleId: string | undefined;
                 let googleCalendarEventId: string | undefined;
 
-                console.log('addTask called. isGoogleConnected:', get().isGoogleConnected);
-                console.log('Task data:', task);
-
                 if (get().isGoogleConnected) {
                     try {
-                        console.log('Attempting to add to Google Tasks...');
-                        // @ts-ignore
-                        const result = await window.nexusAPI.google.tasks.add(undefined, {
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        const result = await api.tasks.add(undefined, {
                             title: task.title,
                             notes: task.description,
                             due: toGoogleTaskDue(task.dueDate, task.dueTime)
                         });
-                        console.log('Google Tasks API result:', result);
                         if (typeof result === 'string') {
                             googleId = result;
-                        } else if (result && (result as any).error) {
-                            console.error('Google Tasks API Error:', (result as any).error);
                         }
 
                         const calendarRange = buildTaskCalendarRange(task.dueDate, task.dueTime);
                         if (calendarRange) {
-                            // @ts-ignore
-                            const eventResult = await window.nexusAPI.google.addEvent({
+                            const eventResult = await api.addEvent({
                                 title: `[Task] ${task.title}`,
                                 description: task.description || '',
                                 start: calendarRange.start,
@@ -137,9 +132,9 @@ export const useScheduleStore = create<ScheduleState>()(
                         }
                     } catch (e) {
                         console.error("Failed to add Google Task:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to add Google task: ${message}` });
                     }
-                } else {
-                    console.log('Not connected to Google, skipping sync');
                 }
 
                 set((state) => ({
@@ -158,8 +153,9 @@ export const useScheduleStore = create<ScheduleState>()(
 
                 if (task && task.googleId && get().isGoogleConnected) {
                     try {
-                        // @ts-ignore
-                        await window.nexusAPI.google.tasks.update(undefined, task.googleId, {
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        await api.tasks.update(undefined, task.googleId, {
                             title: updates.title ?? task.title,
                             notes: updates.description ?? task.description,
                             due: toGoogleTaskDue(updates.dueDate ?? task.dueDate, updates.dueTime ?? task.dueTime),
@@ -172,24 +168,21 @@ export const useScheduleStore = create<ScheduleState>()(
                         const calendarRange = buildTaskCalendarRange(nextDueDate, nextDueTime);
 
                         if (task.googleCalendarEventId && calendarRange) {
-                            // @ts-ignore
-                            await window.nexusAPI.google.updateEvent(task.googleCalendarEventId, {
+                            await api.updateEvent(task.googleCalendarEventId, {
                                 title: `[Task] ${nextTitle}`,
                                 description: nextDescription || '',
                                 start: calendarRange.start,
                                 end: calendarRange.end,
                             });
                         } else if (task.googleCalendarEventId && !calendarRange) {
-                            // @ts-ignore
-                            await window.nexusAPI.google.deleteEvent(task.googleCalendarEventId);
+                            await api.deleteEvent(task.googleCalendarEventId);
                             set((state) => ({
                                 tasks: state.tasks.map((t) =>
                                     t.id === id ? { ...t, googleCalendarEventId: undefined } : t
                                 ),
                             }));
                         } else if (!task.googleCalendarEventId && calendarRange) {
-                            // @ts-ignore
-                            const eventResult = await window.nexusAPI.google.addEvent({
+                            const eventResult = await api.addEvent({
                                 title: `[Task] ${nextTitle}`,
                                 description: nextDescription || '',
                                 start: calendarRange.start,
@@ -205,6 +198,8 @@ export const useScheduleStore = create<ScheduleState>()(
                         }
                     } catch (e) {
                         console.error("Failed to update Google Task:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to update Google task: ${message}` });
                     }
                 }
             },
@@ -218,20 +213,21 @@ export const useScheduleStore = create<ScheduleState>()(
 
                 if (task && task.googleId && get().isGoogleConnected) {
                     try {
-                        // @ts-ignore
-                        await window.nexusAPI.google.tasks.delete(undefined, task.googleId);
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        await api.tasks.delete(undefined, task.googleId);
                         if (task.googleCalendarEventId) {
-                            // @ts-ignore
-                            await window.nexusAPI.google.deleteEvent(task.googleCalendarEventId);
+                            await api.deleteEvent(task.googleCalendarEventId);
                         }
                     } catch (e) {
                         console.error("Failed to delete Google Task:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to delete Google task: ${message}` });
                     }
                 }
             },
 
             completeTask: async (id) => {
-                console.log('Store: completeTask called for id:', id);
                 const task = get().tasks.find(t => t.id === id);
 
                 // Optimistically remove from list
@@ -240,22 +236,20 @@ export const useScheduleStore = create<ScheduleState>()(
                 }));
 
                 if (task && task.googleId && get().isGoogleConnected) {
-                    console.log('Store: Syncing completion to Google Task:', task.googleId);
                     try {
-                        // @ts-ignore
-                        await window.nexusAPI.google.tasks.update(undefined, task.googleId, {
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        await api.tasks.update(undefined, task.googleId, {
                             status: 'completed'
                         });
                         if (task.googleCalendarEventId) {
-                            // @ts-ignore
-                            await window.nexusAPI.google.deleteEvent(task.googleCalendarEventId);
+                            await api.deleteEvent(task.googleCalendarEventId);
                         }
-                        console.log('Store: Google Task marked completed');
                     } catch (e) {
                         console.error("Failed to complete Google Task:", e);
+                        const message = e instanceof Error ? e.message : String(e);
+                        set({ googleStatusMessage: `Failed to complete Google task: ${message}` });
                     }
-                } else {
-                    console.log('Store: Task not synced to Google or not connected');
                 }
             },
 
@@ -270,8 +264,9 @@ export const useScheduleStore = create<ScheduleState>()(
                     const end = new Date(start.getTime() + event.duration * 60000);
 
                     try {
-                        // @ts-ignore
-                        const result = await window.nexusAPI.google.addEvent({
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        const result = await api.addEvent({
                             title: event.title,
                             start: start.toISOString(),
                             end: end.toISOString()
@@ -313,8 +308,9 @@ export const useScheduleStore = create<ScheduleState>()(
                     const end = new Date(start.getTime() + updatedEvent.duration * 60000);
 
                     try {
-                        // @ts-ignore
-                        await window.nexusAPI.google.updateEvent(event.googleId, {
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        await api.updateEvent(event.googleId, {
                             title: updatedEvent.title,
                             start: start.toISOString(),
                             end: end.toISOString()
@@ -337,8 +333,9 @@ export const useScheduleStore = create<ScheduleState>()(
 
                 if (syncToGoogle && get().isGoogleConnected && event?.googleId) {
                     try {
-                        // @ts-ignore
-                        await window.nexusAPI.google.deleteEvent(event.googleId);
+                        const api = googleApi();
+                        if (!api) throw new Error('Google API bridge is unavailable.');
+                        await api.deleteEvent(event.googleId);
                         set({ googleStatusMessage: 'Google Calendar event deleted.' });
                     } catch (e) {
                         console.error("Failed to delete Google event:", e);
@@ -350,8 +347,9 @@ export const useScheduleStore = create<ScheduleState>()(
 
             checkGoogleAuth: async () => {
                 try {
-                    // @ts-ignore
-                    const isConnected = await window.nexusAPI.google.checkAuth();
+                    const api = googleApi();
+                    if (!api) throw new Error('Google API bridge is unavailable.');
+                    const isConnected = await api.checkAuth();
                     set({ isGoogleConnected: isConnected, googleStatusMessage: '' });
                 } catch (e) {
                     console.error("Check auth failed:", e);
@@ -361,8 +359,9 @@ export const useScheduleStore = create<ScheduleState>()(
 
             connectGoogle: async () => {
                 try {
-                    // @ts-ignore
-                    const success = await window.nexusAPI.google.signIn();
+                    const api = googleApi();
+                    if (!api) throw new Error('Google API bridge is unavailable.');
+                    const success = await api.signIn();
                     if (success) {
                         set({ isGoogleConnected: true, googleStatusMessage: 'Google Calendar connected.' });
                         get().syncWithGoogle();
@@ -379,8 +378,9 @@ export const useScheduleStore = create<ScheduleState>()(
 
             disconnectGoogle: async () => {
                 try {
-                    // @ts-ignore
-                    await window.nexusAPI.google.signOut();
+                    const api = googleApi();
+                    if (!api) throw new Error('Google API bridge is unavailable.');
+                    await api.signOut();
                     set({ isGoogleConnected: false, googleStatusMessage: 'Google account disconnected.' });
                 } catch (e) {
                     console.error("Disconnect google failed:", e);
@@ -405,8 +405,9 @@ export const useScheduleStore = create<ScheduleState>()(
                 }
 
                 try {
-                    // @ts-ignore
-                    const googleEvents = await window.nexusAPI.google.listEvents(start.toISOString(), end.toISOString());
+                    const api = googleApi();
+                    if (!api) throw new Error('Google API bridge is unavailable.');
+                    const googleEvents = await api.listEvents(start.toISOString(), end.toISOString());
 
                     if (Array.isArray(googleEvents)) {
                         const currentEvents = get().events;
@@ -453,8 +454,9 @@ export const useScheduleStore = create<ScheduleState>()(
                 if (!get().isGoogleConnected) return;
 
                 try {
-                    // @ts-ignore
-                    const googleTasks = await window.nexusAPI.google.tasks.list();
+                    const api = googleApi();
+                    if (!api) throw new Error('Google API bridge is unavailable.');
+                    const googleTasks = await api.tasks.list();
                     if (Array.isArray(googleTasks)) {
                         const currentTasks = get().tasks;
 

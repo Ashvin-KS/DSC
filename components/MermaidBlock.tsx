@@ -3,16 +3,19 @@ import mermaid from 'mermaid';
 import DOMPurify from 'dompurify';
 
 let mermaidInitialized = false;
+let mermaidThemeMode = '';
 
 const ensureMermaidInit = () => {
-  if (mermaidInitialized) return;
+  const scheme = document.documentElement.dataset.themeScheme === 'light' ? 'default' : 'dark';
+  if (mermaidInitialized && mermaidThemeMode === scheme) return;
   mermaid.initialize({
     startOnLoad: false,
-    theme: 'dark',
+    theme: scheme,
     securityLevel: 'strict',
     suppressErrorRendering: true
   } as any);
   mermaidInitialized = true;
+  mermaidThemeMode = scheme;
 };
 
 interface MermaidBlockProps {

@@ -246,7 +246,7 @@ export const useLeetCodeActivityStore = create<LeetCodeActivityState>()(
             }
         }),
         {
-            name: 'nexus-leetcode-activity'
+            name: 'atheletia-leetcode-activity'
         }
     )
 );

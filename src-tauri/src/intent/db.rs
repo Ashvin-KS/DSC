@@ -1,4 +1,4 @@
-/// Database initialisation — creates all IntentFlow tables on first run.
+/// Database initialisation — creates all Atheletia tables on first run.
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -7,7 +7,12 @@ use tauri::Manager;
 pub fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("allentire_intent.db"))
+    let current = dir.join("atheletia_intent.db");
+    let legacy = dir.join("allentire_intent.db");
+    if !current.exists() && legacy.exists() {
+        std::fs::copy(&legacy, &current).map_err(|e| e.to_string())?;
+    }
+    Ok(current)
 }
 
 pub fn open(app: &tauri::AppHandle) -> Result<Connection, String> {

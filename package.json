@@ -1,5 +1,5 @@
 {
-  "name": "gemini-cortex",
+  "name": "atheletia",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -27,16 +27,20 @@
     "dompurify": "^3.3.3",
     "dotenv": "^17.2.3",
     "framer-motion": "^11.0.8",
-    "google-auth-library": "^9.15.0",
-    "googleapis": "^144.0.0",
+    "google-auth-library": "^10.6.2",
+    "googleapis": "^171.4.0",
     "jspdf": "^4.2.0",
+    "katex": "^0.16.45",
     "lucide-react": "^0.555.0",
     "mermaid": "^11.12.3",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-markdown": "^10.1.0",
     "react-youtube": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "tailwind-merge": "^3.5.0",
     "tiptap-markdown": "^0.9.0",
     "zustand": "^5.0.9"
@@ -49,5 +53,8 @@
     "puppeteer": "^24.37.5",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "overrides": {
+    "uuid": "^14.0.0"
   }
 }

@@ -20,10 +20,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
 use url::Url;
+use keyring::Entry;
 
 static GAME_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
 static INCOGNITO_ENABLED: AtomicBool = AtomicBool::new(false);
 static INCOGNITO_UNTIL_TS: AtomicI64 = AtomicI64::new(0);
+static BUILT_IN_LEETCODE_CSV: &str = include_str!("../../leetcode_problems.csv");
 
 #[derive(Debug, Clone)]
 struct RuntimeSettings {
@@ -69,17 +71,6 @@ struct MutationResult {
     #[serde(rename = "newPath")]
     new_path: Option<String>,
     error: Option<String>,
-}
-
-#[derive(Clone, Serialize)]
-struct NotesMutationEvent {
-    vault_path: Option<String>,
-    action: String,
-    path: Option<String>,
-    old_path: Option<String>,
-    new_path: Option<String>,
-    is_directory: bool,
-    source: String,
 }
 
 #[derive(Serialize)]
@@ -142,48 +133,83 @@ fn app_data_tokens_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn load_tokens(app: &tauri::AppHandle) -> Result<TokenStore, String> {
+    if let Ok(entry) = Entry::new("Atheletia", "google_tokens") {
+        if let Ok(data) = entry.get_password() {
+            if let Ok(tokens) = serde_json::from_str(&data) {
+                return Ok(tokens);
+            }
+        }
+    }
+
     let path = app_data_tokens_path(app)?;
     if !path.exists() {
         return Ok(TokenStore::default());
     }
-    let data = fs::read_to_string(path).map_err(|e| format!("Unable to read token file: {e}"))?;
-    serde_json::from_str(&data).map_err(|e| format!("Unable to parse token file: {e}"))
+    let data = fs::read_to_string(&path).map_err(|e| format!("Unable to read token file: {e}"))?;
+    let tokens: TokenStore = serde_json::from_str(&data).map_err(|e| format!("Unable to parse token file: {e}"))?;
+    
+    // Migrate to keyring and delete file
+    if let Ok(entry) = Entry::new("Atheletia", "google_tokens") {
+        let _ = entry.set_password(&data);
+        let _ = fs::remove_file(path);
+    }
+    
+    Ok(tokens)
 }
 
 fn save_tokens(app: &tauri::AppHandle, tokens: &TokenStore) -> Result<(), String> {
-    let path = app_data_tokens_path(app)?;
     let payload = serde_json::to_string_pretty(tokens).map_err(|e| format!("Unable to encode tokens: {e}"))?;
-    fs::write(path, payload).map_err(|e| format!("Unable to persist tokens: {e}"))
+    if let Ok(entry) = Entry::new("Atheletia", "google_tokens") {
+        entry.set_password(&payload).map_err(|e| format!("Unable to persist tokens to OS keyring: {e}"))?;
+        let path = app_data_tokens_path(app)?;
+        if path.exists() {
+            let _ = fs::remove_file(path);
+        }
+        Ok(())
+    } else {
+        Err("Failed to open OS Keyring for saving tokens".into())
+    }
 }
 
 fn delete_tokens(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Ok(entry) = Entry::new("Atheletia", "google_tokens") {
+        let _ = entry.delete_credential();
+    }
     let path = app_data_tokens_path(app)?;
     if path.exists() {
-        fs::remove_file(path).map_err(|e| format!("Unable to remove token file: {e}"))?;
+        let _ = fs::remove_file(path);
     }
     Ok(())
 }
 
 fn google_client_credentials(app: &tauri::AppHandle) -> Result<(String, String), String> {
-    if let Ok(conn) = intent::db::open(app) {
-        let db_client_id: String = conn
-            .query_row(
-                "SELECT value FROM app_settings WHERE key = 'google_client_id'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap_or_default();
-        let db_client_secret: String = conn
-            .query_row(
-                "SELECT value FROM app_settings WHERE key = 'google_client_secret'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap_or_default();
+    let mut db_client_id = String::new();
+    let mut db_client_secret = String::new();
 
-        if !db_client_id.trim().is_empty() && !db_client_secret.trim().is_empty() {
-            return Ok((db_client_id, db_client_secret));
+    if let Ok(entry) = Entry::new("Atheletia", "google_client_id") {
+        db_client_id = entry.get_password().unwrap_or_default();
+    }
+    if let Ok(entry) = Entry::new("Atheletia", "google_client_secret") {
+        db_client_secret = entry.get_password().unwrap_or_default();
+    }
+
+    if db_client_id.trim().is_empty() || db_client_secret.trim().is_empty() {
+        if let Ok(conn) = intent::db::open(app) {
+            if db_client_id.trim().is_empty() {
+                db_client_id = conn
+                    .query_row("SELECT value FROM app_settings WHERE key = 'google_client_id'", [], |row| row.get::<_, String>(0))
+                    .unwrap_or_default();
+            }
+            if db_client_secret.trim().is_empty() {
+                db_client_secret = conn
+                    .query_row("SELECT value FROM app_settings WHERE key = 'google_client_secret'", [], |row| row.get::<_, String>(0))
+                    .unwrap_or_default();
+            }
         }
+    }
+
+    if !db_client_id.trim().is_empty() && !db_client_secret.trim().is_empty() {
+        return Ok((db_client_id, db_client_secret));
     }
 
     dotenvy::dotenv().ok();
@@ -374,6 +400,11 @@ fn get_directory_tree_inner(dir_path: &Path, depth: usize, max_depth: usize) -> 
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy().to_string();
         if name.starts_with('.') {
+            continue;
+        }
+
+        // Ignore massive or system generated directories to prevent UI lag.
+        if name == "node_modules" || name == "target" || name == "dist" || name == "build" || name == "__pycache__" || name == "venv" {
             continue;
         }
 
@@ -722,7 +753,7 @@ fn toggle_tray_panel(app: &tauri::AppHandle) {
         "tray_panel",
         WebviewUrl::App("index.html?window=tray".into()),
     )
-    .title("NEXUS Control Center")
+    .title("Atheletia Control Center")
     .inner_size(420.0, 560.0)
     .resizable(false)
     .decorations(false)
@@ -736,11 +767,6 @@ fn toggle_tray_panel(app: &tauri::AppHandle) {
             if err.to_string().contains("already exists") {
                 if let Some(window) = app.get_webview_window("tray_panel") {
                     position_tray_panel(app, &window);
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    return;
-                }
-                if let Some(window) = app.get_window("tray_panel") {
                     let _ = window.show();
                     let _ = window.set_focus();
                     return;
@@ -921,21 +947,11 @@ fn mutation_err(message: impl Into<String>) -> MutationResult {
     }
 }
 
-fn emit_notes_mutation_event(app: &tauri::AppHandle, payload: NotesMutationEvent) {
-    let _ = app.emit("notes://vault-mutated", payload);
-}
-
 fn normalize_path_key(path: &Path) -> String {
     path.to_string_lossy()
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase()
-}
-
-fn path_is_within(candidate: &Path, root: &Path) -> bool {
-    let candidate_key = normalize_path_key(candidate);
-    let root_key = normalize_path_key(root);
-    candidate_key == root_key || candidate_key.starts_with(&format!("{root_key}\\"))
 }
 
 fn infer_vault_root_for_path(app: &tauri::AppHandle, target_path: &Path) -> Option<String> {
@@ -1069,35 +1085,7 @@ async fn notes_search_vault(
     let stats = tokio::task::spawn_blocking({
         let app_handle = app_handle.clone();
         let vault_path = vault_path.clone();
-        move || {
-            let conn = crate::intent::db::open(&app_handle)?;
-            let canonical_vault = std::fs::canonicalize(&vault_path).map_err(|e| e.to_string())?;
-            let canonical_vault_str = canonical_vault.to_string_lossy().to_string();
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM retrieval_chunks WHERE entity_type = 'vault_note' AND project_root = ?1",
-                    rusqlite::params![canonical_vault_str.clone()],
-                    |row| row.get(0),
-                )
-                .map_err(|e| e.to_string())?;
-            if count == 0 {
-                crate::intent::retrieval::reindex_markdown_vault(&app_handle, &vault_path)
-            } else {
-                let indexed_files: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(DISTINCT entity_id) FROM retrieval_chunks WHERE entity_type = 'vault_note' AND project_root = ?1",
-                        rusqlite::params![canonical_vault_str.clone()],
-                        |row| row.get(0),
-                    )
-                    .map_err(|e| e.to_string())?;
-                Ok(crate::intent::retrieval::VaultIndexStats {
-                    indexed_files: indexed_files as usize,
-                    indexed_chunks: count as usize,
-                    vault_path: canonical_vault_str,
-                    cancelled: false,
-                })
-            }
-        }
+        move || crate::intent::retrieval::ensure_vault_index_ready(&app_handle, &vault_path)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -1258,6 +1246,18 @@ fn notes_move_file(source_path: String, destination_path: String) -> MutationRes
 fn leetcode_read_csv(app: tauri::AppHandle) -> Option<String> {
     let mut candidates = Vec::<PathBuf>::new();
 
+    // User-editable copy. In packaged installs this is the primary file, and
+    // it is created from the built-in CSV the first time the app needs it.
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        let editable_path = data_dir.join("leetcode_problems.csv");
+        if !editable_path.exists() {
+            if fs::create_dir_all(&data_dir).is_ok() {
+                let _ = fs::write(&editable_path, BUILT_IN_LEETCODE_CSV);
+            }
+        }
+        candidates.push(editable_path);
+    }
+
     // Walk up from current_dir until we find the file (handles dev mode where
     // current_dir == src-tauri/ but file is in project root)
     if let Ok(mut dir) = std::env::current_dir() {
@@ -1286,11 +1286,6 @@ fn leetcode_read_csv(app: tauri::AppHandle) -> Option<String> {
         }
     }
 
-    // App data dir (user-copied file)
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        candidates.push(data_dir.join("leetcode_problems.csv"));
-    }
-
     for path in candidates {
         if path.exists() {
             if let Ok(data) = fs::read_to_string(&path) {
@@ -1298,7 +1293,26 @@ fn leetcode_read_csv(app: tauri::AppHandle) -> Option<String> {
             }
         }
     }
-    None
+    Some(BUILT_IN_LEETCODE_CSV.to_string())
+}
+
+#[tauri::command]
+fn leetcode_get_csv_path(app: tauri::AppHandle) -> Result<String, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let editable_path = data_dir.join("leetcode_problems.csv");
+    if !editable_path.exists() {
+        fs::write(&editable_path, BUILT_IN_LEETCODE_CSV).map_err(|e| e.to_string())?;
+    }
+    Ok(editable_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn leetcode_save_csv(app: tauri::AppHandle, csv_content: String) -> Result<bool, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    fs::write(data_dir.join("leetcode_problems.csv"), csv_content).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 
@@ -1364,7 +1378,7 @@ async fn google_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
         .find_map(|(k, v)| if k == "code" { Some(v.to_string()) } else { None })
         .ok_or_else(|| "OAuth callback missing code".to_string())?;
 
-    let response_body = "Authentication successful. You can return to NEXUS OS.";
+    let response_body = "Authentication successful. You can return to Atheletia.";
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         response_body.len(),
@@ -1848,7 +1862,7 @@ fn browser_open_in_app(app: tauri::AppHandle, url: String) -> Result<bool, Strin
     let label = format!("browser-{}", Utc::now().timestamp_millis());
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::External(parsed))
-        .title("NEXUS Browser")
+        .title("Atheletia Browser")
         .inner_size(1280.0, 820.0)
         .resizable(true)
         .build()
@@ -2025,6 +2039,8 @@ pub fn run() {
             notes_rename,
             notes_move_file,
             leetcode_read_csv,
+            leetcode_get_csv_path,
+            leetcode_save_csv,
             browser_open_in_app,
             browser_create_child,
             browser_update_child_bounds,
@@ -2061,7 +2077,7 @@ pub fn run() {
             app_music_playlist_select,
             app_timer_control,
             app_toggle_tray_panel,
-            // ─── Intent / IntentFlow commands ────────────────
+            // ─── Intent commands ────────────────
             intent::activity::get_activities,
             intent::activity::get_activity_stats,
             intent::activity::start_activity_tracker,

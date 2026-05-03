@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import type { ChatMessage as ChatMessageType, AgentStep, ActivityRef } from '../../lib/chatTypes';
 import { formatTime } from '../../lib/chatUtils';
 import {
@@ -218,6 +219,7 @@ function MarkdownMessage({ text }: { text: string }) {
     return (
         <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeSanitize]}
             components={{
                 h1: ({ children }) => (
                     <h1 className="text-base font-bold mt-3 mb-1.5 text-white border-l-2 border-cyan-500 pl-2.5">

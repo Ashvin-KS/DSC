@@ -70,7 +70,7 @@ export const DynamicIsland: React.FC = () => {
         : 'left-1/2 -translate-x-1/2';
 
     return (
-        <div className={`fixed top-4 ${islandPositionClass} z-50 flex flex-col items-center`}>
+        <div className={`fixed top-4 ${islandPositionClass} z-system flex flex-col items-center`}>
             {/* ISLAND CONTAINER */}
             <div
                 className={`

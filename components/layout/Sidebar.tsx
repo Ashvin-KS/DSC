@@ -30,18 +30,27 @@ export const Sidebar: React.FC = () => {
           group relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300
           ${isActive ? 'text-white' : 'text-gray-500 hover:text-gray-300'}
         `}
+        style={isActive ? { color: 'var(--text-strong)' } : undefined}
         aria-label={label}
       >
         {/* Active Glow */}
         {isActive && (
-          <div className="absolute inset-0 rounded-xl bg-cyan-500/20 blur-md" />
+          <div className="absolute inset-0 rounded-xl blur-md" style={{ background: 'var(--accent-soft)' }} />
         )}
         <Icon
           size={22}
-          className={`relative z-10 transition-all duration-300 ${isActive ? 'drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]' : ''}`}
+          className="relative z-10 transition-all duration-300"
+          style={isActive ? { filter: 'drop-shadow(0 0 8px var(--accent))' } : undefined}
         />
         {/* Tooltip */}
-        <div className="absolute left-14 px-2 py-1 bg-[#262626] border border-[#333] text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+        <div
+          className="absolute left-14 rounded px-2 py-1 text-xs opacity-0 transition-opacity whitespace-nowrap pointer-events-none z-dropdown group-hover:opacity-100"
+          style={{
+            background: 'var(--bg-elev-2)',
+            border: '1px solid var(--border-strong)',
+            color: 'var(--text-strong)',
+          }}
+        >
           {label}
         </div>
       </button>
@@ -49,7 +58,10 @@ export const Sidebar: React.FC = () => {
   };
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-16 bg-[#161616] border-r border-[#262626] flex flex-col items-center py-6 z-50">
+    <aside
+      className="fixed left-0 top-0 h-full w-14 sm:w-16 flex flex-col items-center py-4 sm:py-6 z-sidebar"
+      style={{ background: 'var(--bg-elev-1)', borderRight: '1px solid var(--border-soft)' }}
+    >
       {/* Main nav */}
       <div className="flex flex-col gap-7 flex-1">
         {MAIN_NAV.map((item) => (
@@ -58,7 +70,7 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Settings — pinned at bottom */}
-      <div className="mt-4 pt-4 border-t border-[#262626] w-full flex flex-col items-center">
+      <div className="mt-4 pt-4 w-full flex flex-col items-center" style={{ borderTop: '1px solid var(--border-soft)' }}>
         <NavButton id="settings" icon={Settings2} label="Settings" />
       </div>
     </aside>

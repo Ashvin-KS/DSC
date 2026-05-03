@@ -60,22 +60,59 @@ interface MusicState {
 
 const savePlaylistsToStorage = (playlists: Playlist[]) => {
     localStorage.setItem(LS_PLAYLISTS, JSON.stringify(playlists));
-    if (window.nexusAPI?.music) {
-        window.nexusAPI.music.savePlaylists(playlists).catch(console.error);
+    if (window.atheletiaAPI?.music) {
+        window.atheletiaAPI.music.savePlaylists(playlists).catch(console.error);
     }
 };
 
-const saveLibraryToStorage = (library: MusicLibrary) => {
-    localStorage.setItem('nexus_music_library', JSON.stringify(library));
-    if (window.nexusAPI?.music) {
-        window.nexusAPI.music.saveLibrary(library).catch(console.error);
+// Initial playlist migration
+const migratePlaylists = () => {
+    const current = localStorage.getItem(LS_PLAYLISTS);
+    if (!current) {
+        const legacy = localStorage.getItem('musicapp_playlists') || localStorage.getItem('allentire_playlists');
+        if (legacy) {
+            localStorage.setItem(LS_PLAYLISTS, legacy);
+            localStorage.removeItem('musicapp_playlists');
+            localStorage.removeItem('allentire_playlists');
+        }
     }
 };
+migratePlaylists();
+
+const saveLibraryToStorage = (library: MusicLibrary) => {
+    localStorage.setItem('atheletia_music_library', JSON.stringify(library));
+    if (window.atheletiaAPI?.music) {
+        window.atheletiaAPI.music.saveLibrary(library).catch(console.error);
+    }
+};
+
+// Initial library load & migration
+const getInitialLibrary = (): MusicLibrary => {
+    try {
+        const stored = localStorage.getItem('atheletia_music_library');
+        if (stored) return JSON.parse(stored);
+
+        // Migration
+        const old = localStorage.getItem('nexus_music_library') || localStorage.getItem('allentire_music_library');
+        if (old) {
+            const data = JSON.parse(old);
+            localStorage.setItem('atheletia_music_library', old);
+            localStorage.removeItem('nexus_music_library');
+            localStorage.removeItem('allentire_music_library');
+            return data;
+        }
+    } catch (e) {
+        console.warn('Failed to load music library storage', e);
+    }
+    return { likedSongs: [], recentlyPlayed: [] };
+};
+
+const initialLibrary = getInitialLibrary();
 
 export const useMusicStore = create<MusicState>((set, get) => ({
     playlists: [],
-    likedSongs: [],
-    recentlyPlayed: [],
+    likedSongs: initialLibrary.likedSongs,
+    recentlyPlayed: initialLibrary.recentlyPlayed,
     queue: [],
     activePlaylistId: null,
     currentTrack: null,

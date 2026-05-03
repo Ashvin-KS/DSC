@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { ThemePresetId } from '../lib/theme';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,20 +19,10 @@ export interface ActivityStats {
     topApps: { appName: string; seconds: number }[];
 }
 
-export interface ChatSession {
-    id: string;
-    title: string;
-    createdAt: number;
-    updatedAt: number;
-}
+// Import and re-export canonical types from lib/chatTypes to avoid duplication
+import type { ChatSession, ChatMessage } from '../lib/chatTypes';
+export type { ChatSession, ChatMessage };
 
-export interface ChatMessage {
-    id: number;
-    sessionId: string;
-    role: 'user' | 'assistant';
-    content: string;
-    createdAt: number;
-}
 
 export interface DiaryEntry {
     id: string;
@@ -48,6 +39,7 @@ export interface AppSettings {
     openaiApiKey?: string;
     anthropicApiKey?: string;
     groqApiKey?: string;
+    geminiApiKey?: string;
     googleClientId: string;
     googleClientSecret: string;
     // AI
@@ -76,6 +68,7 @@ export interface AppSettings {
     compactMode?: boolean;
     fontScale?: number;
     colorScheme?: 'system' | 'dark' | 'light';
+    themePreset?: ThemePresetId;
     // Locale
     locale?: string;
     dateFormat?: string;
@@ -111,7 +104,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     nvidiaApiKey: '',
     googleClientId: '',
     googleClientSecret: '',
-    defaultModel: 'moonshotai/kimi-k2.5',
+    defaultModel: 'meta/llama-3.3-70b-instruct',
     aiProvider: 'nvidia',
     trackApps: true,
     trackScreenOcr: false,
@@ -131,6 +124,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     compactMode: false,
     fontScale: 1,
     colorScheme: 'dark',
+    themePreset: 'dark-2026',
     locale: 'en-US',
     dateFormat: 'YYYY-MM-DD',
 };
@@ -159,6 +153,6 @@ export const useIntentStore = create<IntentState>((set) => ({
             ),
         })),
 
-    settings: null,
+    settings: DEFAULT_SETTINGS,
     setSettings: (settings) => set({ settings }),
 }));

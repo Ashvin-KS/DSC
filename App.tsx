@@ -5,11 +5,13 @@ import { useNavStore } from './store/useNavStore';
 import { useIntentStore } from './store/useIntentStore';
 import { DashboardView } from './views/DashboardView';
 import { GlobalWidgets } from './components/GlobalWidgets';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useMusicStore } from './store/useMusicStore';
 import { useTimerStore } from './store/useTimerStore';
 import { TrayPanelView } from './views/TrayPanelView';
 import { useCodeStore } from './store/useCodeStore';
 import { preloadBrainVaultCache } from './lib/brainVaultBootstrap';
+import { applyThemePreset } from './lib/theme';
 
 // Lazy-load heavy views to avoid blocking initial render
 const CodeView = React.lazy(() => import('./views/CodeView').then(m => ({ default: m.CodeView })));
@@ -27,6 +29,7 @@ const App: React.FC = () => {
   const activeTab = useNavStore((state) => state.activeTab);
   const setActiveTab = useNavStore((state) => state.setActiveTab);
   const setSettings = useIntentStore((s) => s.setSettings);
+  const settings = useIntentStore((s) => s.settings);
   const toggleMusic = useMusicStore((s) => s.togglePlay);
   const nextTrack = useMusicStore((s) => s.nextTrack);
   const prevTrack = useMusicStore((s) => s.prevTrack);
@@ -34,19 +37,30 @@ const App: React.FC = () => {
 
   // Load settings from backend on startup so all views have API keys available
   useEffect(() => {
-    if (isTrayPanelWindow) return;
     const load = async () => {
       try {
-        if (window.nexusAPI?.settings) {
-          const data = await window.nexusAPI.settings.get();
-          if (data) setSettings(data);
+        if (window.atheletiaAPI?.settings) {
+          const data = await window.atheletiaAPI.settings.get();
+          if (data) {
+            const current = useIntentStore.getState().settings || {};
+            setSettings({
+              ...current,
+              ...data,
+              colorScheme: data.colorScheme || current.colorScheme || 'dark',
+              themePreset: data.themePreset || (data.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
+            });
+          }
         }
       } catch (err) {
         console.warn('Failed to load settings on startup; using defaults.', err);
       }
     };
     load();
-  }, [isTrayPanelWindow, setSettings]);
+  }, [setSettings]);
+
+  useEffect(() => {
+    applyThemePreset(settings?.themePreset || (settings?.colorScheme === 'light' ? 'light-2026' : 'dark-2026'));
+  }, [settings?.themePreset, settings?.colorScheme]);
 
   // Load CSV problem bank early so the code dashboard has data without waiting for CodeView mount.
   useEffect(() => {
@@ -55,7 +69,7 @@ const App: React.FC = () => {
       try {
         const state = useCodeStore.getState();
         if (state.problems.length > 2) return;
-        const csv = await window.nexusAPI?.leetcode?.readCsv?.();
+        const csv = await window.atheletiaAPI?.leetcode?.readCsv?.();
         if (csv) {
           state.importFromCsv(csv);
         }
@@ -145,13 +159,13 @@ const App: React.FC = () => {
         }));
         await register(listen<boolean>('tray:refresh-ai', () => {
           setActiveTab('dashboard');
-          window.dispatchEvent(new CustomEvent('allentire:refresh-dashboard'));
+          window.dispatchEvent(new CustomEvent('atheletia:refresh-dashboard'));
         }));
         await register(listen<{ active: boolean; remainingSeconds: number }>('tray:incognito-tick', (event) => {
-          window.dispatchEvent(new CustomEvent('allentire:incognito-tick', { detail: event.payload }));
+          window.dispatchEvent(new CustomEvent('atheletia:incognito-tick', { detail: event.payload }));
         }));
         await register(listen<boolean>('tray:clear-notifications', () => {
-          window.dispatchEvent(new CustomEvent('allentire:clear-notifications'));
+          window.dispatchEvent(new CustomEvent('atheletia:clear-notifications'));
         }));
       } catch (err) {
         // non-tauri runtime
@@ -169,63 +183,78 @@ const App: React.FC = () => {
         console.warn('Failed to unlisten tray events on cleanup.', err);
       }
     };
-  }, [isTrayPanelWindow, setActiveTab, toggleMusic, nextTrack, prevTrack, setActivePlaylist]);
+  }, [isTrayPanelWindow]);
 
   const publishStateToTray = async () => {
-    const timer = useTimerStore.getState();
-    const music = useMusicStore.getState();
-    await emitTo('tray_panel', 'app:timer-state', {
-      timeLeft: timer.timeLeft,
-      isActive: timer.isActive,
-      mode: timer.mode,
-    });
-    await emitTo('tray_panel', 'app:music-state', {
-      isPlaying: music.isPlaying,
-      currentTrack: music.currentTrack
-        ? {
-            id: music.currentTrack.id,
-            title: music.currentTrack.title,
-            thumbnail: music.currentTrack.thumbnail,
-          }
-        : null,
-      activePlaylistId: music.activePlaylistId,
-      playlists: (music.playlists || []).map((p) => ({
-        id: p.id,
-        name: p.name,
-        trackCount: p.tracks.length,
-        thumbnail: p.tracks[0]?.thumbnail || '',
-      })),
-    });
+    try {
+      const timer = useTimerStore.getState();
+      const music = useMusicStore.getState();
+      await emitTo('tray_panel', 'app:timer-state', {
+        timeLeft: timer.timeLeft,
+        isActive: timer.isActive,
+        mode: timer.mode,
+      });
+      await emitTo('tray_panel', 'app:music-state', {
+        isPlaying: music.isPlaying,
+        currentTrack: music.currentTrack
+          ? {
+              id: music.currentTrack.id,
+              title: music.currentTrack.title,
+              thumbnail: music.currentTrack.thumbnail,
+            }
+          : null,
+        activePlaylistId: music.activePlaylistId,
+        playlists: (music.playlists || []).map((p) => ({
+          id: p.id,
+          name: p.name,
+          trackCount: p.tracks.length,
+          thumbnail: p.tracks[0]?.thumbnail || '',
+        })),
+      });
+    } catch {
+      // tray_panel window may not exist — safe to ignore
+    }
   };
 
   useEffect(() => {
     if (isTrayPanelWindow) return;
-    publishStateToTray().catch((err) => {
-      console.debug('Failed to publish initial tray state; likely non-Tauri runtime.', err);
-    });
-    const interval = window.setInterval(() => {
+    let lastHash = '';
+    const publish = () => {
+      const timer = useTimerStore.getState();
+      const music = useMusicStore.getState();
+      // Compute a lightweight hash to skip no-op publishes
+      const hash = `${timer.timeLeft}|${timer.isActive}|${timer.mode}|${music.isPlaying}|${music.currentTrack?.id ?? ''}|${music.activePlaylistId}`;
+      if (hash === lastHash) return;
+      lastHash = hash;
       publishStateToTray().catch((err) => {
         console.warn('Failed to publish tray state on interval tick.', err);
       });
-    }, 5000);
-
+    };
+    publish(); // initial publish
+    const interval = window.setInterval(publish, 5000);
     return () => window.clearInterval(interval);
   }, [isTrayPanelWindow]);
 
   const renderContent = () => {
+    let content: React.ReactNode = null;
     switch (activeTab) {
-      case 'dashboard': return <DashboardView />;
-      case 'chat': return <ChatView />;
-      case 'activity': return <ActivityView />;
-      case 'diary': return <DiaryView />;
-      case 'code': return <CodeView />;
-      case 'brain': return <BrainView />;
-      case 'schedule': return <ScheduleView />;
-      case 'zen': return <ZenView />;
-      case 'music': return <MusicView />;
-      case 'settings': return <SettingsView />;
-      default: return null;
+      case 'dashboard': content = <DashboardView />; break;
+      case 'chat': content = <ChatView />; break;
+      case 'activity': content = <ActivityView />; break;
+      case 'diary': content = <DiaryView />; break;
+      case 'code': content = <CodeView />; break;
+      case 'brain': content = <BrainView />; break;
+      case 'schedule': content = <ScheduleView />; break;
+      case 'zen': content = <ZenView />; break;
+      case 'music': content = <MusicView />; break;
+      case 'settings': content = <SettingsView />; break;
+      default: content = null;
     }
+    return (
+      <ErrorBoundary resetKey={activeTab} title={`${activeTab[0].toUpperCase()}${activeTab.slice(1)} view crashed`}>
+        {content}
+      </ErrorBoundary>
+    );
   };
 
   if (isTrayPanelWindow) {
@@ -235,7 +264,7 @@ const App: React.FC = () => {
   return (
     <AppLayout>
       <Suspense fallback={
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#666' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
           Loading...
         </div>
       }>

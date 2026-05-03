@@ -1,8 +1,8 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tauri::AppHandle;
 use uuid::Uuid;
+use keyring::Entry;
 
 use crate::services::query_engine::{
     run_agentic_search_with_steps_and_history_and_scope, AgentResult, AgentStep, ChatMessage as QEMessage,
@@ -31,327 +31,7 @@ pub struct ChatMessageResponse {
 
 // AgentStep is imported from query_engine module
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ConfirmActionPayload {
-    kind: String,
-    reason: String,
-    suggested_time_range: Option<String>,
-    enable_sources: Vec<String>,
-    retry_message: String,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReferencedActivity {
-    title: String,
-    subtitle: String,
-    source: String,
-    timestamp: Option<i64>,
-}
-
-#[derive(Debug, Clone)]
-struct ActivityContext {
-    prompt_context: String,
-    references: Vec<ReferencedActivity>,
-}
-
-fn time_range_start(now: i64, time_range: Option<&str>) -> i64 {
-    match time_range.unwrap_or("today") {
-        "yesterday" => now - 86400,
-        "last_3_days" => now - 3 * 86400,
-        "last_7_days" => now - 7 * 86400,
-        "last_30_days" => now - 30 * 86400,
-        "all_time" => 0,
-        _ => now - 86400,
-    }
-}
-
-fn needs_scope_or_source_confirmation(
-    message: &str,
-    selected_time_range: Option<&str>,
-    selected_sources: Option<&[String]>,
-) -> Option<ConfirmActionPayload> {
-    let text = message.to_lowercase();
-    let range = selected_time_range.unwrap_or("today");
-    let sources = selected_sources.unwrap_or(&[]);
-
-    let asks_broad_history = [
-        "this week", "last week", "past week", "whole week", "all time", "ever", "history",
-        "across", "over time", "rank", "focus", "patterns", "whom did i love", "who did i love",
-    ].iter().any(|k| text.contains(k));
-
-    let suggested_time = if asks_broad_history && !matches!(range, "last_7_days" | "last_30_days" | "all_time") {
-        Some("last_7_days".to_string())
-    } else {
-        None
-    };
-
-    let mut enable_sources: Vec<String> = Vec::new();
-    let asks_browser = ["browser", "website", "url", "search", "google"].iter().any(|k| text.contains(k));
-    let asks_files = ["file", "code", "project", "document", "repo"].iter().any(|k| text.contains(k));
-    let asks_chat = ["chat", "texted", "message", "whatsapp", "instagram", "telegram"].iter().any(|k| text.contains(k));
-
-    if asks_browser && !sources.iter().any(|s| s == "browser") {
-        enable_sources.push("browser".to_string());
-    }
-    if asks_files && !sources.iter().any(|s| s == "files") {
-        enable_sources.push("files".to_string());
-    }
-    if asks_chat && !sources.iter().any(|s| s == "screen") {
-        enable_sources.push("screen".to_string());
-    }
-
-    if suggested_time.is_none() && enable_sources.is_empty() {
-        return None;
-    }
-
-    Some(ConfirmActionPayload {
-        kind: "confirm_scope_or_sources".to_string(),
-        reason: "This question likely needs a broader time range and/or additional data sources for reliable evidence.".to_string(),
-        suggested_time_range: suggested_time,
-        enable_sources,
-        retry_message: message.to_string(),
-    })
-}
-
-fn refs_to_activities(refs: &[ReferencedActivity]) -> Vec<serde_json::Value> {
-    refs.iter()
-        .map(|r| {
-            json!({
-                "app": r.subtitle,
-                "title": r.title,
-                "time": r.timestamp,
-                "duration_seconds": 0,
-                "category": r.source,
-            })
-        })
-        .collect()
-}
-
-fn dedupe_activities(items: &mut Vec<serde_json::Value>) {
-    let mut seen = std::collections::HashSet::new();
-    items.retain(|v| {
-        let app = v.get("app").and_then(|x| x.as_str()).unwrap_or("");
-        let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("");
-        let time = v.get("time").and_then(|x| x.as_i64()).unwrap_or(0);
-        let key = format!("{}|{}|{}", app, title, time);
-        seen.insert(key)
-    });
-}
-
-fn collect_source_evidence(
-    app_handle: &tauri::AppHandle,
-    time_range: Option<&str>,
-    sources: Option<&[String]>,
-) -> (Vec<AgentStep>, Vec<serde_json::Value>, String) {
-    let mut steps: Vec<AgentStep> = Vec::new();
-    let mut activities: Vec<serde_json::Value> = Vec::new();
-    let mut context_sections: Vec<String> = Vec::new();
-
-    let now = chrono::Utc::now().timestamp();
-    let start = time_range_start(now, time_range);
-
-    let selected: Vec<String> = if let Some(src) = sources {
-        src.to_vec()
-    } else {
-        vec!["apps".to_string(), "screen".to_string(), "media".to_string()]
-    };
-
-    let Ok(conn) = crate::intent::db::open(app_handle) else {
-        return (steps, activities, String::new());
-    };
-
-    if selected.iter().any(|s| s == "screen") {
-        let mut snippets: Vec<String> = Vec::new();
-        let mut found = 0;
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT app_name, window_title, start_time, metadata FROM activities WHERE start_time >= ?1 AND metadata IS NOT NULL ORDER BY start_time DESC LIMIT 80"
-        ) {
-            if let Ok(rows) = stmt.query_map([start], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, Option<Vec<u8>>>(3)?,
-                ))
-            }) {
-                for row in rows.filter_map(|r| r.ok()) {
-                    if let Some(blob) = row.3 {
-                        if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&blob) {
-                            if let Some(text) = meta.get("screen_text").and_then(|v| v.as_str()) {
-                                let trimmed = text.trim();
-                                if !trimmed.is_empty() {
-                                    found += 1;
-                                    snippets.push(format!("- {} | {}", row.0, trimmed.chars().take(120).collect::<String>()));
-                                    activities.push(json!({
-                                        "app": row.0,
-                                        "title": row.1,
-                                        "time": row.2,
-                                        "duration_seconds": 0,
-                                        "category": "screen",
-                                        "ocr_snippet": trimmed.chars().take(200).collect::<String>(),
-                                    }));
-                                    if snippets.len() >= 8 { break; }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        steps.push(AgentStep {
-            turn: steps.len() + 1,
-            tool_name: "get_recent_ocr".to_string(),
-            tool_args: json!({ "time_range": time_range.unwrap_or("today"), "scope_label": time_range.unwrap_or("today"), "limit": 80 }),
-            tool_result: format!("Collected {} OCR-backed activity entries.", found),
-            reasoning: "Screen/OCR source enabled; gather text evidence".to_string(),
-        });
-        if !snippets.is_empty() {
-            context_sections.push(format!("OCR HIGHLIGHTS:\n{}", snippets.join("\n")));
-        }
-    }
-
-    if selected.iter().any(|s| s == "browser") {
-        let mut urls: Vec<String> = Vec::new();
-        let mut found = 0;
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT app_name, window_title, start_time, metadata FROM activities WHERE start_time >= ?1 AND metadata IS NOT NULL ORDER BY start_time DESC LIMIT 120"
-        ) {
-            if let Ok(rows) = stmt.query_map([start], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, Option<Vec<u8>>>(3)?,
-                ))
-            }) {
-                for row in rows.filter_map(|r| r.ok()) {
-                    if let Some(blob) = row.3 {
-                        if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&blob) {
-                            if let Some(url) = meta.get("url").and_then(|v| v.as_str()) {
-                                let trimmed = url.trim();
-                                if !trimmed.is_empty() {
-                                    found += 1;
-                                    urls.push(format!("- {}", trimmed));
-                                    activities.push(json!({
-                                        "app": row.0,
-                                        "title": row.1,
-                                        "time": row.2,
-                                        "duration_seconds": 0,
-                                        "category": "browser",
-                                        "url": trimmed,
-                                    }));
-                                    if urls.len() >= 8 { break; }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        steps.push(AgentStep {
-            turn: steps.len() + 1,
-            tool_name: "get_browser_history".to_string(),
-            tool_args: json!({ "time_range": time_range.unwrap_or("today"), "scope_label": time_range.unwrap_or("today"), "limit": 120 }),
-            tool_result: format!("Collected {} browser URL entries.", found),
-            reasoning: "Browser source enabled; gather URL evidence".to_string(),
-        });
-        if !urls.is_empty() {
-            context_sections.push(format!("RECENT URLS:\n{}", urls.join("\n")));
-        }
-    }
-
-    if selected.iter().any(|s| s == "media") {
-        let mut media_lines: Vec<String> = Vec::new();
-        let mut found = 0;
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT app_name, window_title, start_time, metadata FROM activities WHERE start_time >= ?1 AND metadata IS NOT NULL ORDER BY start_time DESC LIMIT 100"
-        ) {
-            if let Ok(rows) = stmt.query_map([start], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, Option<Vec<u8>>>(3)?,
-                ))
-            }) {
-                for row in rows.filter_map(|r| r.ok()) {
-                    if let Some(blob) = row.3 {
-                        if let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&blob) {
-                            if let Some(mi) = meta.get("media_info") {
-                                let title = mi.get("title").and_then(|v| v.as_str()).unwrap_or("").trim();
-                                let artist = mi.get("artist").and_then(|v| v.as_str()).unwrap_or("").trim();
-                                if !title.is_empty() || !artist.is_empty() {
-                                    found += 1;
-                                    media_lines.push(format!("- {} — {}", title, artist));
-                                    activities.push(json!({
-                                        "app": row.0,
-                                        "title": if row.1.trim().is_empty() { title } else { &row.1 },
-                                        "time": row.2,
-                                        "duration_seconds": 0,
-                                        "category": "media",
-                                        "media": { "title": title, "artist": artist, "status": mi.get("status").and_then(|v| v.as_str()).unwrap_or("") },
-                                    }));
-                                    if media_lines.len() >= 8 { break; }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        steps.push(AgentStep {
-            turn: steps.len() + 1,
-            tool_name: "get_music_history".to_string(),
-            tool_args: json!({ "time_range": time_range.unwrap_or("today"), "scope_label": time_range.unwrap_or("today"), "limit": 100 }),
-            tool_result: format!("Collected {} media entries.", found),
-            reasoning: "Media source enabled; gather music/media evidence".to_string(),
-        });
-        if !media_lines.is_empty() {
-            context_sections.push(format!("MEDIA SNAPSHOTS:\n{}", media_lines.join("\n")));
-        }
-    }
-
-    if selected.iter().any(|s| s == "files") {
-        let mut file_lines: Vec<String> = Vec::new();
-        let mut found = 0;
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT path, change_type, detected_at FROM code_file_events WHERE detected_at >= ?1 ORDER BY detected_at DESC LIMIT 60"
-        ) {
-            if let Ok(rows) = stmt.query_map([start], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            }) {
-                for row in rows.filter_map(|r| r.ok()) {
-                    found += 1;
-                    file_lines.push(format!("- {} ({})", row.0, row.1));
-                    activities.push(json!({
-                        "app": "File Monitor",
-                        "title": row.0,
-                        "time": row.2,
-                        "duration_seconds": 0,
-                        "category": "files",
-                    }));
-                    if file_lines.len() >= 10 { break; }
-                }
-            }
-        }
-        steps.push(AgentStep {
-            turn: steps.len() + 1,
-            tool_name: "get_recent_file_changes".to_string(),
-            tool_args: json!({ "time_range": time_range.unwrap_or("today"), "scope_label": time_range.unwrap_or("today"), "limit": 60 }),
-            tool_result: format!("Collected {} file-change events.", found),
-            reasoning: "Files source enabled; gather file activity evidence".to_string(),
-        });
-        if !file_lines.is_empty() {
-            context_sections.push(format!("FILE EVENTS:\n{}", file_lines.join("\n")));
-        }
-    }
-
-    (steps, activities, context_sections.join("\n\n"))
-}
 
 // ─── blocking DB helpers (no async, conn safe) ────────────────────────────────
 
@@ -448,6 +128,8 @@ fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &st
     Ok(msg_id)
 }
 
+/// FIXED: API keys are stored in the OS keyring after settings_save (deleted from SQLite).
+/// Read from keyring first, then fall back to SQLite (legacy) and finally env vars.
 fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
     // Respect the user's configured ai_provider setting
     let provider = conn.query_row(
@@ -455,23 +137,35 @@ fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
         [], |row| row.get::<_, String>(0),
     ).unwrap_or_else(|_| "nvidia".to_string());
 
-    let setting_key = match provider.to_lowercase().as_str() {
+    let key_name = match provider.to_lowercase().as_str() {
         "openai" => "openai_api_key",
         "anthropic" => "anthropic_api_key",
         "groq" => "groq_api_key",
+        "gemini" => "gemini_api_key",
         _ => "nvidia_api_key",
     };
 
+    // Try OS keyring first (primary storage after settings_save)
+    if let Ok(entry) = Entry::new("Atheletia", key_name) {
+        if let Ok(pwd) = entry.get_password() {
+            if !pwd.trim().is_empty() {
+                return Some(pwd);
+            }
+        }
+    }
+
+    // Fallback: SQLite (legacy path, before keyring migration)
     conn.query_row(
         "SELECT value FROM app_settings WHERE key = ?1",
-        [setting_key], |row| row.get::<_, String>(0),
+        [key_name], |row| row.get::<_, String>(0),
     ).ok().filter(|s| !s.is_empty())
     .or_else(|| {
-        // Fallback to env var for the selected provider
+        // Last resort: environment variables
         let env_key = match provider.to_lowercase().as_str() {
             "openai" => "OPENAI_API_KEY",
             "anthropic" => "ANTHROPIC_API_KEY",
             "groq" => "GROQ_API_KEY",
+            "gemini" => "GEMINI_API_KEY",
             _ => "NVIDIA_API_KEY",
         };
         std::env::var(env_key).ok().filter(|s| !s.is_empty())
@@ -555,23 +249,47 @@ pub async fn send_chat_message(
     time_range: Option<String>,
     selected_sources: Option<Vec<String>>,
     sources: Option<Vec<String>>,
+    api_key: Option<String>,
 ) -> Result<ChatMessageResponse, String> {
     let now = Utc::now().timestamp();
     let effective_sources = if sources.is_some() { sources } else { selected_sources };
 
-    // Phase 1: sync DB work — collect everything into owned values, then conn is dropped
-    let (nvidia_api_key, prior_messages): (Option<String>, Vec<ChatMessageResponse>) = tokio::task::spawn_blocking({
+    // Store user message in database
+    tokio::task::spawn_blocking({
         let app2 = app_handle.clone();
         let sid   = session_id.clone();
         let msg   = message.clone();
-        move || -> (Option<String>, Vec<ChatMessageResponse>) {
+        move || {
+            if let Ok(conn) = crate::intent::db::open(&app2) {
+                let _ = db_store_user_msg(&conn, &sid, &msg, now);
+            }
+        }
+    }).await.map_err(|e| e.to_string())?;
+
+    // Use passed api_key if provided, otherwise fetch from database
+    let effective_api_key = if api_key.as_ref().filter(|k| !k.is_empty()).is_some() {
+        api_key
+    } else {
+        tokio::task::spawn_blocking({
+            let app2 = app_handle.clone();
+            move || -> Option<String> {
+                let Ok(conn) = crate::intent::db::open(&app2) else {
+                    return None;
+                };
+                db_get_api_keys(&conn)
+            }
+        }).await.map_err(|e| e.to_string())?
+    };
+
+    // Fetch prior messages
+    let prior_messages: Vec<ChatMessageResponse> = tokio::task::spawn_blocking({
+        let app2 = app_handle.clone();
+        let sid   = session_id.clone();
+        move || -> Vec<ChatMessageResponse> {
             let Ok(conn) = crate::intent::db::open(&app2) else {
-                return (None, Vec::new());
+                return Vec::new();
             };
-            let _ = db_store_user_msg(&conn, &sid, &msg, now);
-            let key = db_get_api_keys(&conn);
-            let msgs = db_get_messages(&conn, &sid).unwrap_or_default();
-            (key, msgs)
+            db_get_messages(&conn, &sid).unwrap_or_default()
         }
     }).await.map_err(|e| e.to_string())?;
 
@@ -603,7 +321,7 @@ pub async fn send_chat_message(
             AISettings {
                 enabled: true,
                 provider: prov.clone(),
-                api_key: nvidia_api_key.unwrap_or_default(),
+                api_key: effective_api_key.unwrap_or_default(),
                 model: model.unwrap_or_else(|| "meta/llama-3.3-70b-instruct".to_string()),
                 local_only: is_local,
                 fallback_to_local: true,
@@ -673,140 +391,4 @@ pub async fn send_chat_message(
         created_at: response_time,
         metadata:   metadata_json,
     })
-}
-
-// ─── AI API helper ────────────────────────────────────────────────────────────
-
-async fn call_ai_api(
-    api_key: &str,
-    endpoint: &str,
-    model_id: &str,
-    message: &str,
-    activity_context: &str,
-    time_range: Option<&str>,
-    sources: Option<&[String]>,
-) -> Result<String, String> {
-    let system = format!(
-        "You are a personal AI assistant inside Allentire, a productivity app. \
-         You have direct access to the user's real activity data tracked by the app. \
-         Use the following activity context to answer questions accurately.\n\n\
-         {}\n\n\
-         {}{}Be concise and specific. Reference actual apps and window titles from the data.",
-        activity_context,
-        time_range.map(|t| format!("Time range: {}. ", t)).unwrap_or_default(),
-        sources.map(|s| format!("Sources: {}. ", s.join(", "))).unwrap_or_default()
-    );
-
-    #[derive(Serialize)] struct Msg  { role: String, content: String }
-    #[derive(Serialize)] struct Req  { model: String, messages: Vec<Msg>, max_tokens: u32, temperature: f32 }
-    #[derive(Deserialize)] struct Resp { choices: Vec<Ch> }
-    #[derive(Deserialize)] struct Ch { message: Mc }
-    #[derive(Deserialize)] struct Mc { content: String }
-
-    let resp = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|e| e.to_string())?
-        .post(endpoint)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&Req {
-            model: model_id.to_string(),
-            messages: vec![
-                Msg { role: "system".into(), content: system },
-                Msg { role: "user".into(),   content: message.to_string() },
-            ],
-            max_tokens: 1024,
-            temperature: 0.7,
-        })
-        .send().await.map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(format!("AI {} — {}", status, &text[..text.len().min(300)]));
-    }
-
-    let parsed: Resp = resp.json().await.map_err(|e| e.to_string())?;
-    parsed.choices.into_iter().next()
-        .map(|c| c.message.content)
-        .ok_or_else(|| "Empty AI response".to_string())
-}
-
-fn build_activity_context(app_handle: &tauri::AppHandle, time_range: Option<&str>) -> ActivityContext {
-    let conn = match crate::intent::db::open(app_handle) {
-        Ok(c) => c,
-        Err(_) => return ActivityContext {
-            prompt_context: "No activity data available yet.".to_string(),
-            references: Vec::new(),
-        },
-    };
-
-    let now = chrono::Utc::now().timestamp();
-    let start = time_range_start(now, time_range);
-
-    // Recent activities and references
-    let (activities_text, references) = match conn.prepare(
-        "SELECT app_name, window_title, duration_seconds, start_time FROM activities \
-         WHERE start_time >= ?1 ORDER BY start_time DESC LIMIT 50"
-    ) {
-        Ok(mut stmt) => {
-            let rows_raw: Vec<(String, String, i64, i64)> = stmt.query_map([start], |row| {
-                let app: String = row.get(0)?;
-                let title: String = row.get(1)?;
-                let dur: i64 = row.get(2)?;
-                let ts: i64 = row.get(3)?;
-                Ok((app, title, dur, ts))
-            }).ok()
-            .map(|r| r.filter_map(|r| r.ok()).collect())
-            .unwrap_or_default();
-
-            if rows_raw.is_empty() {
-                (
-                    "No activity data recorded yet. Activity tracking will start collecting data in the background.".to_string(),
-                    Vec::new(),
-                )
-            } else {
-                let rows = rows_raw.iter().map(|(app, title, dur, ts)| {
-                    let time = chrono::DateTime::from_timestamp(*ts, 0)
-                        .map(|d| d.format("%H:%M").to_string())
-                        .unwrap_or_default();
-                    format!("- {} | {} | {}s | {}", app, title, dur, time)
-                }).collect::<Vec<_>>();
-
-                let refs = rows_raw.into_iter().take(12).map(|(app, title, _dur, ts)| ReferencedActivity {
-                    title: if title.trim().is_empty() { app.clone() } else { title },
-                    subtitle: app,
-                    source: "activity".to_string(),
-                    timestamp: Some(ts),
-                }).collect::<Vec<_>>();
-
-                (format!("RECENT ACTIVITY ({} events):\n{}", rows.len(), rows.join("\n")), refs)
-            }
-        },
-        Err(_) => ("No activity data available.".to_string(), Vec::new()),
-    };
-
-    // Top apps summary
-    let top_apps = match conn.prepare(
-        "SELECT app_name, SUM(duration_seconds) as total FROM activities \
-         WHERE start_time >= ?1 GROUP BY app_name ORDER BY total DESC LIMIT 10"
-    ) {
-        Ok(mut stmt) => {
-            let rows: Vec<String> = stmt.query_map([start], |row| {
-                let app: String = row.get(0)?;
-                let total: i64 = row.get(1)?;
-                let mins = total / 60;
-                Ok(format!("  {} — {}m", app, mins))
-            }).ok()
-            .map(|r| r.filter_map(|r| r.ok()).collect())
-            .unwrap_or_default();
-            if rows.is_empty() { String::new() }
-            else { format!("\n\nTOP APPS BY TIME:\n{}", rows.join("\n")) }
-        },
-        Err(_) => String::new(),
-    };
-
-    ActivityContext {
-        prompt_context: format!("{}{}", activities_text, top_apps),
-        references,
-    }
 }

@@ -31,10 +31,10 @@ const TIME_RANGES = [
     { id: 'all', label: 'All Time', seconds: () => { return { start: 0, end: Math.floor(Date.now() / 1000) }; } },
 ];
 
-// Stub data for offline preview
+// Offline preview data
 const STUB_ACTIVITIES: ActivityEntry[] = [
-    { id: 1, appName: 'Visual Studio Code', windowTitle: 'ChatView.tsx — Allentire', categoryId: 1, startTime: Date.now() / 1000 - 3600, durationSeconds: 2400 },
-    { id: 2, appName: 'Google Chrome', windowTitle: 'IntentFlow Architecture — GitHub', categoryId: 2, startTime: Date.now() / 1000 - 1200, durationSeconds: 900 },
+    { id: 1, appName: 'Visual Studio Code', windowTitle: 'ChatView.tsx - Atheletia', categoryId: 1, startTime: Date.now() / 1000 - 3600, durationSeconds: 2400 },
+    { id: 2, appName: 'Google Chrome', windowTitle: 'Atheletia Architecture - GitHub', categoryId: 2, startTime: Date.now() / 1000 - 1200, durationSeconds: 900 },
     { id: 3, appName: 'Spotify', windowTitle: 'Lofi Hip Hop Radio', categoryId: 4, startTime: Date.now() / 1000 - 300, durationSeconds: 300 },
     { id: 4, appName: 'Windows Terminal', windowTitle: 'npm run tauri:dev', categoryId: 1, startTime: Date.now() / 1000 - 7200, durationSeconds: 1800 },
     { id: 5, appName: 'Slack', windowTitle: '# dev-team', categoryId: 3, startTime: Date.now() / 1000 - 5400, durationSeconds: 600 },
@@ -77,9 +77,9 @@ export const ActivityView: React.FC = () => {
     const load = async (rangeId = timeRangeId) => {
         setLoading(true);
         try {
-            if (window.nexusAPI?.intent?.getActivities) {
+            if (window.atheletiaAPI?.intent?.getActivities) {
                 const range = TIME_RANGES.find(r => r.id === rangeId)!.seconds();
-                const data = await window.nexusAPI.intent.getActivities(range.start, range.end, 1000);
+                const data = await window.atheletiaAPI.intent.getActivities(range.start, range.end, 1000);
 
                 // Map backend snake_case fields -> frontend camelCase fields
                 const mappedData: ActivityEntry[] = data.map((d: any) => ({
@@ -148,7 +148,7 @@ export const ActivityView: React.FC = () => {
                             <ChevronDown size={11} className={`transition-transform ${showTimeMenu ? 'rotate-180' : ''}`} />
                         </button>
                         {showTimeMenu && (
-                            <div className="absolute right-0 top-full mt-1 w-40 bg-[#111] border border-[#2a2a2a] rounded-xl shadow-2xl z-50 py-1">
+                            <div className="absolute right-0 top-full mt-1 w-40 bg-[#111] border border-[#2a2a2a] rounded-xl shadow-2xl z-dropdown py-1">
                                 {TIME_RANGES.map(r => (
                                     <button key={r.id} onClick={() => handleRangeChange(r.id)}
                                         className={`w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-white/5 transition-colors ${timeRangeId === r.id ? 'text-cyan-400' : 'text-gray-300'}`}>
@@ -171,7 +171,7 @@ export const ActivityView: React.FC = () => {
                             <ChevronDown size={11} className={`transition-transform ${showCatMenu ? 'rotate-180' : ''}`} />
                         </button>
                         {showCatMenu && (
-                            <div className="absolute right-0 top-full mt-1 w-48 bg-[#111] border border-[#2a2a2a] rounded-xl shadow-2xl z-50 py-1">
+                            <div className="absolute right-0 top-full mt-1 w-48 bg-[#111] border border-[#2a2a2a] rounded-xl shadow-2xl z-dropdown py-1">
                                 <button onClick={() => { setCatFilter(null); setShowCatMenu(false); }}
                                     className={`w-full flex items-center px-3 py-2 text-xs hover:bg-white/5 transition-colors ${catFilter === null ? 'text-cyan-400' : 'text-gray-300'}`}>
                                     All Categories

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tauri::AppHandle;
 use uuid::Uuid;
+use keyring::Entry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiaryEntry {
@@ -109,7 +110,7 @@ fn db_gather_generate_context(
     use chrono::NaiveDate;
     let d = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|_| "Invalid date format (expected YYYY-MM-DD)".to_string())?;
-    let start_ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    let start_ts = d.and_hms_opt(0, 0, 0).ok_or("Invalid date boundaries")?.and_utc().timestamp();
     let end_ts   = start_ts + 86400;
 
     let mut apps_stmt = conn.prepare(
@@ -300,20 +301,34 @@ fn db_gather_generate_context(
         "openai" => "openai_api_key",
         "anthropic" => "anthropic_api_key",
         "groq" => "groq_api_key",
+        "gemini" => "gemini_api_key",
         _ => "nvidia_api_key",
     };
-    let env_var_name = match ai_provider.to_lowercase().as_str() {
-        "openai" => "OPENAI_API_KEY",
-        "anthropic" => "ANTHROPIC_API_KEY",
-        "groq" => "GROQ_API_KEY",
-        _ => "NVIDIA_API_KEY",
-    };
 
-    let api_key = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = ?1",
-        rusqlite::params![env_key_name], |row| row.get::<_, String>(0),
-    ).ok().filter(|s| !s.is_empty())
-    .or_else(|| std::env::var(env_var_name).ok().filter(|s| !s.is_empty()));
+    let mut api_key = None;
+    if let Ok(entry) = Entry::new("Atheletia", env_key_name) {
+        if let Ok(pwd) = entry.get_password() {
+            if !pwd.trim().is_empty() {
+                api_key = Some(pwd);
+            }
+        }
+    }
+    
+    if api_key.is_none() {
+        let env_var_name = match ai_provider.to_lowercase().as_str() {
+            "openai" => "OPENAI_API_KEY",
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "groq" => "GROQ_API_KEY",
+            "gemini" => "GEMINI_API_KEY",
+            _ => "NVIDIA_API_KEY",
+        };
+
+        api_key = conn.query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            rusqlite::params![env_key_name], |row| row.get::<_, String>(0),
+        ).ok().filter(|s| !s.is_empty())
+        .or_else(|| std::env::var(env_var_name).ok().filter(|s| !s.is_empty()));
+    }
 
     Ok((context_summary, api_key, ai_model, ai_provider))
 }
@@ -423,9 +438,10 @@ pub async fn diary_generate_entry(
     app_handle: AppHandle,
     date: String,
     model: Option<String>,
+    api_key: Option<String>,
 ) -> Result<String, String> {
     // Phase 1: sync DB — collect all data into owned Strings, then conn is dropped
-    let (activity_context, api_key, db_model, ai_provider) = tokio::task::spawn_blocking({
+    let (activity_context, db_api_key, db_model, ai_provider) = tokio::task::spawn_blocking({
         let app2 = app_handle.clone();
         let date2 = date.clone();
         move || -> Result<(String, Option<String>, String, String), String> {
@@ -433,6 +449,13 @@ pub async fn diary_generate_entry(
             db_gather_generate_context(&conn, &date2)
         }
     }).await.map_err(|e| e.to_string())??;
+
+    // Use passed api_key if provided, otherwise use db_api_key
+    let api_key = if api_key.as_ref().filter(|k| !k.is_empty()).is_some() {
+        api_key
+    } else {
+        db_api_key
+    };
 
     // Phase 2: async API call (no Connection held)
     // Use explicit model > db model > provider default

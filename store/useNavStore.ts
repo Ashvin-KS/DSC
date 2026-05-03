@@ -5,9 +5,17 @@ export type Tab = 'dashboard' | 'code' | 'brain' | 'schedule' | 'zen' | 'music' 
 interface NavState {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
+  hasUnsavedChanges: boolean;
+  setHasUnsavedChanges: (val: boolean) => void;
 }
 
-export const useNavStore = create<NavState>((set) => ({
+export const useNavStore = create<NavState>((set, get) => ({
   activeTab: 'dashboard',
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  hasUnsavedChanges: false,
+  setHasUnsavedChanges: (val) => set({ hasUnsavedChanges: val }),
+  setActiveTab: (tab) => {
+    if (!get().hasUnsavedChanges || window.confirm('You have unsaved changes. Are you sure you want to leave without saving?')) {
+      set({ activeTab: tab, hasUnsavedChanges: false });
+    }
+  },
 }));

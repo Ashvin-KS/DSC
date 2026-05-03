@@ -10,9 +10,12 @@ pub fn get_open_windows() -> Vec<String> {
 
     unsafe {
         extern "system" fn enum_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            if hwnd.is_null() || lparam == 0 {
+                return 1; // Continue enumeration but skip invalid cases
+            }
             unsafe {
                 let titles = &mut *(lparam as *mut Vec<String>);
-                
+
                 if IsWindowVisible(hwnd) != 0 {
                     let len = GetWindowTextLengthW(hwnd);
                     if len > 0 {

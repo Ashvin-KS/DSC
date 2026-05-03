@@ -1,5 +1,5 @@
 /**
- * Chat service — wraps window.nexusAPI.intent.* and window.nexusAPI.settings.*
+ * Chat service — wraps window.atheletiaAPI.intent.* and window.atheletiaAPI.settings.*
  * so ChatPage doesn't depend on intent-flow-main's separate Tauri invocations.
  */
 import type { ChatSession, ChatMessage, ChatSourceId } from '../lib/chatTypes';
@@ -16,22 +16,85 @@ export interface RecentModel {
   last_used: number;
 }
 
-const api = () => (window as any).nexusAPI;
+/** Typed error thrown when a chat service call fails. */
+export class ChatServiceError extends Error {
+  constructor(
+    message: string,
+    public readonly code: 'API_UNAVAILABLE' | 'NETWORK' | 'AUTH' | 'NOT_FOUND' | 'UNKNOWN'
+  ) {
+    super(message);
+    this.name = 'ChatServiceError';
+  }
+}
+
+/** Returns the atheletiaAPI bridge or throws if unavailable. */
+function getApi() {
+  const api = (window as { atheletiaAPI?: typeof window.atheletiaAPI }).atheletiaAPI;
+  if (!api) {
+    throw new ChatServiceError(
+      'Atheletia API bridge is not available. Make sure you are running inside the desktop app.',
+      'API_UNAVAILABLE'
+    );
+  }
+  return api;
+}
+
+/** Maps raw backend errors to user-friendly ChatServiceError instances. */
+function mapError(err: unknown): ChatServiceError {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (lower.includes('api key') || lower.includes('missing') || lower.includes('unauthorized') || lower.includes('401')) {
+    return new ChatServiceError(
+      'Authentication failed. Please check your API key in Settings → API Keys.',
+      'AUTH'
+    );
+  }
+  if (lower.includes('network') || lower.includes('fetch') || lower.includes('connect')) {
+    return new ChatServiceError(
+      'Connection error. Please check your internet connection and try again.',
+      'NETWORK'
+    );
+  }
+  if (lower.includes('not found') || lower.includes('404')) {
+    return new ChatServiceError('The requested resource was not found.', 'NOT_FOUND');
+  }
+  return new ChatServiceError(msg || 'An unexpected error occurred.', 'UNKNOWN');
+}
 
 export async function createChatSession(): Promise<ChatSession> {
-  return api()?.intent?.createChatSession();
+  try {
+    const result = await getApi().intent?.createChatSession();
+    if (!result) throw new ChatServiceError('Backend returned empty session.', 'UNKNOWN');
+    return result as ChatSession;
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function getChatSessions(): Promise<ChatSession[]> {
-  return api()?.intent?.getChatSessions() ?? [];
+  try {
+    const result = await getApi().intent?.getChatSessions();
+    return (result as ChatSession[]) ?? [];
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
-  return api()?.intent?.deleteChatSession(sessionId);
+  try {
+    await getApi().intent?.deleteChatSession(sessionId);
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
-  return api()?.intent?.getChatMessages(sessionId) ?? [];
+  try {
+    const result = await getApi().intent?.getChatMessages(sessionId);
+    return (result as ChatMessage[]) ?? [];
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function sendChatMessage(
@@ -40,23 +103,40 @@ export async function sendChatMessage(
   model?: string,
   provider?: string,
   timeRange?: string,
-  selectedSources?: ChatSourceId[]
+  selectedSources?: ChatSourceId[],
+  apiKey?: string
 ): Promise<ChatMessage> {
-  return api()?.intent?.sendChatMessage(sessionId, message, model, provider, timeRange, selectedSources);
+  try {
+    const result = await getApi().intent?.sendChatMessage(
+      sessionId, message, model, provider, timeRange, selectedSources, undefined, apiKey
+    );
+    if (!result) throw new ChatServiceError('Backend returned no response.', 'UNKNOWN');
+    return result as ChatMessage;
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function getNvidiaModels(apiKey: string): Promise<ModelInfo[]> {
-  const models = await api()?.settings?.getNvidiaModels(apiKey);
-  return (models ?? []).map((m: any) => ({ id: m.id, name: m.id }));
+  try {
+    const models = await getApi().settings?.getNvidiaModels(apiKey);
+    return ((models ?? []) as Array<{ id: string }>).map((m) => ({ id: m.id, name: m.id }));
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function getLMStudioModels(baseUrl = 'http://127.0.0.1:1234'): Promise<ModelInfo[]> {
-  const models = await api()?.settings?.getLMStudioModels(baseUrl);
-  return (models ?? []).map((m: any) => ({ id: m.id, name: m.id }));
+  try {
+    const models = await getApi().settings?.getLMStudioModels(baseUrl);
+    return ((models ?? []) as Array<{ id: string }>).map((m) => ({ id: m.id, name: m.id }));
+  } catch (err) {
+    throw err instanceof ChatServiceError ? err : mapError(err);
+  }
 }
 
 export async function getRecentModels(_limit = 5): Promise<RecentModel[]> {
-  // Main app doesn't expose recent models via nexusAPI — use localStorage only
+  // Backend doesn't expose recent models via atheletiaAPI — localStorage only
   return [];
 }
 

@@ -1,5 +1,11 @@
-import pandas as pd
-from openpyxl import load_workbook
+import sys
+
+try:
+    import pandas as pd
+    from openpyxl import load_workbook
+except ImportError:
+    print("Missing required libraries. Please run: pip install pandas openpyxl")
+    sys.exit(1)
 
 def organize_leetcode():
     file_path = 'leetcode problems.xlsx'
@@ -188,7 +194,7 @@ def organize_leetcode():
         {"Problem Number": 7, "Problem Name": "7. Reverse Integer", "Technique": "Math", "Link": "https://leetcode.com/problems/reverse-integer/"},
     ]
 
-    # Generate more dummy problems to reach exactly 300 if needed
+    # Generate additional placeholder rows to reach exactly 300 if needed.
     current_total = len(data) + len(extra_problems)
     if current_total < 300:
         for i in range(300 - current_total):

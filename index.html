@@ -4,22 +4,48 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gemini Cortex</title>
+  <title>Atheletia</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            background: '#0a0a0a',
-            sidebar: '#161616',
-            border: '#262626',
+            background: 'var(--bg-canvas)',
+            sidebar: 'var(--bg-elev-1)',
+            border: 'var(--border-soft)',
+            accent: 'var(--accent)',
           }
         }
       }
     }
   </script>
   <style>
+    :root {
+      --bg-app: #0b1016;
+      --bg-canvas: #101720;
+      --bg-elev-1: #141d28;
+      --bg-elev-2: #182231;
+      --bg-elev-3: #202d3e;
+      --bg-hover: #263548;
+      --bg-soft: rgba(90, 154, 255, 0.12);
+      --border-soft: #233245;
+      --border-strong: #324459;
+      --text-strong: #eef4ff;
+      --text-main: #d8e0ee;
+      --text-soft: #b6c1d4;
+      --text-muted: #94a1b8;
+      --text-faint: #748196;
+      --accent: #5a9aff;
+      --accent-strong: #86b6ff;
+      --accent-soft: rgba(90, 154, 255, 0.18);
+      --accent-contrast: #08111d;
+      --success: #4fd1a5;
+      --warning: #f3b74f;
+      --danger: #f27d68;
+      --shadow-color: rgba(0, 0, 0, 0.34);
+    }
+
     html, body {
       overflow: hidden;
       height: 100%;
@@ -33,8 +59,9 @@
         sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
-      background-color: #0a0a0a;
-      color: white;
+      background-color: var(--bg-app);
+      color: var(--text-main);
+      transition: background-color 180ms ease, color 180ms ease;
     }
 
     /* Custom scrollbar for better aesthetics */
@@ -47,15 +74,20 @@
     }
 
     .custom-scrollbar::-webkit-scrollbar-thumb {
-      background-color: #333;
+      background-color: var(--border-strong);
       border-radius: 20px;
     }
 
     .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-      background-color: #555;
+      background-color: var(--bg-hover);
     }
 
-    /* Global Scrollbar Styling - Dark, minimal, cyan accent */
+    ::selection {
+      background: var(--accent-soft);
+      color: var(--text-strong);
+    }
+
+    /* Global Scrollbar Styling */
     ::-webkit-scrollbar {
       width: 5px;
       height: 5px;
@@ -66,42 +98,49 @@
     }
 
     ::-webkit-scrollbar-thumb {
-      background: linear-gradient(180deg, #22d3ee 0%, #0891b2 100%);
+      background: linear-gradient(180deg, var(--accent-strong) 0%, var(--accent) 100%);
       border-radius: 10px;
       opacity: 0.6;
     }
 
     ::-webkit-scrollbar-thumb:hover {
-      background: linear-gradient(180deg, #67e8f9 0%, #22d3ee 100%);
+      background: linear-gradient(180deg, var(--accent-strong) 0%, var(--accent) 100%);
       opacity: 1;
     }
 
     /* Firefox scrollbar */
     * {
       scrollbar-width: thin;
-      scrollbar-color: #22d3ee transparent;
+      scrollbar-color: var(--accent) transparent;
     }
+
+    /* Shared overlay layers: base app < dropdowns < sidebar/widgets < modals < system overlays */
+    .z-dropdown { z-index: 60; }
+    .z-sidebar { z-index: 70; }
+    .z-modal { z-index: 90; }
+    .z-system { z-index: 110; }
 
     /* MDEditor Dark Theme Overrides */
     .w-md-editor {
-      background-color: #0a0a0a !important;
+      background-color: var(--bg-canvas) !important;
       border: none !important;
       box-shadow: none !important;
+      color: var(--text-main) !important;
     }
 
     .w-md-editor-toolbar {
-      background-color: #161616 !important;
-      border-bottom: 1px solid #262626 !important;
+      background-color: var(--bg-elev-1) !important;
+      border-bottom: 1px solid var(--border-soft) !important;
       padding: 8px !important;
     }
 
     .w-md-editor-toolbar li>button {
-      color: #9ca3af !important;
+      color: var(--text-muted) !important;
     }
 
     .w-md-editor-toolbar li>button:hover {
-      color: white !important;
-      background: #262626 !important;
+      color: var(--text-strong) !important;
+      background: var(--bg-hover) !important;
     }
 
     .w-md-editor-text-pre>code,
@@ -109,25 +148,25 @@
     .w-md-editor-text {
       font-size: 14px !important;
       line-height: 1.7 !important;
-      color: #d1d5db !important;
+      color: var(--text-main) !important;
     }
 
     .w-md-editor-preview {
-      background-color: #0a0a0a !important;
+      background-color: var(--bg-canvas) !important;
       padding: 16px 24px !important;
     }
 
     .w-md-editor-content {
-      background-color: #0a0a0a !important;
+      background-color: var(--bg-canvas) !important;
     }
 
     .w-md-editor-area {
-      background-color: #0a0a0a !important;
+      background-color: var(--bg-canvas) !important;
     }
 
     .wmde-markdown {
       background-color: transparent !important;
-      color: #d1d5db !important;
+      color: var(--text-main) !important;
     }
 
     .wmde-markdown h1,
@@ -136,49 +175,49 @@
     .wmde-markdown h4,
     .wmde-markdown h5,
     .wmde-markdown h6 {
-      color: white !important;
+      color: var(--text-strong) !important;
       border-bottom: none !important;
     }
 
     .wmde-markdown code {
-      background-color: #262626 !important;
-      color: #c084fc !important;
+      background-color: var(--bg-elev-2) !important;
+      color: var(--accent-strong) !important;
       padding: 2px 6px !important;
       border-radius: 4px !important;
     }
 
     .wmde-markdown pre {
-      background-color: #1a1a1a !important;
-      border: 1px solid #333 !important;
+      background-color: var(--bg-elev-1) !important;
+      border: 1px solid var(--border-strong) !important;
       border-radius: 8px !important;
     }
 
     .wmde-markdown pre code {
       background: transparent !important;
-      color: #d1d5db !important;
+      color: var(--text-main) !important;
     }
 
     .wmde-markdown blockquote {
-      border-left: 4px solid #a855f7 !important;
-      color: #9ca3af !important;
+      border-left: 4px solid var(--accent) !important;
+      color: var(--text-muted) !important;
       background: transparent !important;
     }
 
     .wmde-markdown table th {
-      background-color: #1a1a1a !important;
+      background-color: var(--bg-elev-1) !important;
     }
 
     .wmde-markdown table td,
     .wmde-markdown table th {
-      border-color: #333 !important;
+      border-color: var(--border-strong) !important;
     }
 
     .wmde-markdown a {
-      color: #60a5fa !important;
+      color: var(--accent) !important;
     }
 
     .wmde-markdown hr {
-      border-color: #333 !important;
+      border-color: var(--border-strong) !important;
     }
 
     /* Tiptap / Prosemirror Task List Fixes */
@@ -214,7 +253,7 @@
       cursor: pointer !important;
       width: 1rem !important;
       height: 1rem !important;
-      accent-color: #10b981 !important;
+      accent-color: var(--success) !important;
       margin: 0 !important;
     }
 
@@ -243,20 +282,107 @@
     .mermaid:has(.error-text) {
       display: none !important;
     }
+
+    .text-white { color: var(--text-strong) !important; }
+    .text-gray-100, .text-gray-200 { color: var(--text-main) !important; }
+    .text-gray-300 { color: var(--text-soft) !important; }
+    .text-gray-400 { color: var(--text-muted) !important; }
+    .text-gray-500, .text-gray-600 { color: var(--text-faint) !important; }
+
+    .bg-\[\#0a0a0a\],
+    .bg-\[\#0d0d0d\],
+    .bg-\[\#101114\],
+    .bg-\[\#111\] {
+      background-color: var(--bg-canvas) !important;
+    }
+
+    .bg-\[\#141414\],
+    .bg-\[\#151821\],
+    .bg-\[\#161616\],
+    .bg-\[\#1a1a1a\],
+    .bg-\[\#1d1d1d\],
+    .bg-\[\#1f2431\],
+    .bg-\[\#222733\],
+    .bg-\[\#232838\],
+    .bg-\[\#262626\] {
+      background-color: var(--bg-elev-1) !important;
+    }
+
+    .border-\[\#1a1a1a\],
+    .border-\[\#1e1e1e\],
+    .border-\[\#222\],
+    .border-\[\#262626\],
+    .border-\[\#282828\],
+    .border-\[\#2a2a2a\],
+    .border-\[\#2a2c32\],
+    .border-\[\#333\] {
+      border-color: var(--border-soft) !important;
+    }
+
+    .hover\:bg-\[\#161616\]:hover,
+    .hover\:bg-\[\#1a1a1a\]:hover,
+    .hover\:bg-\[\#1d1d1d\]:hover,
+    .hover\:bg-\[\#262626\]:hover,
+    .hover\:bg-\[\#2a3141\]:hover,
+    .hover\:bg-\[\#2f3646\]:hover,
+    .hover\:bg-\[\#2f3650\]:hover,
+    .hover\:bg-\[\#333845\]:hover {
+      background-color: var(--bg-hover) !important;
+    }
+
+    .bg-white\/5 { background-color: color-mix(in srgb, var(--bg-elev-3) 36%, transparent) !important; }
+    .bg-white\/10 { background-color: color-mix(in srgb, var(--bg-elev-3) 54%, transparent) !important; }
+    .border-white\/10 { border-color: color-mix(in srgb, var(--border-soft) 58%, transparent) !important; }
+    .border-white\/20 { border-color: color-mix(in srgb, var(--border-strong) 70%, transparent) !important; }
+    .hover\:bg-white\/5:hover,
+    .hover\:bg-white\/10:hover {
+      background-color: var(--bg-hover) !important;
+    }
+
+    .text-cyan-300,
+    .text-cyan-400,
+    .text-purple-300,
+    .text-purple-400 {
+      color: var(--accent-strong) !important;
+    }
+
+    .bg-cyan-500\/5,
+    .bg-cyan-500\/10,
+    .bg-cyan-500\/20,
+    .bg-purple-500\/10,
+    .bg-purple-500\/20 {
+      background-color: var(--accent-soft) !important;
+    }
+
+    .border-cyan-500\/30,
+    .border-cyan-500\/40,
+    .border-cyan-500\/50,
+    .border-purple-500\/10,
+    .border-purple-500\/30,
+    .border-purple-500\/40,
+    .border-purple-500\/50,
+    .border-purple-500\/60 {
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+    }
+
+    .hover\:text-cyan-400:hover,
+    .hover\:text-purple-400:hover {
+      color: var(--accent-strong) !important;
+    }
+
+    .hover\:border-cyan-500\/30:hover,
+    .hover\:border-purple-500\/60:hover {
+      border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+    }
+
+    input,
+    textarea,
+    select {
+      color-scheme: inherit;
+    }
   </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
-    "zustand": "https://aistudiocdn.com/zustand@^5.0.9",
-    "framer-motion": "https://aistudiocdn.com/framer-motion@^11.0.8"
-  }
-}
-</script>
-  <link rel="stylesheet" href="/index.css">
+
+  <!-- Global styles injected by Vite build -->
 </head>
 
 <body>

@@ -8,10 +8,21 @@ export interface FavoriteModel {
   use_count?: number;
 }
 
-const STORAGE_KEY = 'intentflow_recent_models';
+const STORAGE_KEY = 'atheletia_recent_models';
+const LEGACY_STORAGE_KEY = 'intentflow_recent_models';
+const LEGACY_ALLENTIRE_KEY = 'allentire_recent_models';
 
 function loadFromStorage(): FavoriteModel[] {
   try {
+    // Migrate from legacy keys if new key is empty
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      const legacy = localStorage.getItem(LEGACY_ALLENTIRE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        localStorage.setItem(STORAGE_KEY, legacy);
+        localStorage.removeItem(LEGACY_ALLENTIRE_KEY);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch (err) {
@@ -51,9 +62,8 @@ export function useFavoriteModels() {
   }, [favorites]);
 
   useEffect(() => {
+    // Load from backend once on mount (no-op until backend exposes recent models)
     refreshRecent();
-    const timer = window.setInterval(refreshRecent, 5000);
-    return () => window.clearInterval(timer);
   }, [refreshRecent]);
 
   const addFavorite = useCallback((model: FavoriteModel) => {

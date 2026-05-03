@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import {
   ChevronRight,
   ArrowLeft,
@@ -60,7 +61,7 @@ const MARKDOWN_STYLES = {
 // Mini Markdown Renderer for AI bubbles
 const MiniMarkdown: React.FC<{ content: string }> = ({ content }) => (
   <ReactMarkdown
-    remarkPlugins={[remarkGfm]}
+    remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}
     components={{
       h1: ({ children }) => <h1 className={MARKDOWN_STYLES.h1}>{children}</h1>,
       h2: ({ children }) => <h2 className={MARKDOWN_STYLES.h2}>{children}</h2>,
@@ -97,6 +98,9 @@ export const CodeView: React.FC = () => {
 
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [showCsvEditor, setShowCsvEditor] = useState(false);
+  const [csvDraft, setCsvDraft] = useState('');
+  const [csvPath, setCsvPath] = useState('');
 
   const showNotification = (msg: string) => {
     setToastMessage(msg);
@@ -106,10 +110,9 @@ export const CodeView: React.FC = () => {
 
   const handleSyncCsv = async () => {
     try {
-      // @ts-ignore
-      const leetcodeApi = window.nexusAPI?.leetcode;
+      const leetcodeApi = window.atheletiaAPI?.leetcode;
       if (!leetcodeApi) {
-        console.warn("LeetCode API not found on window.nexusAPI");
+        console.warn("LeetCode API not found on window.atheletiaAPI");
         return false;
       }
 
@@ -129,6 +132,34 @@ export const CodeView: React.FC = () => {
     }
   };
 
+  const openCsvEditor = async () => {
+    try {
+      const leetcodeApi = window.atheletiaAPI?.leetcode;
+      const [content, path] = await Promise.all([
+        leetcodeApi?.readCsv?.(),
+        leetcodeApi?.getCsvPath?.(),
+      ]);
+      setCsvDraft(content || '');
+      setCsvPath(path || '');
+      setShowCsvEditor(true);
+    } catch (err) {
+      console.error(err);
+      showNotification("Could not open editable CSV.");
+    }
+  };
+
+  const saveCsvEditor = async () => {
+    try {
+      await window.atheletiaAPI?.leetcode?.saveCsv?.(csvDraft);
+      importFromCsv(csvDraft);
+      setShowCsvEditor(false);
+      showNotification("LeetCode CSV saved and synced.");
+    } catch (err) {
+      console.error(err);
+      showNotification("Could not save CSV.");
+    }
+  };
+
   // Auto-sync on mount if only default problems exist or if list is empty
   useEffect(() => {
     if (problems.length <= 2) {
@@ -137,7 +168,7 @@ export const CodeView: React.FC = () => {
   }, []);
 
   return (
-    <div className="relative w-full h-full bg-[#0a0a0a] overflow-hidden rounded-xl border border-[#262626]">
+    <div className="relative w-full h-full bg-[#0a0a0a] overflow-hidden">
       <AnimatePresence mode="wait">
         {activeProblem ? (
           <SplitWorkspace
@@ -152,6 +183,7 @@ export const CodeView: React.FC = () => {
             problems={problems}
             onSelectCategory={setSelectedCategory}
             onSync={handleSyncCsv}
+            onEditCsv={openCsvEditor}
           />
         ) : (
           <ProblemListView
@@ -166,6 +198,52 @@ export const CodeView: React.FC = () => {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {showCsvEditor && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-modal flex items-center justify-center bg-black/60 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 12 }}
+              className="flex h-[min(760px,90vh)] w-[min(980px,94vw)] flex-col overflow-hidden rounded-xl border border-[#333] bg-[#111] shadow-2xl"
+            >
+              <div className="flex items-center justify-between gap-4 border-b border-[#262626] px-4 py-3">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-bold text-white">Editable LeetCode CSV</h2>
+                  <p className="truncate text-[11px] text-gray-500">{csvPath || 'Stored inside app data'}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowCsvEditor(false)}
+                    className="rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-2 text-xs font-semibold text-gray-300 hover:bg-[#262626]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveCsvEditor}
+                    className="flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300"
+                  >
+                    <Save size={13} />
+                    Save CSV
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={csvDraft}
+                onChange={(e) => setCsvDraft(e.target.value)}
+                spellCheck={false}
+                className="min-h-0 flex-1 resize-none bg-[#0a0a0a] p-4 font-mono text-xs leading-relaxed text-gray-200 outline-none"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Toast Notification */}
       <AnimatePresence>
         {showToast && (
@@ -173,7 +251,7 @@ export const CodeView: React.FC = () => {
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}
-            className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[#1a1a1a] border border-emerald-500/30 text-emerald-400 px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 z-50"
+            className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[#1a1a1a] border border-emerald-500/30 text-emerald-400 px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 z-system"
           >
             <div className="bg-emerald-500/20 p-1 rounded-full">
               <CheckCircle size={16} />
@@ -192,9 +270,10 @@ interface CategoryGridProps {
   problems: Problem[];
   onSelectCategory: (cat: string) => void;
   onSync: () => void;
+  onEditCsv: () => void;
 }
 
-const CategoryGrid: React.FC<CategoryGridProps> = ({ problems, onSelectCategory, onSync }) => {
+const CategoryGrid: React.FC<CategoryGridProps> = ({ problems, onSelectCategory, onSync, onEditCsv }) => {
   const categories = Array.from(new Set(problems.map(p => p.category || 'Other'))).sort();
 
   return (
@@ -202,21 +281,30 @@ const CategoryGrid: React.FC<CategoryGridProps> = ({ problems, onSelectCategory,
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
-      className="h-full w-full flex flex-col p-8 overflow-y-auto custom-scrollbar"
+      className="h-full w-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar"
     >
       <div className="max-w-5xl mx-auto w-full">
-        <div className="flex justify-between items-center mb-10">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mb-10">
           <div>
             <h1 className="text-4xl font-black text-white tracking-tighter mb-2">Leet Code Grind</h1>
             <p className="text-gray-500 text-sm">Select a category to view problems and start practice.</p>
           </div>
-          <button
-            onClick={onSync}
-            className="flex items-center gap-2 px-4 py-2 bg-[#1a1a1a] hover:bg-[#262626] text-gray-300 border border-[#333] rounded-lg transition-all active:scale-95"
-          >
-            <RefreshCw size={16} />
-            <span className="text-xs font-bold uppercase tracking-wider">Sync CSV</span>
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={onEditCsv}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1a1a1a] hover:bg-[#262626] text-gray-300 border border-[#333] rounded-lg transition-all active:scale-95"
+            >
+              <FileJson size={16} />
+              <span className="text-xs font-bold uppercase tracking-wider">Edit CSV</span>
+            </button>
+            <button
+              onClick={onSync}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1a1a1a] hover:bg-[#262626] text-gray-300 border border-[#333] rounded-lg transition-all active:scale-95"
+            >
+              <RefreshCw size={16} />
+              <span className="text-xs font-bold uppercase tracking-wider">Sync CSV</span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -291,7 +379,7 @@ const ProblemListView: React.FC<ProblemListProps> = ({ category, problems, onBac
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -20 }}
-      className="h-full w-full flex flex-col p-8 overflow-hidden"
+      className="h-full w-full flex flex-col p-4 md:p-8 overflow-hidden"
     >
       <div className="flex items-center gap-4 mb-8">
         <button
@@ -429,7 +517,7 @@ const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boo
   // Destroy the native browser on unmount (user navigated away from CodeView)
   useEffect(() => {
     return () => {
-      window.nexusAPI?.browser?.closeChild?.().catch(() => { });
+      window.atheletiaAPI?.browser?.closeChild?.().catch(() => { });
       hasInitializedRef.current = false;
     };
   }, []);
@@ -456,7 +544,7 @@ const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boo
     if (!isActive) {
       // Park browser off-screen so it doesn't cover HTML modals — but keep it alive (no reload)
       if (hasInitializedRef.current) {
-        window.nexusAPI?.browser?.updateChildBounds?.(OFFSCREEN_X, 0, 1, 1).catch(() => { });
+        window.atheletiaAPI?.browser?.updateChildBounds?.(OFFSCREEN_X, 0, 1, 1).catch(() => { });
       }
       return;
     }
@@ -467,11 +555,11 @@ const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boo
       if (!rect) return;
       try {
         if (!hasInitializedRef.current || forceCreate) {
-          await window.nexusAPI?.browser?.createChild?.(url, rect.x, rect.y, rect.width, rect.height);
+          await window.atheletiaAPI?.browser?.createChild?.(url, rect.x, rect.y, rect.width, rect.height);
           setBrowserReady(true);
           hasInitializedRef.current = true;
         } else {
-          await window.nexusAPI?.browser?.updateChildBounds?.(rect.x, rect.y, rect.width, rect.height);
+          await window.atheletiaAPI?.browser?.updateChildBounds?.(rect.x, rect.y, rect.width, rect.height);
         }
       } catch (e) {
         console.error('Browser sync error:', e);
@@ -503,7 +591,7 @@ const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boo
     if (!isPaused && isActive && hasInitializedRef.current) {
       const rect = getRect();
       if (rect) {
-        window.nexusAPI?.browser?.updateChildBounds?.(rect.x, rect.y, rect.width, rect.height).catch(() => { });
+        window.atheletiaAPI?.browser?.updateChildBounds?.(rect.x, rect.y, rect.width, rect.height).catch(() => { });
       }
     }
   }, [isPaused]);
@@ -511,7 +599,7 @@ const EmbeddedBrowser: React.FC<{ url: string; isActive: boolean; isPaused?: boo
   return (
     <div
       ref={containerRef}
-      className="w-full h-full bg-[#0a0a0b] flex items-center justify-center p-8 text-center"
+      className="w-full h-full bg-[#0a0a0b] flex items-center justify-center p-4 md:p-8 text-center"
     >
       {!browserReady && isActive && (
         <div className="flex flex-col items-center gap-4">
@@ -545,7 +633,16 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
   const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
   const aiProvider = (settings?.aiProvider || 'nvidia').toLowerCase();
   const isLocalProvider = aiProvider === 'local' || aiProvider === 'lmstudio';
-  const nvidiaApiKey = settings?.nvidiaApiKey || '';
+  const apiKey = (() => {
+    const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
+    switch (provider) {
+      case 'openai': return settings?.openaiApiKey?.trim() || '';
+      case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
+      case 'groq': return settings?.groqApiKey?.trim() || '';
+      case 'gemini': return settings?.geminiApiKey?.trim() || '';
+      default: return settings?.nvidiaApiKey?.trim() || '';
+    }
+  })();
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -578,7 +675,7 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
         const lastModel = localStorage.getItem(CODE_LAST_MODEL_STORAGE_KEY) || settings?.defaultModel || DEFAULT_NIM_MODEL;
 
         if (isLocalProvider) {
-          const modelsRaw = await window.nexusAPI?.settings?.getLMStudioModels?.();
+          const modelsRaw = await window.atheletiaAPI?.settings?.getLMStudioModels?.();
           const normalized = (Array.isArray(modelsRaw) ? modelsRaw : [])
             .map((m: any) => ({ id: m?.id || String(m) }))
             .filter((m: { id: string }) => !!m.id);
@@ -594,17 +691,17 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
           return;
         }
 
-        if (!nvidiaApiKey) {
+        if (!apiKey) {
           setAvailableModels([{ id: DEFAULT_NIM_MODEL }]);
           setSelectedModel(lastModel);
           return;
         }
 
-        const modelsRaw = window.nexusAPI?.settings?.getNvidiaModels
-          ? await window.nexusAPI.settings.getNvidiaModels(nvidiaApiKey)
+        const modelsRaw = window.atheletiaAPI?.settings?.getNvidiaModels
+          ? await window.atheletiaAPI.settings.getNvidiaModels(apiKey)
           : await (async () => {
             const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
-              headers: { Authorization: `Bearer ${nvidiaApiKey}` }
+              headers: { Authorization: `Bearer ${apiKey}` }
             });
             return response.json();
           })();
@@ -630,7 +727,7 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
       }
     };
     fetchModels();
-  }, [nvidiaApiKey, settings?.defaultModel, isLocalProvider]);
+  }, [apiKey, settings?.defaultModel, isLocalProvider]);
 
   useEffect(() => {
     if (!selectedModel?.trim()) return;
@@ -703,8 +800,8 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
   const handleReload = () => setEmbeddedBrowserRefreshKey(k => k + 1);
   const handleOpenInAppBrowser = async () => {
     try {
-      if (window.nexusAPI?.browser?.openInApp) {
-        await window.nexusAPI.browser.openInApp(url);
+      if (window.atheletiaAPI?.browser?.openInApp) {
+        await window.atheletiaAPI.browser.openInApp(url);
         return;
       }
     } catch (e) {
@@ -733,8 +830,7 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
 
       if (!basePath) {
         // First time: ask user to select a vault (will be remembered for BrainView too)
-        // @ts-ignore
-        basePath = await window.nexusAPI.notes.selectVault();
+        basePath = await window.atheletiaAPI?.notes.selectVault() || null;
         if (basePath) {
           localStorage.setItem('brain_vaultPath', basePath);
         }
@@ -751,14 +847,12 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
       const fullPath = `${categoryPath}/${fileName}`;
 
       // Ensure directories exist
-      // @ts-ignore
-      await window.nexusAPI.notes.ensureDir(categoryPath);
+      await window.atheletiaAPI?.notes.ensureDir(categoryPath);
 
       // Check if file exists and read existing content
       let existingContent = '';
       try {
-        // @ts-ignore
-        existingContent = await window.nexusAPI.notes.readFile(fullPath) || '';
+        existingContent = await window.atheletiaAPI?.notes.readFile(fullPath) || '';
       } catch {
         // File doesn't exist yet, will create new
       }
@@ -802,8 +896,8 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
       }
       finalContent += newEntry;
 
-      // @ts-ignore
-      await window.nexusAPI.notes.writeFile(fullPath, finalContent);
+      const wrote = await window.atheletiaAPI?.notes.writeFile(fullPath, finalContent);
+      if (!wrote) throw new Error('The notes API did not confirm the file write.');
       onNotify(`Saved to LeetCode/${category}/${fileName}`);
     } catch (e) {
       console.error("Save failed:", e);
@@ -840,8 +934,8 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
         finalContent = existingContent + newEntry;
       }
 
-      // @ts-ignore
-      await window.nexusAPI.notes.writeFile(fullPath, finalContent);
+      const wrote = await window.atheletiaAPI?.notes.writeFile(fullPath, finalContent);
+      if (!wrote) throw new Error('The notes API did not confirm the file write.');
       onNotify(`${action === 'replace' ? 'Replaced' : 'Appended to'} LeetCode/${category}/${fileName}`);
     } catch (e) {
       console.error("Save failed:", e);
@@ -861,9 +955,9 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
     setIsAiLoading(true);
     setAiResponse(null);
 
-    if (!isLocalProvider && !nvidiaApiKey) {
+    if (!isLocalProvider && !apiKey) {
       setAiResponse({
-        explanation: 'NVIDIA API key is not configured. Add it in Settings → API Keys, or switch provider to local LM Studio.',
+        explanation: 'API key is not configured. Add it in Settings → API Keys, or switch provider to local LM Studio.',
         code: '',
         pattern: ''
       });
@@ -890,8 +984,8 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
 
       const callModel = async (modelId: string) => {
         if (isLocalProvider) {
-          if (window.nexusAPI?.settings?.lmstudioChatCompletion) {
-            return await window.nexusAPI.settings.lmstudioChatCompletion(
+          if (window.atheletiaAPI?.settings?.lmstudioChatCompletion) {
+            return await window.atheletiaAPI.settings.lmstudioChatCompletion(
               modelId,
               [
                 { role: 'system', content: systemPrompt },
@@ -926,8 +1020,8 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
           return response.json();
         }
 
-        if (window.nexusAPI?.settings?.nvidiaChatCompletion) {
-          return await window.nexusAPI.settings.nvidiaChatCompletion(
+        if (window.atheletiaAPI?.settings?.nvidiaChatCompletion) {
+          return await window.atheletiaAPI.settings.nvidiaChatCompletion(
             modelId,
             [
               { role: 'system', content: systemPrompt },
@@ -935,32 +1029,11 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
             ],
             1024,
             0.2,
+            apiKey,
           );
         }
 
-        const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${nvidiaApiKey}`
-          },
-          body: JSON.stringify({
-            model: modelId,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userMessage }
-            ],
-            stream: false
-          }),
-          signal: abortControllerRef.current?.signal
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown API error');
-          throw new Error(`API error (${response.status}) on ${modelId}: ${errorText.slice(0, 220)}`);
-        }
-
-        return response.json();
+        throw new Error('NVIDIA chat completion not available');
       };
 
       let data: any;
@@ -1101,7 +1174,7 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
           <div className="h-10 flex items-center justify-between px-4 border-b border-[#262626] bg-[#161616] shrink-0">
             <div className="flex items-center gap-2">
               <Sparkles size={14} className="text-purple-400" />
-              <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Nexus AI</span>
+              <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Atheletia AI</span>
             </div>
 
             {/* Model Selector */}
@@ -1114,7 +1187,7 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
                 <ChevronDown size={10} />
               </button>
               {showModelDropdown && (
-                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#333] rounded shadow-xl max-h-52 overflow-y-auto z-50 min-w-[200px]">
+                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#333] rounded shadow-xl max-h-52 overflow-y-auto z-dropdown min-w-[200px]">
                   {/* Search Input */}
                   <div className="sticky top-0 bg-[#1a1a1a] border-b border-[#333] p-2">
                     <input
@@ -1299,7 +1372,7 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50"
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-modal"
             onClick={() => setShowSaveConfirm(false)}
           >
             <motion.div
@@ -1360,7 +1433,7 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50"
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-modal"
             onClick={() => handleFileExistsAction('cancel')}
           >
             <motion.div

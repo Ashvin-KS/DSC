@@ -487,10 +487,3 @@ fn is_browser_app(app_name: &str) -> bool {
         || lower.contains("msedgewebview")
 }
 
-pub fn is_tracking_enabled() -> bool {
-    TRACKING_ENABLED.load(Ordering::Relaxed)
-}
-
-pub fn set_tracking_interval(seconds: u64) {
-    TRACKING_INTERVAL_SECS.store(clamp_tracking_interval(seconds), Ordering::Relaxed);
-}

@@ -262,6 +262,15 @@ fn scan_root(
     }
 
     initialized_roots.insert(root_string);
+
+    // Provide a hard bound on memory growth over long sessions
+    if known_mtimes.len() > 100_000 || known_hashes.len() > 100_000 {
+        println!("[FileMonitor] Reached 100k memory bound. Clearing cache.");
+        known_mtimes.clear();
+        known_hashes.clear();
+        known_dirs.clear();
+        initialized_roots.clear();
+    }
 }
 
 fn insert_event(
@@ -384,34 +393,6 @@ fn modified_unix_millis(path: &Path) -> Option<i64> {
 fn read_file_snapshot(path: &Path) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     Some(truncate_chars(&content, MAX_SNAPSHOT_CHARS))
-}
-
-fn build_change_preview(previous: Option<&str>, current: Option<&str>) -> Option<String> {
-    let prev = previous.unwrap_or("");
-    let curr = current.unwrap_or("");
-    if prev == curr {
-        return None;
-    }
-
-    let prev_lines: Vec<&str> = prev.lines().collect();
-    let curr_lines: Vec<&str> = curr.lines().collect();
-    let max = prev_lines.len().max(curr_lines.len());
-
-    for idx in 0..max {
-        let old_line = prev_lines.get(idx).copied().unwrap_or("");
-        let new_line = curr_lines.get(idx).copied().unwrap_or("");
-        if old_line != new_line {
-            let summary = format!(
-                "Line {} changed:\n- {}\n+ {}",
-                idx + 1,
-                truncate_chars(old_line, MAX_PREVIEW_CHARS / 2),
-                truncate_chars(new_line, MAX_PREVIEW_CHARS / 2),
-            );
-            return Some(truncate_chars(&summary, MAX_PREVIEW_CHARS));
-        }
-    }
-
-    Some("Content changed".to_string())
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {

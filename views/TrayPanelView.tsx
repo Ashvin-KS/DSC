@@ -83,9 +83,9 @@ export const TrayPanelView: React.FC = () => {
 
   const refreshSystemState = useCallback(async () => {
     try {
-      const status = await window.nexusAPI?.app?.getIncognitoStatus?.();
+      const status = await window.atheletiaAPI?.app?.getIncognitoStatus?.();
       if (status) setIncognito(status);
-      const gm = await window.nexusAPI?.app?.getGameMode?.();
+      const gm = await window.atheletiaAPI?.app?.getGameMode?.();
       if (typeof gm === 'boolean') setGameMode(gm);
     } catch {
       // ignore in non-tauri or transient errors
@@ -159,18 +159,18 @@ export const TrayPanelView: React.FC = () => {
 
   const openPage = useCallback(async (page: string) => {
     await runAction(`open-${page}`, async () => {
-      if (window.nexusAPI?.app?.showWindowPage) {
-        await window.nexusAPI.app.showWindowPage(page);
+      if (window.atheletiaAPI?.app?.showWindowPage) {
+        await window.atheletiaAPI.app.showWindowPage(page);
       } else {
-        await window.nexusAPI?.app?.showWindow?.();
+        await window.atheletiaAPI?.app?.showWindow?.();
       }
     });
   }, [runAction]);
 
   const hidePanel = useCallback(async () => {
     try {
-      if (window.nexusAPI?.app?.toggleTrayPanel) {
-        await window.nexusAPI.app.toggleTrayPanel();
+      if (window.atheletiaAPI?.app?.toggleTrayPanel) {
+        await window.atheletiaAPI.app.toggleTrayPanel();
         return;
       }
     } catch {
@@ -186,8 +186,8 @@ export const TrayPanelView: React.FC = () => {
   const controlMusic = useCallback(async (action: 'prev' | 'play_pause' | 'next') => {
     await runAction(`music-${action}`, async () => {
       try {
-        if (window.nexusAPI?.app?.musicControl) {
-          await window.nexusAPI.app.musicControl(action);
+        if (window.atheletiaAPI?.app?.musicControl) {
+          await window.atheletiaAPI.app.musicControl(action);
           return;
         }
       } catch {
@@ -202,8 +202,8 @@ export const TrayPanelView: React.FC = () => {
   const selectPlaylist = useCallback(async (playlistId: number) => {
     await runAction(`playlist-${playlistId}`, async () => {
       try {
-        if (window.nexusAPI?.app?.musicSelectPlaylist) {
-          await window.nexusAPI.app.musicSelectPlaylist(playlistId);
+        if (window.atheletiaAPI?.app?.musicSelectPlaylist) {
+          await window.atheletiaAPI.app.musicSelectPlaylist(playlistId);
           return;
         }
       } catch {
@@ -218,8 +218,8 @@ export const TrayPanelView: React.FC = () => {
   const controlTimer = useCallback(async (action: string, minutes?: number) => {
     await runAction(`timer-${action}`, async () => {
       try {
-        if (window.nexusAPI?.app?.timerControl) {
-          await window.nexusAPI.app.timerControl(action, minutes);
+        if (window.atheletiaAPI?.app?.timerControl) {
+          await window.atheletiaAPI.app.timerControl(action, minutes);
           return;
         }
       } catch {
@@ -240,17 +240,24 @@ export const TrayPanelView: React.FC = () => {
   }, [incognito]);
 
   return (
-    <div className="h-screen w-screen bg-[#101114] text-white">
+    <div className="h-screen w-screen text-white" style={{ background: 'var(--bg-app)', color: 'var(--text-main)' }}>
       <div className="h-full p-3">
-        <div className="h-full rounded-2xl border border-[#2a2c32] bg-gradient-to-b from-[#16181e] to-[#0f1116] p-3 flex flex-col gap-3">
+        <div
+          className="h-full rounded-2xl p-3 flex flex-col gap-3"
+          style={{
+            border: '1px solid var(--border-soft)',
+            background: 'linear-gradient(180deg, var(--bg-elev-1) 0%, var(--bg-canvas) 100%)',
+          }}
+        >
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-base font-bold tracking-tight">NEXUS Control Center</h1>
+              <h1 className="text-base font-bold tracking-tight">Atheletia Control Center</h1>
               <p className="text-[11px] text-gray-400">Tray quick actions</p>
             </div>
             <button
               onClick={() => { hidePanel(); }}
-              className="px-2 py-1 text-xs rounded-md bg-[#262a33] hover:bg-[#333845] transition-colors"
+              className="px-2 py-1 text-xs rounded-md transition-colors"
+              style={{ background: 'var(--bg-elev-2)', color: 'var(--text-soft)' }}
               title="Hide panel"
             >
               Hide
@@ -305,7 +312,12 @@ export const TrayPanelView: React.FC = () => {
               <button onClick={() => controlMusic('prev')} disabled={busy === 'music-prev'} className="w-9 h-9 rounded-full bg-[#222733] hover:bg-[#2f3646] flex items-center justify-center disabled:opacity-50">
                 <SkipBack size={16} />
               </button>
-              <button onClick={() => controlMusic('play_pause')} disabled={busy === 'music-play_pause'} className="w-11 h-11 rounded-full bg-purple-600 hover:bg-purple-500 flex items-center justify-center disabled:opacity-50">
+              <button
+                onClick={() => controlMusic('play_pause')}
+                disabled={busy === 'music-play_pause'}
+                className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-50"
+                style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
+              >
                 {musicState.isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
               </button>
               <button onClick={() => controlMusic('next')} disabled={busy === 'music-next'} className="w-9 h-9 rounded-full bg-[#222733] hover:bg-[#2f3646] flex items-center justify-center disabled:opacity-50">
@@ -320,9 +332,10 @@ export const TrayPanelView: React.FC = () => {
                   disabled={busy === `playlist-${playlist.id}`}
                   className={`text-left px-2 py-1.5 rounded-md text-xs transition-colors border ${
                     musicState.activePlaylistId === playlist.id
-                      ? 'bg-purple-600/20 border-purple-500/40 text-purple-200'
+                      ? 'text-white'
                       : 'bg-[#1f2431] border-[#2a2c32] hover:bg-[#2a3141] text-gray-200'
                   }`}
+                  style={musicState.activePlaylistId === playlist.id ? { background: 'var(--accent-soft)', borderColor: 'color-mix(in srgb, var(--accent) 45%, transparent)', color: 'var(--text-strong)' } : undefined}
                 >
                   <div className="truncate font-medium">{playlist.name}</div>
                   <div className="text-[10px] text-gray-500">{playlist.trackCount} tracks</div>
@@ -372,10 +385,10 @@ export const TrayPanelView: React.FC = () => {
               <span className={`text-xs font-semibold ${incognito.active ? 'text-cyan-300' : 'text-gray-500'}`}>{incognitoLabel}</span>
             </div>
             <div className="grid grid-cols-4 gap-2 mb-3">
-              <button onClick={() => runAction('incognito-toggle', async () => setIncognito((await window.nexusAPI?.app?.toggleIncognito?.()) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">Toggle</button>
-              <button onClick={() => runAction('incognito-15', async () => setIncognito((await window.nexusAPI?.app?.setIncognitoFor?.(15)) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">15m</button>
-              <button onClick={() => runAction('incognito-30', async () => setIncognito((await window.nexusAPI?.app?.setIncognitoFor?.(30)) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">30m</button>
-              <button onClick={() => runAction('incognito-off', async () => setIncognito((await window.nexusAPI?.app?.setIncognitoFor?.(0)) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">Off</button>
+              <button onClick={() => runAction('incognito-toggle', async () => setIncognito((await window.atheletiaAPI?.app?.toggleIncognito?.()) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">Toggle</button>
+              <button onClick={() => runAction('incognito-15', async () => setIncognito((await window.atheletiaAPI?.app?.setIncognitoFor?.(15)) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">15m</button>
+              <button onClick={() => runAction('incognito-30', async () => setIncognito((await window.atheletiaAPI?.app?.setIncognitoFor?.(30)) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">30m</button>
+              <button onClick={() => runAction('incognito-off', async () => setIncognito((await window.atheletiaAPI?.app?.setIncognitoFor?.(0)) || incognito))} className="text-xs py-1.5 rounded-md bg-[#1f2431] hover:bg-[#2a3141]">Off</button>
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm">
@@ -384,7 +397,7 @@ export const TrayPanelView: React.FC = () => {
               </div>
               <button
                 onClick={() => runAction('game-mode', async () => {
-                  const next = await window.nexusAPI?.app?.toggleGameMode?.();
+                  const next = await window.atheletiaAPI?.app?.toggleGameMode?.();
                   if (typeof next === 'boolean') setGameMode(next);
                 })}
                 className={`text-xs px-3 py-1.5 rounded-md ${gameMode ? 'bg-amber-500/20 text-amber-300' : 'bg-[#1f2431] hover:bg-[#2a3141]'}`}
@@ -398,13 +411,13 @@ export const TrayPanelView: React.FC = () => {
             <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-2">System</div>
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => runAction('refresh-ai', async () => { await window.nexusAPI?.app?.refreshAi?.(); await openPage('dashboard'); })}
+                onClick={() => runAction('refresh-ai', async () => { await window.atheletiaAPI?.app?.refreshAi?.(); await openPage('dashboard'); })}
                 className="text-xs py-2 rounded-md bg-[#1f2431] hover:bg-[#2a3141] flex items-center justify-center gap-1.5"
               >
                 <RefreshCw size={13} /> Refresh AI
               </button>
               <button
-                onClick={() => runAction('clear-notifications', async () => { await window.nexusAPI?.app?.clearNotifications?.(); })}
+                onClick={() => runAction('clear-notifications', async () => { await window.atheletiaAPI?.app?.clearNotifications?.(); })}
                 className="text-xs py-2 rounded-md bg-[#1f2431] hover:bg-[#2a3141] flex items-center justify-center gap-1.5"
               >
                 <BellOff size={13} /> Clear Alerts
@@ -416,7 +429,7 @@ export const TrayPanelView: React.FC = () => {
                 <Moon size={13} /> Hide Panel
               </button>
               <button
-                onClick={() => runAction('quit', async () => { await window.nexusAPI?.app?.quit?.(); })}
+                onClick={() => runAction('quit', async () => { await window.atheletiaAPI?.app?.quit?.(); })}
                 className="text-xs py-2 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300 flex items-center justify-center gap-1.5"
               >
                 <Power size={13} /> Quit

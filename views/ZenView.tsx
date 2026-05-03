@@ -50,7 +50,7 @@ export const ZenView: React.FC = () => {
   };
 
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center relative bg-[#050505] overflow-hidden rounded-xl animate-in fade-in duration-700">
+    <div className="h-full w-full flex flex-col items-center justify-center relative bg-[#050505] overflow-hidden animate-in fade-in duration-700">
 
       {/* Ambient Background Glow */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-900/10 rounded-full blur-[120px] pointer-events-none" />

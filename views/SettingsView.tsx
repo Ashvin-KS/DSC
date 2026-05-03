@@ -1,15 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Key, Brain, Activity, HardDrive, Info, Eye, EyeOff, Save, CheckCircle, RefreshCw, Search, Loader2,
   Bell, Palette, Languages, Download, Upload, Trash2, ShieldCheck, Monitor
 } from 'lucide-react';
 import { AppSettings, useIntentStore } from '../store/useIntentStore';
+import { THEME_GROUPS, getThemePreset, resolveColorSchemeForTheme, type ThemePresetId } from '../lib/theme';
 
 const DEFAULT_SETTINGS: AppSettings = {
   nvidiaApiKey: '',
   openaiApiKey: '',
   anthropicApiKey: '',
   groqApiKey: '',
+  geminiApiKey: '',
   googleClientId: '',
   googleClientSecret: '',
   aiProvider: 'nvidia',
@@ -28,6 +30,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   closeToTray: true,
   compactMode: false,
   fontScale: 1,
+  colorScheme: 'dark',
+  themePreset: 'dark-2026',
 };
 
 type SectionId = 'api' | 'ai' | 'tracking' | 'storage' | 'system' | 'appearance' | 'about';
@@ -47,6 +51,7 @@ const PROVIDERS = [
   { id: 'openai', label: 'OpenAI' },
   { id: 'anthropic', label: 'Anthropic' },
   { id: 'groq', label: 'Groq' },
+  { id: 'gemini', label: 'Google Gemini (AI Studio)' },
 ];
 
 function SecretInput({ label, value, onChange, helpText }: {
@@ -65,7 +70,7 @@ function SecretInput({ label, value, onChange, helpText }: {
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Enter API key"
-          className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-4 py-2.5 pr-10 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+          className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 pr-10 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
         />
         <button type="button" onClick={() => setShow((p) => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-300">
           {show ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -106,7 +111,7 @@ export const SettingsView: React.FC = () => {
   const { settings, setSettings } = useIntentStore();
   const [local, setLocal] = useState<AppSettings>(settings ?? DEFAULT_SETTINGS);
   const [activeSection, setActiveSection] = useState<SectionId>('api');
-  const [saved, setSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [models, setModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -121,19 +126,28 @@ export const SettingsView: React.FC = () => {
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState('');
 
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const currentProviderKey = useMemo(() => {
     const provider = (local.aiProvider || 'nvidia').toLowerCase();
     if (provider === 'openai') return local.openaiApiKey || '';
     if (provider === 'anthropic') return local.anthropicApiKey || '';
     if (provider === 'groq') return local.groqApiKey || '';
+    if (provider === 'gemini') return (local as any).geminiApiKey || '';
     return local.nvidiaApiKey || '';
-  }, [local.aiProvider, local.nvidiaApiKey, local.openaiApiKey, local.anthropicApiKey, local.groqApiKey]);
+  }, [local.aiProvider, local.nvidiaApiKey, local.openaiApiKey, local.anthropicApiKey, local.groqApiKey, (local as any).geminiApiKey]);
 
   const set = <K extends keyof AppSettings>(key: K) => (val: AppSettings[K]) => setLocal((p) => ({ ...p, [key]: val }));
+  const setThemePreset = (themePreset: ThemePresetId) =>
+    setLocal((prev) => ({
+      ...prev,
+      themePreset,
+      colorScheme: resolveColorSchemeForTheme(themePreset),
+    }));
 
   const loadStorageStats = async () => {
     try {
-      const stats = await window.nexusAPI?.storage?.getStats?.();
+      const stats = await window.atheletiaAPI?.storage?.getStats?.();
       if (stats) setStorageStats(stats);
     } catch {
       setStorageMsg('Unable to fetch storage stats.');
@@ -143,13 +157,28 @@ export const SettingsView: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        if (window.nexusAPI?.settings) {
-          const data = await window.nexusAPI.settings.get();
+        // Only load from backend if Zustand store is empty (first load)
+        // This prevents overwriting saved changes when switching tabs
+        if (!settings && window.atheletiaAPI?.settings) {
+          const data = await window.atheletiaAPI.settings.get();
           if (data) {
-            const merged = { ...DEFAULT_SETTINGS, ...data };
+            const merged = {
+              ...DEFAULT_SETTINGS,
+              ...data,
+              colorScheme: data.colorScheme || DEFAULT_SETTINGS.colorScheme,
+              themePreset: data.themePreset || (data.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
+            };
             setLocal(merged);
             setSettings(merged);
           }
+        } else if (settings) {
+          // Use existing settings from Zustand store
+          setLocal({
+            ...DEFAULT_SETTINGS,
+            ...settings,
+            colorScheme: settings.colorScheme || DEFAULT_SETTINGS.colorScheme,
+            themePreset: settings.themePreset || (settings.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
+          });
         }
       } catch {
         setLocal(DEFAULT_SETTINGS);
@@ -157,7 +186,8 @@ export const SettingsView: React.FC = () => {
       await loadStorageStats();
     };
     load();
-  }, [setSettings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchModels = async () => {
     if ((local.aiProvider || 'nvidia') !== 'nvidia') {
@@ -171,7 +201,7 @@ export const SettingsView: React.FC = () => {
     setModelsLoading(true);
     setModelsError('');
     try {
-      const data = await window.nexusAPI?.settings?.getNvidiaModels?.(local.nvidiaApiKey);
+      const data = await window.atheletiaAPI?.settings?.getNvidiaModels?.(local.nvidiaApiKey);
       const ids: string[] = (data ?? []).map((m: any) => m.id ?? m).filter(Boolean).sort();
       setModels(ids);
     } catch (e: any) {
@@ -187,7 +217,7 @@ export const SettingsView: React.FC = () => {
     setValidating(true);
     try {
       const provider = local.aiProvider || 'nvidia';
-      const result = await window.nexusAPI?.settings?.validateApiKey?.(provider, currentProviderKey);
+      const result = await window.atheletiaAPI?.settings?.validateApiKey?.(provider, currentProviderKey);
       setValidationOk(!!result?.valid);
       setValidationMsg(result?.message || (result?.valid ? 'Valid key' : 'Invalid key'));
     } catch (e: any) {
@@ -200,22 +230,39 @@ export const SettingsView: React.FC = () => {
 
   const handleSave = async () => {
     setSettings(local);
+    setIsSaving(true);
     try {
-      if (window.nexusAPI?.settings) await window.nexusAPI.settings.save(local);
+      if (window.atheletiaAPI?.settings) await window.atheletiaAPI.settings.save(local);
       await loadStorageStats();
     } catch {
       // keep local settings
+    } finally {
+      setIsSaving(false);
     }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
+
+  // Auto-save with debouncing
+  useEffect(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      handleSave();
+    }, 1500); // Save 1.5 seconds after last change
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [local]);
 
   const handleClearStorage = async () => {
     if (!confirm('Clear all activity/chat/diary/dashboard data? This cannot be undone.')) return;
     setStorageBusy(true);
     setStorageMsg('');
     try {
-      await window.nexusAPI?.storage?.clearAll?.();
+      await window.atheletiaAPI?.storage?.clearAll?.();
       setStorageMsg('Storage cleared successfully.');
       await loadStorageStats();
     } catch (e: any) {
@@ -226,12 +273,12 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleExport = async () => {
-    const path = window.prompt('Export path (example: C:\\\\Users\\\\you\\\\allentire-backup.json)');
+    const path = window.prompt('Export path (example: C:\\\\Users\\\\you\\\\atheletia-backup.json)');
     if (!path) return;
     setStorageBusy(true);
     setStorageMsg('');
     try {
-      await window.nexusAPI?.storage?.exportData?.(path);
+      await window.atheletiaAPI?.storage?.exportData?.(path);
       setStorageMsg('Data exported.');
     } catch (e: any) {
       setStorageMsg(`Export failed: ${e.message || e}`);
@@ -247,7 +294,7 @@ export const SettingsView: React.FC = () => {
     setStorageBusy(true);
     setStorageMsg('');
     try {
-      await window.nexusAPI?.storage?.importData?.(path, replace);
+      await window.atheletiaAPI?.storage?.importData?.(path, replace);
       setStorageMsg('Data imported.');
       await loadStorageStats();
     } catch (e: any) {
@@ -289,17 +336,18 @@ export const SettingsView: React.FC = () => {
                 <select
                   value={local.aiProvider || 'nvidia'}
                   onChange={(e) => set('aiProvider')(e.target.value)}
-                  className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200"
+                  className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200"
                 >
                   {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
               </div>
 
-              <SecretInput label="NVIDIA API Key" value={local.nvidiaApiKey || ''} onChange={set('nvidiaApiKey')} />
-              <SecretInput label="OpenAI API Key" value={local.openaiApiKey || ''} onChange={set('openaiApiKey')} />
-              <SecretInput label="Anthropic API Key" value={local.anthropicApiKey || ''} onChange={set('anthropicApiKey')} />
-              <SecretInput label="Groq API Key" value={local.groqApiKey || ''} onChange={set('groqApiKey')} />
-              <SecretInput label="Google Client ID" value={local.googleClientId} onChange={set('googleClientId')} />
+              <SecretInput label="NVIDIA API Key" value={local.nvidiaApiKey || ''} onChange={set('nvidiaApiKey')} helpText="Get from build.nvidia.com" />
+              <SecretInput label="OpenAI API Key" value={local.openaiApiKey || ''} onChange={set('openaiApiKey')} helpText="sk-... from platform.openai.com" />
+              <SecretInput label="Anthropic API Key" value={local.anthropicApiKey || ''} onChange={set('anthropicApiKey')} helpText="From console.anthropic.com" />
+              <SecretInput label="Groq API Key" value={local.groqApiKey || ''} onChange={set('groqApiKey')} helpText="From console.groq.com" />
+              <SecretInput label="Google Gemini API Key" value={(local as any).geminiApiKey || ''} onChange={(v) => setLocal((p) => ({ ...p, geminiApiKey: v }))} helpText="aistudio.google.com/app/apikey" />
+              <SecretInput label="Google Client ID" value={local.googleClientId} onChange={set('googleClientId')} helpText="For Google Calendar / Tasks OAuth" />
               <SecretInput label="Google Client Secret" value={local.googleClientSecret} onChange={set('googleClientSecret')} />
 
               <div className="flex items-center gap-2">
@@ -331,7 +379,7 @@ export const SettingsView: React.FC = () => {
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
                     placeholder="Search models..."
-                    className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg pl-8 pr-4 py-2 text-xs text-gray-300"
+                    className="w-full bg-[#141414] border border-[#222] rounded-lg pl-8 pr-4 py-2 text-xs text-gray-300"
                   />
                 </div>
                 <button
@@ -348,20 +396,23 @@ export const SettingsView: React.FC = () => {
                 value={local.defaultModel}
                 onChange={(e) => set('defaultModel')(e.target.value)}
                 placeholder="Manual model id"
-                className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200 font-mono"
+                className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200 font-mono"
               />
               <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                {models.filter((m) => m.toLowerCase().includes(modelSearch.toLowerCase())).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => set('defaultModel')(m)}
-                    className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl border text-left text-xs ${local.defaultModel === m ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-300' : 'border-[#1a1a1a] bg-[#0a0a0a] text-gray-400 hover:text-gray-200'}`}
-                  >
-                    <Brain size={12} />
-                    <span className="flex-1 truncate font-mono">{m}</span>
-                    {local.defaultModel === m && <CheckCircle size={12} className="text-cyan-400" />}
-                  </button>
-                ))}
+                {(() => {
+                  const allModels = [...new Set([...models, local.defaultModel].filter(Boolean))];
+                  return allModels.filter((m) => m.toLowerCase().includes(modelSearch.toLowerCase())).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => set('defaultModel')(m)}
+                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl border text-left text-xs ${local.defaultModel === m ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-300' : 'border-[#1a1a1a] bg-[#141414] text-gray-400 hover:text-gray-200'}`}
+                    >
+                      <Brain size={12} />
+                      <span className="flex-1 truncate font-mono">{m}</span>
+                      {local.defaultModel === m && <CheckCircle size={12} className="text-cyan-400" />}
+                    </button>
+                  ));
+                })()}
               </div>
             </div>
           )}
@@ -384,7 +435,7 @@ export const SettingsView: React.FC = () => {
                     value={(local.excludedApps || []).join('\n')}
                     onChange={(e) => set('excludedApps')(e.target.value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean))}
                     placeholder="spotify\nchrome\ntelegram"
-                    className="w-full min-h-[96px] bg-[#0a0a0a] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600"
+                    className="w-full min-h-[96px] bg-[#141414] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600"
                   />
                 </div>
               </div>
@@ -407,11 +458,11 @@ export const SettingsView: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-400 block mb-2">Retention Days</label>
-                  <input type="number" min={1} max={3650} value={local.dataRetentionDays} onChange={(e) => set('dataRetentionDays')(Number(e.target.value) || 30)} className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200" />
+                  <input type="number" min={1} max={3650} value={local.dataRetentionDays} onChange={(e) => set('dataRetentionDays')(Number(e.target.value) || 30)} className="w-full bg-[#141414] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200" />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-400 block mb-2">Max Storage (MB)</label>
-                  <input type="number" min={64} max={10240} value={local.maxStorageMb || 512} onChange={(e) => set('maxStorageMb')(Number(e.target.value) || 512)} className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200" />
+                  <input type="number" min={64} max={10240} value={local.maxStorageMb || 512} onChange={(e) => set('maxStorageMb')(Number(e.target.value) || 512)} className="w-full bg-[#141414] border border-[#222] rounded-lg px-3 py-2 text-sm text-gray-200" />
                 </div>
               </div>
               <Toggle label="Auto Cleanup" desc="Auto-purge oldest data when max storage is exceeded." checked={!!local.autoCleanup} onChange={set('autoCleanup')} />
@@ -439,7 +490,7 @@ export const SettingsView: React.FC = () => {
                   <div className="py-3 border-b border-[#1a1a1a] last:border-0">
                     <label className="text-sm font-medium text-gray-200 block mb-1">Startup Behavior</label>
                     <p className="text-xs text-gray-500 mb-2">How the app should appear on startup.</p>
-                    <select value={local.startupBehavior || 'minimized_to_tray'} onChange={(e) => set('startupBehavior')(e.target.value)} className="w-full bg-[#0a0a0a] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200">
+                    <select value={local.startupBehavior || 'minimized_to_tray'} onChange={(e) => set('startupBehavior')(e.target.value)} className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200">
                       <option value="normal">Normal (Visible)</option>
                       <option value="minimized_to_tray">Silent (Minimized to Tray)</option>
                     </select>
@@ -454,7 +505,52 @@ export const SettingsView: React.FC = () => {
 
           {activeSection === 'appearance' && (
             <div className="space-y-5">
-              <h2 className="text-lg font-bold text-white">Theme & Appearance</h2>
+              <div>
+                <h2 className="text-lg font-bold text-white">Theme & Appearance</h2>
+                <p className="text-xs text-gray-500">Choose a full app theme, then tune density and text scale.</p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 block mb-2">Theme Preset</label>
+                  <div className="rounded-2xl border border-[#1a1a1a] bg-[#0d0d0d] p-3">
+                    {THEME_GROUPS.map((group) => (
+                      <div key={group.label} className="mb-4 last:mb-0">
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">{group.label}</p>
+                        <div className="space-y-1">
+                          {group.ids.map((themeId) => {
+                            const theme = getThemePreset(themeId);
+                            const isSelected = (local.themePreset || 'dark-2026') === themeId;
+                            return (
+                              <button
+                                key={themeId}
+                                type="button"
+                                onClick={() => setThemePreset(themeId)}
+                                className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition-colors ${
+                                  isSelected
+                                    ? 'border-cyan-500/40 bg-cyan-500/10 text-white'
+                                    : 'border-transparent bg-[#141414] text-gray-300 hover:border-[#2a2a2a] hover:bg-[#1a1a1a]'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium">{theme.label}</div>
+                                  <div className="text-[11px] text-gray-500">{theme.scheme === 'light' ? 'Default Light' : 'Default Dark'}</div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="h-3 w-3 rounded-full border border-white/10" style={{ backgroundColor: theme.vars['--bg-canvas'] }} />
+                                  <span className="h-3 w-3 rounded-full border border-white/10" style={{ backgroundColor: theme.vars['--bg-elev-2'] }} />
+                                  <span className="h-3 w-3 rounded-full border border-white/10" style={{ backgroundColor: theme.vars['--accent'] }} />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <Toggle label="Compact Mode" desc="Reduce spacing and density." checked={!!local.compactMode} onChange={set('compactMode')} />
               <div>
                 <label className="text-xs font-semibold text-gray-400 block mb-2">Font Scale ({(local.fontScale || 1).toFixed(2)}x)</label>
@@ -467,20 +563,27 @@ export const SettingsView: React.FC = () => {
             <div className="space-y-4">
               <h2 className="text-lg font-bold text-white">About</h2>
               <div className="bg-[#0d0d0d] border border-[#1a1a1a] rounded-2xl p-5 space-y-3">
-                <div className="flex justify-between text-sm"><span className="text-gray-500">App</span><span className="text-gray-300 font-medium">Allentire + IntentFlow</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">App</span><span className="text-gray-300 font-medium">Atheletia</span></div>
                 <div className="flex justify-between text-sm"><span className="text-gray-500">Runtime</span><span className="text-gray-300 font-medium">Tauri 2 + React 18</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-500">Provider Support</span><span className="text-gray-300 font-medium">NVIDIA, OpenAI, Anthropic, Groq</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">Provider Support</span><span className="text-gray-300 font-medium">NVIDIA, OpenAI, Anthropic, Groq, Gemini</span></div>
               </div>
             </div>
           )}
 
           {activeSection !== 'about' && (
-            <button
-              onClick={handleSave}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold ${saved ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/15'}`}
-            >
-              {saved ? <><CheckCircle size={15} /> Saved!</> : <><Save size={15} /> Save Changes</>}
-            </button>
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              {isSaving ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={12} className="text-green-500" />
+                  Auto-saved
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>

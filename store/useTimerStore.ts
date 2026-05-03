@@ -36,6 +36,15 @@ export const useTimerStore = create<TimerState>()((set, get) => ({
         // Don't start if already active or no time left
         if (get().isActive || get().timeLeft <= 0) return;
 
+        // Ensure any existing interval is strictly cleared before starting a new one
+        const existingId = get().intervalId;
+        if (existingId !== null) {
+            window.clearInterval(existingId);
+        }
+        
+        // Optimistically lock state
+        set({ isActive: true });
+
         const id = window.setInterval(() => {
             const current = get().timeLeft;
             if (current <= 1) {

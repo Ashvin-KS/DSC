@@ -41,12 +41,12 @@ interface VaultSearchResult {
 const isTauriRuntime = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-export function initNexusApi() {
+export function initAtheletiaApi() {
   if (!isTauriRuntime()) {
     return;
   }
 
-  window.nexusAPI = {
+  window.atheletiaAPI = {
     platform: 'tauri',
     send: () => { },
     on: () => { },
@@ -91,6 +91,8 @@ export function initNexusApi() {
     },
     leetcode: {
       readCsv: () => invoke<string | null>('leetcode_read_csv'),
+      getCsvPath: () => invoke<string>('leetcode_get_csv_path'),
+      saveCsv: (csvContent: string) => invoke<boolean>('leetcode_save_csv', { csvContent }),
     },
     browser: {
       openInApp: (url: string) => invoke<boolean>('browser_open_in_app', { url }),
@@ -167,8 +169,10 @@ export function initNexusApi() {
         model?: string,
         provider?: string,
         timeRange?: string,
-        sources?: string[]
-      ) => invoke<any>('send_chat_message', { sessionId, message, model, provider, timeRange, sources }),
+        selectedSources?: string[],
+        _unused?: string[],
+        apiKey?: string
+      ) => invoke<any>('send_chat_message', { sessionId, message, model, provider, timeRange, selectedSources, apiKey }),
       startActivityTracker: () => invoke<boolean>('start_activity_tracker'),
       getDashboardOverview: (refresh?: boolean) => invoke<any>('dashboard_get_overview', { refresh }),
       refreshDashboardOverview: () => invoke<any>('dashboard_refresh_overview'),
@@ -183,8 +187,8 @@ export function initNexusApi() {
       getEntries: (date?: string) => invoke<any[]>('diary_get_entries', { date }),
       saveEntry: (entry: any) => invoke<any>('diary_save_entry', { entry }),
       deleteEntry: (id: string) => invoke<boolean>('diary_delete_entry', { id }),
-      generateEntry: (date: string, model?: string) =>
-        invoke<string>('diary_generate_entry', { date, model }),
+      generateEntry: (date: string, model?: string, apiKey?: string) =>
+        invoke<string>('diary_generate_entry', { date, model, apiKey }),
     },
     settings: {
       get: () => invoke<any>('settings_get'),
@@ -198,7 +202,8 @@ export function initNexusApi() {
         messages: { role: string; content: string }[],
         maxTokens?: number,
         temperature?: number,
-      ) => invoke<any>('settings_nvidia_chat_completion', { model, messages, maxTokens, temperature }),
+        apiKey?: string,
+      ) => invoke<any>('settings_nvidia_chat_completion', { model, messages, maxTokens, temperature, apiKey }),
       lmstudioChatCompletion: (
         model: string,
         messages: { role: string; content: string }[],
@@ -213,7 +218,8 @@ export function initNexusApi() {
         maxTokens?: number,
         temperature?: number,
         baseUrl?: string,
-      ) => invoke<void>('brain_chat_stream', { model, messages, useLocal, maxTokens, temperature, baseUrl }),
+        apiKey?: string,
+      ) => invoke<void>('brain_chat_stream', { model, messages, useLocal, maxTokens, temperature, baseUrl, apiKey }),
       brainCancelStream: () => invoke<boolean>('brain_cancel_stream'),
     },
     storage: {
@@ -229,7 +235,7 @@ export function initNexusApi() {
 declare global {
   interface Window {
     __TAURI_INTERNALS__?: unknown;
-    nexusAPI?: {
+    atheletiaAPI?: {
       platform: string;
       send: (channel: string, data: any) => void;
       on: (channel: string, func: any) => void;
@@ -251,6 +257,8 @@ declare global {
       };
       leetcode: {
         readCsv: () => Promise<string | null>;
+        getCsvPath: () => Promise<string>;
+        saveCsv: (csvContent: string) => Promise<boolean>;
       };
       browser: {
         openInApp: (url: string) => Promise<boolean>;
@@ -290,7 +298,7 @@ declare global {
         createChatSession: () => Promise<any>;
         deleteChatSession: (sessionId: string) => Promise<boolean>;
         getChatMessages: (sessionId: string) => Promise<any[]>;
-        sendChatMessage: (sessionId: string, message: string, model?: string, provider?: string, timeRange?: string, sources?: string[]) => Promise<any>;
+        sendChatMessage: (sessionId: string, message: string, model?: string, provider?: string, timeRange?: string, selectedSources?: string[], _unused?: string[], apiKey?: string) => Promise<any>;
         startActivityTracker: () => Promise<boolean>;
 
         getDashboardOverview: (refresh?: boolean) => Promise<any>;
@@ -305,7 +313,7 @@ declare global {
         getEntries: (date?: string) => Promise<any[]>;
         saveEntry: (entry: any) => Promise<any>;
         deleteEntry: (id: string) => Promise<boolean>;
-        generateEntry: (date: string, model?: string) => Promise<string>;
+        generateEntry: (date: string, model?: string, apiKey?: string) => Promise<string>;
       };
       settings?: {
         get: () => Promise<any>;
@@ -318,6 +326,7 @@ declare global {
           messages: { role: string; content: string }[],
           maxTokens?: number,
           temperature?: number,
+          apiKey?: string,
         ) => Promise<any>;
         lmstudioChatCompletion: (
           model: string,
@@ -333,6 +342,7 @@ declare global {
           maxTokens?: number,
           temperature?: number,
           baseUrl?: string,
+          apiKey?: string,
         ) => Promise<void>;
         brainCancelStream: () => Promise<boolean>;
       };

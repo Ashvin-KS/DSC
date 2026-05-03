@@ -389,8 +389,8 @@ export const isUiTranscriptNoise = (text: string): boolean => {
   const t = text || '';
   const patterns = [
     /dashboard\s*\n\s*chat\s*\n\s*activity/i,
-    /nexus ai can make mistakes/i,
-    /ask nexus about this note/i,
+    /atheletia ai can make mistakes/i,
+    /ask atheletia about this note/i,
     /action proposed\./i,
     /action reverted\./i,
     /change vault/i,
@@ -514,8 +514,8 @@ export const buildModelConversation = (messages: BrainChatMessage[], aiMode: 'le
   const selected: BrainChatMessage[] = [];
   let userCount = 0;
   let aiCount = 0;
-  const maxUser = aiMode === 'edit' ? 3 : 4;
-  const maxAi = aiMode === 'edit' ? 1 : 2;
+  const maxUser = aiMode === 'edit' ? 8 : 20;
+  const maxAi = aiMode === 'edit' ? 6 : 15;
 
   for (const msg of reversed) {
     if (msg.sender === 'user' && userCount < maxUser) {
@@ -657,7 +657,7 @@ const extractTaggedBlock = (text: string, tag: string): string | null => {
 export const parseActionPayload = (aiResponse: string): ParsedActionPayload | null => {
   const candidates: string[] = [];
 
-  const tagged = extractTaggedBlock(aiResponse, 'nexus_action_json');
+  const tagged = extractTaggedBlock(aiResponse, 'atheletia_action_json');
   if (tagged) candidates.push(tagged);
 
   const jsonBlocks = [...aiResponse.matchAll(/```json\s*([\s\S]*?)\s*```/ig)].map(m => m[1]);
@@ -686,7 +686,7 @@ const minContentLengthForAction = (action: BrainActionType): number => {
 };
 
 export const inferActionContentFromResponse = (action: BrainActionType, aiResponse: string): string | undefined => {
-  const tagged = extractTaggedBlock(aiResponse, 'nexus_content');
+  const tagged = extractTaggedBlock(aiResponse, 'atheletia_content');
   const aggressive = action !== 'replace_all';
   if (tagged) {
     const cleanedTagged = sanitizeProposedMarkdown(tagged, { aggressive });
@@ -696,7 +696,7 @@ export const inferActionContentFromResponse = (action: BrainActionType, aiRespon
   }
 
   const withoutPayload = aiResponse
-    .replace(/<nexus_action_json>[\s\S]*?<\/nexus_action_json>/ig, '')
+    .replace(/<atheletia_action_json>[\s\S]*?<\/atheletia_action_json>/ig, '')
     .replace(/```json[\s\S]*?```/ig, '')
     .replace(/\{[\s\S]*"action"\s*:\s*"(?:insert_content|create_note|edit_note|create_folder|move_note|open_note|rename_note|delete_item|ask_question|replace_selection|insert_at_cursor|find_and_replace|replace_all)"[\s\S]*\}$/i, '')
     .trim();

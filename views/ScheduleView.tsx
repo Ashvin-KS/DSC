@@ -256,7 +256,6 @@ export const ScheduleView: React.FC = () => {
   };
 
   const handleDragStart = (e: React.DragEvent, taskId: number) => {
-    console.log('Drag Start:', taskId);
     setDraggedTaskId(taskId);
     e.dataTransfer.effectAllowed = 'move';
     // Required for drag to work in some browsers/engines
@@ -264,7 +263,6 @@ export const ScheduleView: React.FC = () => {
   };
 
   const handleDragEnd = () => {
-    console.log('Drag End');
     setDraggedTaskId(null);
   };
 
@@ -275,7 +273,6 @@ export const ScheduleView: React.FC = () => {
 
   const handleDropComplete = (e: React.DragEvent) => {
     e.preventDefault();
-    console.log('Drop Complete Triggered. draggedTaskId:', draggedTaskId);
     const droppedTaskId = draggedTaskId || Number(e.dataTransfer.getData('text/plain'));
 
     if (droppedTaskId) {
@@ -319,14 +316,11 @@ export const ScheduleView: React.FC = () => {
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>, hour: number) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const clickY = e.clientY - rect.top;
-    const halfHour = clickY > rect.height / 2;
-    const minutes = halfHour ? 30 : 0;
-    const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-    handleOpenNewEvent(timeStr);
+      const halfHour = clickY > hourHeight / 2;
   };
 
   return (
-    <div className="flex h-full w-full bg-[#0a0a0a] overflow-hidden rounded-xl border border-[#262626] animate-in fade-in duration-300">
+    <div className="flex h-full w-full bg-[#0a0a0a] overflow-hidden animate-in fade-in duration-300">
 
       {/* LEFT PANEL: BACKLOG */}
       <div className="w-[30%] min-w-[300px] bg-[#161616] border-r border-[#262626] flex flex-col">

@@ -6,11 +6,12 @@ import { GoalsCard } from '../components/dashboard/GoalsCard';
 import { NewsCard } from '../components/dashboard/NewsCard';
 import { ProjectsCard } from '../components/dashboard/ProjectsCard';
 import { DetailModal } from '../components/dashboard/DetailModal';
-import { GraduationCap, HardDrive, Mail, CheckCircle, AlertTriangle, Sparkles, MessageSquare, RefreshCw } from 'lucide-react';
+import { GraduationCap, Mail, CheckCircle, AlertTriangle, Sparkles, MessageSquare, RefreshCw } from 'lucide-react';
 import { NewsManager } from '../components/dashboard/NewsManager';
+import { StatusBanner } from '../components/ui/StatusBanner';
 
 type ViewMode = 'grid' | 'goals' | 'news';
-type ModalType = 'assignments' | 'projects' | 'cleaner' | 'gatekeeper' | null;
+type ModalType = 'assignments' | 'projects' | 'gatekeeper' | null;
 const DASHBOARD_AUTO_REFRESH_MS = 5 * 60 * 60 * 1000;
 
 type ExpandedDetail = {
@@ -40,6 +41,7 @@ export const DashboardView: React.FC = () => {
   const [expandedDetail, setExpandedDetail] = useState<ExpandedDetail | null>(null);
   const [overview, setOverview] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editingDeadlineTitle, setEditingDeadlineTitle] = useState<string | null>(null);
   const [deadlineForm, setDeadlineForm] = useState({ title: '', due_date: '', status: 'pending', source: 'manual' });
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
@@ -50,12 +52,14 @@ export const DashboardView: React.FC = () => {
   React.useEffect(() => {
     const loadOverview = async () => {
       try {
-        if (window.nexusAPI?.intent?.getDashboardOverview) {
-          const data = await window.nexusAPI.intent.getDashboardOverview(false);
+        setLoadError(null);
+        if (window.atheletiaAPI?.intent?.getDashboardOverview) {
+          const data = await window.atheletiaAPI.intent.getDashboardOverview(false);
           if (data) setOverview(data);
         }
       } catch (e) {
         console.warn('Failed to load dashboard overview', e);
+        setLoadError(e instanceof Error ? e.message : 'Failed to load dashboard overview.');
       } finally {
         setLoading(false);
       }
@@ -66,12 +70,14 @@ export const DashboardView: React.FC = () => {
   const handleRefresh = useCallback(async () => {
     setLoading(true);
     try {
-      if (window.nexusAPI?.intent?.refreshDashboardOverview) {
-        const data = await window.nexusAPI.intent.refreshDashboardOverview();
+      setLoadError(null);
+      if (window.atheletiaAPI?.intent?.refreshDashboardOverview) {
+        const data = await window.atheletiaAPI.intent.refreshDashboardOverview();
         if (data) setOverview(data);
       }
     } catch (e) {
       console.warn('Failed to refresh dashboard overview', e);
+      setLoadError(e instanceof Error ? e.message : 'Failed to refresh dashboard overview.');
     } finally {
       setLoading(false);
     }
@@ -90,7 +96,7 @@ export const DashboardView: React.FC = () => {
   const handleSaveDeadline = async () => {
     if (!deadlineForm.title.trim()) return;
     try {
-      const updated = await window.nexusAPI?.intent?.upsertDashboardDeadline?.({
+      const updated = await window.atheletiaAPI?.intent?.upsertDashboardDeadline?.({
         title: deadlineForm.title.trim(),
         due_date: deadlineForm.due_date.trim() || null,
         status: deadlineForm.status || 'pending',
@@ -105,7 +111,7 @@ export const DashboardView: React.FC = () => {
 
   const handleDeleteDeadline = async (title: string) => {
     try {
-      const updated = await window.nexusAPI?.intent?.deleteDashboardDeadline?.(title);
+      const updated = await window.atheletiaAPI?.intent?.deleteDashboardDeadline?.(title);
       if (updated) setOverview(updated);
       if (editingDeadlineTitle?.toLowerCase() === title.toLowerCase()) {
         resetDeadlineForm();
@@ -118,7 +124,7 @@ export const DashboardView: React.FC = () => {
   const handleSaveProject = async () => {
     if (!projectForm.name.trim()) return;
     try {
-      const updated = await window.nexusAPI?.intent?.upsertDashboardProject?.({
+      const updated = await window.atheletiaAPI?.intent?.upsertDashboardProject?.({
         name: projectForm.name.trim(),
         update: projectForm.update.trim() || 'Manual project update',
         files_changed: Number(projectForm.files_changed) || 0,
@@ -132,7 +138,7 @@ export const DashboardView: React.FC = () => {
 
   const handleDeleteProject = async (name: string) => {
     try {
-      const updated = await window.nexusAPI?.intent?.deleteDashboardProject?.(name);
+      const updated = await window.atheletiaAPI?.intent?.deleteDashboardProject?.(name);
       if (updated) setOverview(updated);
       if (editingProjectName?.toLowerCase() === name.toLowerCase()) {
         resetProjectForm();
@@ -186,11 +192,11 @@ export const DashboardView: React.FC = () => {
 
   const summarizeExpandedDetail = async (detail: ExpandedDetail) => {
     try {
-      if (!window.nexusAPI?.intent?.summarizeDashboardItem) {
+      if (!window.atheletiaAPI?.intent?.summarizeDashboardItem) {
         setExpandedDetail((prev) => prev ? { ...prev, loadingSummary: false } : prev);
         return;
       }
-      const summary = await window.nexusAPI.intent.summarizeDashboardItem(detail.kind, detail.title, detail.body);
+      const summary = await window.atheletiaAPI.intent.summarizeDashboardItem(detail.kind, detail.title, detail.body);
       setExpandedDetail((prev) => {
         if (!prev || prev.title !== detail.title || prev.kind !== detail.kind) return prev;
         return { ...prev, aiSummary: summary, loadingSummary: false };
@@ -203,8 +209,8 @@ export const DashboardView: React.FC = () => {
   useEffect(() => {
     const intervalId = setInterval(async () => {
       try {
-        if (window.nexusAPI?.intent?.refreshDashboardOverview) {
-          const data = await window.nexusAPI.intent.refreshDashboardOverview();
+        if (window.atheletiaAPI?.intent?.refreshDashboardOverview) {
+          const data = await window.atheletiaAPI.intent.refreshDashboardOverview();
           if (data) setOverview(data);
         }
       } catch (e) {
@@ -219,8 +225,8 @@ export const DashboardView: React.FC = () => {
     const onTrayRefresh = () => {
       handleRefresh();
     };
-    window.addEventListener('allentire:refresh-dashboard', onTrayRefresh);
-    return () => window.removeEventListener('allentire:refresh-dashboard', onTrayRefresh);
+    window.addEventListener('atheletia:refresh-dashboard', onTrayRefresh);
+    return () => window.removeEventListener('atheletia:refresh-dashboard', onTrayRefresh);
   }, [handleRefresh]);
 
   // We no longer manage local goals array. Deadlines are provided from backend via AI.
@@ -257,6 +263,24 @@ export const DashboardView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="px-4 md:px-8 pb-4">
+          <StatusBanner
+            tone="error"
+            title="Dashboard data is unavailable"
+            message={loadError}
+            action={
+              <button
+                onClick={handleRefresh}
+                className="rounded-md border border-red-400/30 px-2.5 py-1 text-xs text-red-100 hover:bg-red-500/15"
+              >
+                Retry
+              </button>
+            }
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4 md:px-8 pb-8 animate-in fade-in zoom-in duration-500">
 
@@ -314,23 +338,6 @@ export const DashboardView: React.FC = () => {
         </button>
 
         {/* 6. Cleaner (1 col) — click opens modal */}
-        <button
-          onClick={() => setOpenModal('cleaner')}
-          className="col-span-1 text-left"
-        >
-          <Card title="Cleaner" icon={HardDrive} className="col-span-1 h-full hover:border-cyan-500/20 transition-colors cursor-pointer">
-            <div
-              className="h-full border-2 border-dashed border-[#333] rounded-lg flex flex-col items-center justify-center p-2 transition-colors hover:border-gray-500 hover:bg-[#262626]/30 group text-center"
-            >
-              <div className="p-2 bg-[#262626] rounded-full mb-2 group-hover:scale-110 transition-transform shadow-lg">
-                <HardDrive size={18} className="text-gray-400 group-hover:text-white" />
-              </div>
-              <p className="text-xs font-medium text-gray-300">Drag Files</p>
-              <p className="text-[10px] text-gray-500 mt-0.5">Auto-sort</p>
-            </div>
-          </Card>
-        </button>
-
         {/* --- BOTTOM ROW --- */}
 
         {/* 7. Email Gatekeeper (2 cols) — click opens modal */}
@@ -420,19 +427,19 @@ export const DashboardView: React.FC = () => {
               value={deadlineForm.title}
               onChange={(e) => setDeadlineForm((p) => ({ ...p, title: e.target.value }))}
               placeholder="Title"
-              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200"
+              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
             />
             <input
               value={deadlineForm.due_date}
               onChange={(e) => setDeadlineForm((p) => ({ ...p, due_date: e.target.value }))}
               placeholder="Due (e.g. Today, 2026-03-01, tomorrow 5pm)"
-              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200"
+              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
             />
             <div className="flex gap-2">
               <select
                 value={deadlineForm.status}
                 onChange={(e) => setDeadlineForm((p) => ({ ...p, status: e.target.value }))}
-                className="flex-1 px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200"
+                className="flex-1 px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
               >
                 <option value="pending">pending</option>
                 <option value="active">active</option>
@@ -521,13 +528,13 @@ export const DashboardView: React.FC = () => {
               value={projectForm.name}
               onChange={(e) => setProjectForm((p) => ({ ...p, name: e.target.value }))}
               placeholder="Project name"
-              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200"
+              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
             />
             <input
               value={projectForm.update}
               onChange={(e) => setProjectForm((p) => ({ ...p, update: e.target.value }))}
               placeholder="Update summary"
-              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200"
+              className="w-full px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
             />
             <div className="flex gap-2">
               <input
@@ -536,7 +543,7 @@ export const DashboardView: React.FC = () => {
                 value={projectForm.files_changed}
                 onChange={(e) => setProjectForm((p) => ({ ...p, files_changed: Number(e.target.value) || 0 }))}
                 placeholder="Files changed"
-                className="w-36 px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200"
+                className="w-36 px-3 py-2 text-sm bg-[#111] border border-[#333] rounded text-gray-200 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
               />
               <button
                 onClick={handleSaveProject}
@@ -593,20 +600,6 @@ export const DashboardView: React.FC = () => {
               </div>
             ))
           )}
-        </div>
-      </DetailModal>
-
-      <DetailModal
-        title="Desktop Cleaner"
-        isOpen={openModal === 'cleaner'}
-        onClose={() => setOpenModal(null)}
-      >
-        <div className="text-center py-6">
-          <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] border border-[#282828] flex items-center justify-center mx-auto mb-4">
-            <HardDrive size={32} className="text-gray-400" />
-          </div>
-          <p className="text-sm font-semibold text-gray-200 mb-1">Desktop Cleaner</p>
-          <p className="text-xs text-gray-500">Drag and drop files here to auto-sort them into organised folders. This feature will be fully activated in a future update.</p>
         </div>
       </DetailModal>
 

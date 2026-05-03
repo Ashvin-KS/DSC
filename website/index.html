@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atheletia - Local-first AI desktop productivity hub</title>
+    <meta
+      name="description"
+      content="Atheletia is a local-first AI desktop productivity hub for chat, notes, scheduling, activity tracking, LeetCode practice, music, and focus."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Atheletia - Local-first AI desktop productivity hub" />
+    <meta
+      property="og:description"
+      content="A private desktop command center for activity tracking, chat, Brain notes, scheduling, LeetCode, music, and focus."
+    />
+    <meta property="og:site_name" content="Atheletia" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#07090c" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Atheletia home">
+        <span class="brand-mark">A</span>
+        <span class="brand-copy">
+          <span class="brand-name">Atheletia</span>
+          <span class="brand-tag">Launch-ready desktop hub</span>
+        </span>
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+      <a class="nav-cta" href="#buy">Request access</a>
+    </header>
+
+    <main id="top">
+      <section class="hero-section">
+        <div class="hero-copy">
+          <p class="eyebrow">Local-first AI desktop software</p>
+          <h1>The desktop hub for people who do real work in one place.</h1>
+          <p class="hero-subtitle">
+            Atheletia pulls activity tracking, chat, Brain notes, scheduling,
+            LeetCode study, music, and focus tools into a single desktop
+            command center. It feels private by default and useful the moment
+            you open it.
+          </p>
+          <div class="hero-actions" id="buy">
+            <a class="button button-primary" href="mailto:hello@example.com?subject=Atheletia%20early%20access">
+              Request access
+            </a>
+            <a class="button button-secondary" href="#screenshots">See the product tour</a>
+          </div>
+          <div class="hero-badges" aria-label="Product highlights">
+            <span>No cloud account required</span>
+            <span>Opt-in AI providers</span>
+            <span>Local SQLite data</span>
+          </div>
+          <dl class="hero-stats" aria-label="Product highlights">
+            <div>
+              <dt>1 app</dt>
+              <dd>for the whole day</dd>
+            </div>
+            <div>
+              <dt>6+</dt>
+              <dd>AI providers</dd>
+            </div>
+            <div>
+              <dt>Local</dt>
+              <dd>app data and settings</dd>
+            </div>
+          </dl>
+        </div>
+
+        <figure class="hero-visual screenshot-frame" aria-label="Atheletia dashboard preview">
+          <img
+            src="./assets/dashboard-hero.png"
+            alt="Atheletia dashboard preview showing summaries, goals, schedule, and focus tools"
+            onerror="this.hidden=true"
+          />
+          <div class="hero-mockup" aria-hidden="true">
+            <div class="mockup-chrome">
+              <span class="window-controls"><span></span><span></span><span></span></span>
+              <span class="mockup-title">Atheletia dashboard</span>
+              <span class="mockup-chip">local-first</span>
+            </div>
+            <div class="mockup-body">
+              <aside class="mockup-sidebar">
+                <span class="mockup-nav active">Dashboard</span>
+                <span class="mockup-nav">Activity</span>
+                <span class="mockup-nav">Brain</span>
+                <span class="mockup-nav">Chat</span>
+                <span class="mockup-nav">Schedule</span>
+                <span class="mockup-nav">Zen</span>
+              </aside>
+              <div class="mockup-content">
+                <article class="mock-card gradient span-2">
+                  <span class="card-kicker">Today</span>
+                  <strong>Deep work, one deadline, and a clean focus window.</strong>
+                  <p>Morning brief, activity summary, and the next three things to finish.</p>
+                </article>
+                <article class="mock-card">
+                  <span class="card-kicker">Activity</span>
+                  <strong>4h 12m</strong>
+                  <p>Tracked focus blocks</p>
+                </article>
+                <article class="mock-card">
+                  <span class="card-kicker">Goals</span>
+                  <strong>3 open</strong>
+                  <p>Projects and reminders</p>
+                </article>
+                <article class="mock-card">
+                  <span class="card-kicker">Brain</span>
+                  <strong>12 notes</strong>
+                  <p>Searchable vault</p>
+                </article>
+                <article class="mock-card">
+                  <span class="card-kicker">Focus</span>
+                  <strong>25 min</strong>
+                  <p>Pomodoro running</p>
+                </article>
+                <article class="mock-card span-2">
+                  <span class="card-kicker">LeetCode</span>
+                  <strong>Practice loop, not a spreadsheet.</strong>
+                  <p>Track problems, notes, and study sessions without leaving the app.</p>
+                </article>
+              </div>
+            </div>
+          </div>
+          <figcaption>
+            Drop your main dashboard screenshot at
+            <code>website/assets/dashboard-hero.png</code>.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="logo-strip" aria-label="Supported workflows">
+        <span>Activity tracking</span>
+        <span>Brain notes</span>
+        <span>Calendar</span>
+        <span>Chat</span>
+        <span>Music</span>
+        <span>Focus</span>
+      </section>
+
+      <section class="section section-tight" id="features">
+        <div class="section-heading">
+          <p class="eyebrow">Why people keep it open</p>
+          <h2>One app that keeps the context you usually scatter across tabs.</h2>
+          <p>
+            Atheletia turns scattered tools into a single operating surface for
+            planning, thinking, coding, reviewing, and winding down.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <span class="card-icon">AI</span>
+            <h3>Context-aware chat</h3>
+            <p>
+              Keep multi-session conversations with streaming responses,
+              markdown, Mermaid diagrams, and optional context from activity or
+              notes.
+            </p>
+          </article>
+          <article class="feature-card">
+            <span class="card-icon">DB</span>
+            <h3>Local activity memory</h3>
+            <p>
+              See where your time went with app/window tracking, categories,
+              timelines, and AI summaries generated from your own day.
+            </p>
+          </article>
+          <article class="feature-card">
+            <span class="card-icon">NT</span>
+            <h3>Brain vault</h3>
+            <p>
+              Write markdown-backed notes in a rich editor while an AI side
+              panel helps create, replace, search, and expand ideas.
+            </p>
+          </article>
+          <article class="feature-card">
+            <span class="card-icon">CL</span>
+            <h3>Calendar plus tasks</h3>
+            <p>
+              Plan days visually, manage tasks, and optionally sync with Google
+              Calendar and Google Tasks.
+            </p>
+          </article>
+          <article class="feature-card">
+            <span class="card-icon">LC</span>
+            <h3>LeetCode study desk</h3>
+            <p>
+              Track problems, solved status, notes, study sessions, AI hints,
+              complexity breakdowns, and algorithm diagrams.
+            </p>
+          </article>
+          <article class="feature-card">
+            <span class="card-icon">FM</span>
+            <h3>Focus and music</h3>
+            <p>
+              Use Pomodoro modes, focus playlists, YouTube-backed playback, a
+              queue, liked songs, and tray controls without leaving the app.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow-section" id="workflow">
+        <div class="section-heading align-left">
+          <p class="eyebrow">The daily loop</p>
+          <h2>Morning brief to evening wrap-up.</h2>
+          <p>
+            Start with the shape of the day, work from the same context, then
+            close out with a review you can actually use tomorrow.
+          </p>
+        </div>
+        <div class="workflow-grid">
+          <article>
+            <span>01</span>
+            <h3>Start with context</h3>
+            <p>
+              Open the dashboard for summaries, deadlines, goals, and the shape
+              of the day ahead.
+            </p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Work with memory</h3>
+            <p>
+              Let activity tracking, notes, chat sessions, and schedule blocks
+              build a useful local record of what happened.
+            </p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Review and improve</h3>
+            <p>
+              Generate diary summaries, study what you solved, tune your focus
+              habits, and export your data when needed.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="screenshots">
+        <div class="section-heading">
+          <p class="eyebrow">Product tour</p>
+          <h2>Real screenshots belong here when you are ready.</h2>
+          <p>
+            The page is already wired for these image files. Paste screenshots
+            into <code>website/assets/</code> using the names shown below.
+          </p>
+        </div>
+        <div class="screenshot-grid">
+          <figure class="screenshot-card" data-shot="Brain notes screenshot needed">
+            <!-- Screenshot needed: website/assets/brain-notes.png -->
+            <img src="./assets/brain-notes.png" alt="Atheletia Brain notes vault and AI writing panel" onerror="this.hidden=true" />
+            <figcaption>
+              <strong>Brain notes</strong>
+              <span>Use <code>brain-notes.png</code></span>
+            </figcaption>
+          </figure>
+          <figure class="screenshot-card" data-shot="AI chat screenshot needed">
+            <!-- Screenshot needed: website/assets/chat-context.png -->
+            <img src="./assets/chat-context.png" alt="Atheletia AI chat with model picker and context controls" onerror="this.hidden=true" />
+            <figcaption>
+              <strong>AI chat</strong>
+              <span>Use <code>chat-context.png</code></span>
+            </figcaption>
+          </figure>
+          <figure class="screenshot-card" data-shot="Schedule screenshot needed">
+            <!-- Screenshot needed: website/assets/schedule-week.png -->
+            <img src="./assets/schedule-week.png" alt="Atheletia schedule week view with tasks and events" onerror="this.hidden=true" />
+            <figcaption>
+              <strong>Schedule</strong>
+              <span>Use <code>schedule-week.png</code></span>
+            </figcaption>
+          </figure>
+          <figure class="screenshot-card" data-shot="Zen or music screenshot needed">
+            <!-- Screenshot needed: website/assets/zen-music.png -->
+            <img src="./assets/zen-music.png" alt="Atheletia Zen mode and music player focus tools" onerror="this.hidden=true" />
+            <figcaption>
+              <strong>Zen and music</strong>
+              <span>Use <code>zen-music.png</code></span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="proof-section">
+        <div>
+          <p class="eyebrow">Local-first by design</p>
+          <h2>Your desktop stays the center of gravity.</h2>
+          <p class="proof-copy">
+            Core data stays local, integrations are opt-in, and the app gives
+            you control over what gets tracked or exported.
+          </p>
+        </div>
+        <ul class="proof-list">
+          <li>SQLite-backed local app data</li>
+          <li>Configurable privacy and tracking controls</li>
+          <li>Incognito mode for pausing activity capture</li>
+          <li>API keys managed through Settings and backend storage</li>
+          <li>Export, import, and clear-data controls</li>
+        </ul>
+      </section>
+
+      <section class="section pricing-section" id="pricing">
+        <div class="section-heading">
+          <p class="eyebrow">Launch offer</p>
+          <h2>Simple pricing, so the page actually closes the sale.</h2>
+          <p>
+            Swap in your final checkout flow when you have one. For now, these
+            email links are enough to sell early access.
+          </p>
+        </div>
+        <div class="pricing-grid">
+          <article class="price-card featured">
+            <p class="plan-label">Early access</p>
+            <h3>$29</h3>
+            <p class="price-note">One-time launch price</p>
+            <ul>
+              <li>Desktop app access</li>
+              <li>All current productivity modules</li>
+              <li>Local-first data workflow</li>
+              <li>Provider-flexible AI setup</li>
+            </ul>
+            <a class="button button-primary" href="mailto:hello@example.com?subject=Atheletia%20purchase">
+              Request access
+            </a>
+          </article>
+          <article class="price-card muted">
+            <p class="plan-label">Founder license</p>
+            <h3>Custom</h3>
+            <p class="price-note">For teams, labs, and student communities</p>
+            <ul>
+              <li>Bulk access discussion</li>
+              <li>Setup help</li>
+              <li>Priority feature feedback</li>
+              <li>Roadmap visibility</li>
+            </ul>
+            <a class="button button-secondary" href="mailto:hello@example.com?subject=Atheletia%20founder%20license">
+              Contact founder
+            </a>
+          </article>
+        </div>
+      </section>
+
+      <section class="faq-section">
+        <div class="section-heading align-left">
+          <p class="eyebrow">Before you buy</p>
+          <h2>What people usually ask first.</h2>
+        </div>
+        <div class="faq-grid">
+          <article>
+            <h3>Does Atheletia require a cloud account?</h3>
+            <p>
+              No. The desktop app can run locally. AI and Google features only
+              need accounts or keys when you choose to connect those services.
+            </p>
+          </article>
+          <article>
+            <h3>Which AI providers are supported?</h3>
+            <p>
+              NVIDIA NIM, OpenAI, Anthropic, Groq, Gemini, and local
+              LM Studio-compatible models are represented in the app settings.
+            </p>
+          </article>
+          <article>
+            <h3>Is this Windows-only?</h3>
+            <p>
+              Windows is the primary target because several integrations depend
+              on Windows APIs. Other platforms may have reduced behavior.
+            </p>
+          </article>
+          <article>
+            <h3>Where should screenshots go?</h3>
+            <p>
+              Place them in <code>website/assets/</code> using the filenames
+              shown in the Product tour section.
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Atheletia</span>
+      <span>Built local-first on Tauri, React, TypeScript, and Rust.</span>
+      <a href="mailto:hello@example.com">hello@example.com</a>
+    </footer>
+  </body>
+</html>

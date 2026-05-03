@@ -36,6 +36,30 @@ const DEFAULT_PROBLEMS: Problem[] = [
     { id: '2', title: 'LRU Cache', difficulty: 'Medium', url: 'https://leetcode.com/problems/lru-cache', isSolved: false, category: 'Linked List', technique: 'Hash Map & DLL' },
 ];
 
+function parseCsvLine(line: string): string[] {
+    const cells: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        const next = line[i + 1];
+        if (char === '"' && inQuotes && next === '"') {
+            current += '"';
+            i++;
+        } else if (char === '"') {
+            inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+            cells.push(current.trim());
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+    cells.push(current.trim());
+    return cells;
+}
+
 export const useCodeStore = create<CodeState>()(
     persist(
         (set) => ({
@@ -98,16 +122,16 @@ export const useCodeStore = create<CodeState>()(
             setSelectedCategory: (category) => set({ selectedCategory: category }),
 
             importFromCsv: (csvContent) => {
-                const lines = csvContent.split('\n');
-                const headers = lines[0].split(',');
+                const lines = csvContent.replace(/^\uFEFF/, '').split(/\r?\n/);
                 const problems: Problem[] = [];
+                const existingById = new Map(useCodeStore.getState().problems.map((p) => [p.id, p]));
+                const existingByTitle = new Map(useCodeStore.getState().problems.map((p) => [p.title.toLowerCase(), p]));
 
                 for (let i = 1; i < lines.length; i++) {
                     const line = lines[i].trim();
                     if (!line) continue;
 
-                    // Basic CSV parsing (not handling quoted commas for simplicity as per leetcode_problems.csv)
-                    const parts = line.split(',');
+                    const parts = parseCsvLine(line);
                     if (parts.length < 4) continue;
 
                     const category = parts[0];
@@ -116,15 +140,21 @@ export const useCodeStore = create<CodeState>()(
                     const name = parts[3];
                     const technique = parts[4];
                     const isSolved = parts[5]?.toLowerCase() === 'true' || parts[5]?.toLowerCase() === 'yes';
+                    const id = `csv-${problemNo || name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+                    const existing = existingById.get(id) || existingByTitle.get(name.toLowerCase());
 
                     problems.push({
-                        id: `csv-${problemNo}-${crypto.randomUUID().slice(0, 8)}`,
+                        ...(existing ?? {}),
+                        id,
                         title: name,
                         url: link,
-                        difficulty: 'Medium', // Defaulting as it's not in CSV
-                        isSolved,
+                        difficulty: existing?.difficulty || 'Medium',
+                        isSolved: existing?.isSolved ?? isSolved,
                         category,
-                        technique
+                        technique,
+                        notes: existing?.notes,
+                        lastPracticed: existing?.lastPracticed,
+                        solvedDate: existing?.solvedDate,
                     });
                 }
 
@@ -134,7 +164,7 @@ export const useCodeStore = create<CodeState>()(
             },
         }),
         {
-            name: 'nexus-code-store',
+            name: 'atheletia-code-store',
         }
     )
 );

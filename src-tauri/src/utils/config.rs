@@ -2,6 +2,7 @@ use crate::models::Settings;
 
 const ENV_API_KEY: &str = "NVIDIA_API_KEY";
 
+#[allow(dead_code)]
 pub fn load_dotenv() {
     let _ = dotenvy::dotenv();
 }
@@ -18,6 +19,7 @@ pub fn resolve_api_key(explicit_key: &str) -> String {
     api_key_from_env().unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub fn apply_env_defaults(settings: &mut Settings) {
     if settings.ai.api_key.trim().is_empty() {
         settings.ai.api_key = api_key_from_env().unwrap_or_default();

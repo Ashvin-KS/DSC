@@ -66,8 +66,8 @@ export const MusicView: React.FC = () => {
     setLoading(true);
     setCurrentView('search');
     try {
-      if (window.nexusAPI?.music) {
-        const results = await window.nexusAPI.music.search(searchQuery);
+      if (window.atheletiaAPI?.music) {
+        const results = await window.atheletiaAPI.music.search(searchQuery);
         setSearchResults(results);
       } else {
         console.warn('Music API not available on this platform.');
@@ -142,8 +142,8 @@ export const MusicView: React.FC = () => {
     if (!playlistSearchQuery.trim()) return;
     setIsPlaylistSearching(true);
     try {
-      if (window.nexusAPI?.music) {
-        const results = await window.nexusAPI.music.search(playlistSearchQuery);
+      if (window.atheletiaAPI?.music) {
+        const results = await window.atheletiaAPI.music.search(playlistSearchQuery);
         setPlaylistSearchResults(results);
       }
     } catch (err) {

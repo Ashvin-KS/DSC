@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowRight, Calendar, CheckSquare, X, Code2 } from 'lucide-react';
-import { Goal } from './GoalsCard';
+import { Goal } from './GoalsManager';
 
 interface TaskAlerterProps {
   isOpen: boolean;
@@ -33,7 +33,7 @@ export const TaskAlerter: React.FC<TaskAlerterProps> = ({ isOpen, onClose, pendi
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center p-4">
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity" 

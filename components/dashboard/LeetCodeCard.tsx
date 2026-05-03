@@ -65,7 +65,7 @@ const DayCell: React.FC<DayCellProps> = ({ day, problemTitles, size = 'md' }) =>
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 5, scale: 0.95 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 pointer-events-none"
+                        className="absolute z-dropdown bottom-full left-1/2 -translate-x-1/2 mb-2 pointer-events-none"
                     >
                         <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-3 shadow-xl min-w-[180px] max-w-[250px]">
                             {/* Date Header */}
@@ -202,7 +202,7 @@ const HistoryModal: React.FC<HistoryModalProps> = ({ isOpen, onClose }) => {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm z-modal flex items-center justify-center p-4"
                 onClick={onClose}
             >
                 <motion.div

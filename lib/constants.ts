@@ -1,5 +1,5 @@
 // Music API Configuration
-export const LS_PLAYLISTS = 'musicapp_playlists';
+export const LS_PLAYLISTS = 'atheletia_playlists';
 
 // YouTube Player States
 export const PLAYER_STATE = {

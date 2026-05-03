@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use std::sync::Arc;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use image::{DynamicImage, GrayImage, ImageBuffer, Rgba, RgbaImage};
@@ -36,8 +37,7 @@ pub fn start_screen_capture(_app_handle: AppHandle) {
         println!("[OCR] ✅ Screen capture + OCR service started (every 10s)");
         
         let mut capture_count: u32 = 0;
-        let mut last_image: Option<RgbaImage> = None;
-        
+        let mut last_image: Option<Arc<RgbaImage>> = None;
         loop {
             if CAPTURE_ENABLED.load(Ordering::Relaxed) {
                 capture_count += 1;
@@ -47,7 +47,7 @@ pub fn start_screen_capture(_app_handle: AppHandle) {
                 let prev_img = last_image.clone();
                 
                 // Run capture + OCR in a blocking task so it doesn't block the async runtime
-                let result = tokio::task::spawn_blocking(move || {
+                let result: Result<Result<(Option<String>, Option<Arc<RgbaImage>>), String>, _> = tokio::task::spawn_blocking(move || {
                     capture_and_ocr_pipeline(count, prev_img)
                 }).await;
 
@@ -92,7 +92,7 @@ pub fn set_capture_enabled(enabled: bool) {
 
 // ─── Capture Pipeline ───
 
-fn capture_and_ocr_pipeline(count: u32, prev_image: Option<RgbaImage>) -> Result<(Option<String>, Option<RgbaImage>), String> {
+fn capture_and_ocr_pipeline(count: u32, prev_image: Option<Arc<RgbaImage>>) -> Result<(Option<String>, Option<Arc<RgbaImage>>), String> {
     println!("\n[OCR] ── Capture #{} ──────────────────────", count);
     let start = Instant::now();
 
@@ -148,25 +148,26 @@ fn capture_and_ocr_pipeline(count: u32, prev_image: Option<RgbaImage>) -> Result
         screenshot
     };
 
+    let processed_image_arc = Arc::new(processed_image);
     // 2. Diffing
     if let Some(ref prev) = prev_image {
-        if is_visually_similar(prev, &processed_image) {
+        if is_visually_similar(prev, &processed_image_arc) {
             println!("[OCR] ⏭️ Screen unchanged, skipping OCR");
-            return Ok((None, Some(processed_image)));
+            return Ok((None, Some(processed_image_arc)));
         }
     }
 
     // 3. OCR via temp file (Windows OCR works most reliably with StorageFile)
     println!("[OCR] 🔍 Running Windows OCR...");
     let ocr_start = Instant::now();
-    
-    let text = run_ocr_with_variants(&processed_image)?;
-    
+
+    let text = run_ocr_with_variants(&processed_image_arc)?;
+
     let elapsed = start.elapsed();
     println!("[OCR] ✅ OCR completed in {:.1}s (OCR part: {}ms). Found {} chars.", 
         elapsed.as_secs_f64(), ocr_start.elapsed().as_millis(), text.len());
 
-    Ok((Some(text), Some(processed_image)))
+    Ok((Some(text), Some(processed_image_arc)))
 }
 
 /// Capture primary monitor and return (width, height, raw_bytes)
@@ -213,18 +214,27 @@ fn is_visually_similar(img1: &RgbaImage, img2: &RgbaImage) -> bool {
     avg_diff < 15.0
 }
 
+struct TempFileGuard(std::path::PathBuf);
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn run_ocr_with_variants(img: &RgbaImage) -> Result<String, String> {
     // Two OCR variants: original + high-contrast binarized image.
-    let variants: [(&str, RgbaImage); 2] = [
-        ("original", img.clone()),
-        ("contrast", preprocess_for_text(img)),
+    let variants: [(&str, std::borrow::Cow<RgbaImage>); 2] = [
+        ("original", std::borrow::Cow::Borrowed(img)),
+        ("contrast", std::borrow::Cow::Owned(preprocess_for_text(img))),
     ];
 
     let mut best_text = String::new();
     let mut best_score = f64::MIN;
 
     for (name, variant) in variants {
-        let temp_path = std::env::temp_dir().join(format!("intentflow_ocr_{}.png", name));
+        let temp_path = std::env::temp_dir().join(format!("intentflow_ocr_{}_{}.png", name, uuid::Uuid::new_v4()));
+        let _guard = TempFileGuard(temp_path.clone());
+        
         variant.save(&temp_path).map_err(|e| format!("Save temp {}: {}", name, e))?;
         let raw_text = run_windows_ocr(&temp_path)?;
         let _ = std::fs::remove_file(&temp_path);
@@ -404,3 +414,4 @@ fn run_windows_ocr(image_path: &PathBuf) -> Result<String, String> {
     
     Ok(text)
 }
+

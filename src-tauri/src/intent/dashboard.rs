@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::AppHandle;
 use chrono::Utc;
+use keyring::Entry;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DashboardTask {
@@ -34,19 +35,6 @@ pub struct DashboardOverview {
     pub projects: Vec<ProjectOverview>,
     pub contacts: Vec<ContactOverview>,
     pub updated_at: i64,
-}
-
-// Ensure the table exists
-pub fn ensure_table(conn: &rusqlite::Connection) -> Result<(), String> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS dashboard_snapshots (
-             date_key TEXT PRIMARY KEY,
-             summary_json TEXT NOT NULL,
-             updated_at INTEGER NOT NULL
-         )",
-        [],
-    ).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 fn read_snapshot_by_date(conn: &rusqlite::Connection, date_key: &str) -> Option<DashboardOverview> {
@@ -261,21 +249,35 @@ pub async fn dashboard_summarize_item(
                 "openai" => "openai_api_key",
                 "anthropic" => "anthropic_api_key",
                 "groq" => "groq_api_key",
+                "gemini" => "gemini_api_key",
                 _ => "nvidia_api_key",
             };
-            let key = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = ?1",
-                rusqlite::params![key_name], |row| row.get::<_, String>(0),
-            ).ok().filter(|s| !s.is_empty())
-            .or_else(|| {
-                let env_key = match key_name {
-                    "openai_api_key" => "OPENAI_API_KEY",
-                    "anthropic_api_key" => "ANTHROPIC_API_KEY",
-                    "groq_api_key" => "GROQ_API_KEY",
-                    _ => "NVIDIA_API_KEY",
-                };
-                std::env::var(env_key).ok().filter(|s| !s.is_empty())
-            });
+            
+            let mut key = None;
+            if let Ok(entry) = Entry::new("Atheletia", key_name) {
+                if let Ok(pwd) = entry.get_password() {
+                    if !pwd.trim().is_empty() {
+                        key = Some(pwd);
+                    }
+                }
+            }
+
+            if key.is_none() {
+                key = conn.query_row(
+                    "SELECT value FROM app_settings WHERE key = ?1",
+                    rusqlite::params![key_name], |row| row.get::<_, String>(0),
+                ).ok().filter(|s| !s.is_empty())
+                .or_else(|| {
+                    let env_key = match key_name {
+                        "openai_api_key" => "OPENAI_API_KEY",
+                        "anthropic_api_key" => "ANTHROPIC_API_KEY",
+                        "groq_api_key" => "GROQ_API_KEY",
+                        "gemini_api_key" => "GEMINI_API_KEY",
+                        _ => "NVIDIA_API_KEY",
+                    };
+                    std::env::var(env_key).ok().filter(|s| !s.is_empty())
+                });
+            }
             let provider = conn.query_row(
                 "SELECT value FROM app_settings WHERE key = 'ai_provider'",
                 [], |row| row.get::<_, String>(0),
@@ -428,7 +430,11 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
     let date_key = now.format("%Y-%m-%d").to_string();
     
     use chrono::{TimeZone, Local};
-    let day_start = Local.from_local_datetime(&now.naive_local().date().and_hms_opt(0, 0, 0).unwrap()).unwrap().timestamp();
+    let day_start = Local
+        .from_local_datetime(&now.naive_local().date().and_hms_opt(0, 0, 0).ok_or("Invalid date time boundaries")?)
+        .single()
+        .ok_or("Failed to convert to local datetime")?
+        .timestamp();
     let day_end = day_start + 86400;
 
     // 1. Gather context synchronously
@@ -456,21 +462,35 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
                 "openai" => "openai_api_key",
                 "anthropic" => "anthropic_api_key",
                 "groq" => "groq_api_key",
+                "gemini" => "gemini_api_key",
                 _ => "nvidia_api_key",
             };
-            let key = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = ?1",
-                rusqlite::params![key_name], |row| row.get::<_, String>(0),
-            ).ok().filter(|s| !s.is_empty())
-            .or_else(|| {
-                let env_key = match key_name {
-                    "openai_api_key" => "OPENAI_API_KEY",
-                    "anthropic_api_key" => "ANTHROPIC_API_KEY",
-                    "groq_api_key" => "GROQ_API_KEY",
-                    _ => "NVIDIA_API_KEY",
-                };
-                std::env::var(env_key).ok().filter(|s| !s.is_empty())
-            });
+            
+            let mut key = None;
+            if let Ok(entry) = Entry::new("Atheletia", key_name) {
+                if let Ok(pwd) = entry.get_password() {
+                    if !pwd.trim().is_empty() {
+                        key = Some(pwd);
+                    }
+                }
+            }
+
+            if key.is_none() {
+                key = conn.query_row(
+                    "SELECT value FROM app_settings WHERE key = ?1",
+                    rusqlite::params![key_name], |row| row.get::<_, String>(0),
+                ).ok().filter(|s| !s.is_empty())
+                .or_else(|| {
+                    let env_key = match key_name {
+                        "openai_api_key" => "OPENAI_API_KEY",
+                        "anthropic_api_key" => "ANTHROPIC_API_KEY",
+                        "groq_api_key" => "GROQ_API_KEY",
+                        "gemini_api_key" => "GEMINI_API_KEY",
+                        _ => "NVIDIA_API_KEY",
+                    };
+                    std::env::var(env_key).ok().filter(|s| !s.is_empty())
+                });
+            }
             let model = conn.query_row(
                 "SELECT value FROM app_settings WHERE key = 'default_model'",
                 [], |row| row.get::<_, String>(0),

@@ -12,7 +12,7 @@ export const GlobalWidgets: React.FC = () => {
     useEffect(() => {
         const sync = async () => {
             try {
-                const status = await window.nexusAPI?.app?.getIncognitoStatus?.();
+                const status = await window.atheletiaAPI?.app?.getIncognitoStatus?.();
                 if (status) setIncognito(status);
             } catch {
                 // ignore outside tauri
@@ -23,8 +23,8 @@ export const GlobalWidgets: React.FC = () => {
             if (detail) setIncognito(detail);
         };
         sync();
-        window.addEventListener('allentire:incognito-tick', onTick);
-        return () => window.removeEventListener('allentire:incognito-tick', onTick);
+        window.addEventListener('atheletia:incognito-tick', onTick);
+        return () => window.removeEventListener('atheletia:incognito-tick', onTick);
     }, []);
 
     const label = incognito.remainingSeconds > 0
@@ -36,7 +36,7 @@ export const GlobalWidgets: React.FC = () => {
             <DynamicIsland />
             <MusicEngine />
             {incognito.active && (
-                <div className="fixed top-4 right-4 z-50 px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold">
+                <div className="fixed top-4 right-4 z-system px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold">
                     Incognito {label}
                 </div>
             )}

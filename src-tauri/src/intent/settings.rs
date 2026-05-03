@@ -3,9 +3,56 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
-use tauri_plugin_autostart::ManagerExt;
+use keyring::Entry;
 
 static BRAIN_STREAM_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+fn get_secret(account: &str, fallback: &str) -> String {
+    if let Ok(entry) = Entry::new("Atheletia", account) {
+        if let Ok(pwd) = entry.get_password() {
+            if !pwd.is_empty() {
+                return pwd;
+            }
+        }
+    }
+    fallback.to_string()
+}
+
+fn _set_secret(account: &str, val: &str) {
+    if let Ok(entry) = Entry::new("Atheletia", account) {
+        if val.trim().is_empty() {
+            let _ = entry.delete_credential();
+        } else {
+            // Only store in keyring — do NOT delete from SQLite here.
+            // The caller (settings_save) will clean up SQLite only if keyring succeeded.
+            let _ = entry.set_password(val);
+        }
+    }
+}
+
+/// Write a secret to the OS keyring. Returns true if the keyring accepted it.
+/// Always keeps SQLite as backup to prevent data loss if keyring fails on subsequent loads.
+fn set_secret_safe(conn: &rusqlite::Connection, account: &str, val: &str, now: i64) {
+    if val.trim().is_empty() {
+        if let Ok(entry) = Entry::new("Atheletia", account) {
+            let _ = entry.delete_credential();
+        }
+        let _ = conn.execute("DELETE FROM app_settings WHERE key = ?1", rusqlite::params![account]);
+        return;
+    }
+
+    if let Ok(entry) = Entry::new("Atheletia", account) {
+        let _ = entry.set_password(val);
+    }
+
+    // Always store in SQLite as backup, even if keyring succeeded.
+    // This prevents data loss if keyring fails on subsequent loads (e.g., permission issues, service unavailable).
+    let _ = conn.execute(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        rusqlite::params![account, val, now],
+    );
+}
 
 /// Flat settings struct mirroring the frontend's AppSettings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -14,6 +61,7 @@ pub struct AppSettings {
     #[serde(rename = "openaiApiKey",      default)] pub openai_api_key:   String,
     #[serde(rename = "anthropicApiKey",   default)] pub anthropic_api_key: String,
     #[serde(rename = "groqApiKey",        default)] pub groq_api_key: String,
+    #[serde(rename = "geminiApiKey",      default)] pub gemini_api_key: String,
     #[serde(rename = "googleClientId",    default)] pub google_client_id: String,
     #[serde(rename = "googleClientSecret",default)] pub google_client_secret: String,
     #[serde(rename = "defaultModel",      default)] pub default_model:    String,
@@ -36,6 +84,7 @@ pub struct AppSettings {
     #[serde(rename = "compactMode",       default)] pub compact_mode: bool,
     #[serde(rename = "fontScale",         default = "default_font_scale")] pub font_scale: f32,
     #[serde(rename = "colorScheme",       default = "default_color_scheme")] pub color_scheme: String,
+    #[serde(rename = "themePreset",       default = "default_theme_preset")] pub theme_preset: String,
     #[serde(rename = "locale",            default = "default_locale")] pub locale: String,
     #[serde(rename = "dateFormat",        default = "default_date_format")] pub date_format: String,
 }
@@ -47,6 +96,7 @@ fn default_startup_behavior() -> String { "minimized_to_tray".to_string() }
 fn default_ai_provider() -> String { "nvidia".to_string() }
 fn default_font_scale() -> f32 { 1.0 }
 fn default_color_scheme() -> String { "dark".to_string() }
+fn default_theme_preset() -> String { "dark-2026".to_string() }
 fn default_locale() -> String { "en-US".to_string() }
 fn default_date_format() -> String { "YYYY-MM-DD".to_string() }
 
@@ -112,15 +162,17 @@ fn load_settings_inner(conn: &rusqlite::Connection) -> AppSettings {
         settings_map.get(key).and_then(|v| v.parse().ok()).unwrap_or(default)
     };
 
-    s.nvidia_api_key = get_str("nvidia_api_key", "");
-    s.openai_api_key = get_str("openai_api_key", "");
-    s.anthropic_api_key = get_str("anthropic_api_key", "");
-    s.groq_api_key = get_str("groq_api_key", "");
-    s.google_client_id = get_str("google_client_id", "");
-    s.google_client_secret = get_str("google_client_secret", "");
+    s.nvidia_api_key = get_secret("nvidia_api_key", &get_str("nvidia_api_key", ""));
+    s.openai_api_key = get_secret("openai_api_key", &get_str("openai_api_key", ""));
+    s.anthropic_api_key = get_secret("anthropic_api_key", &get_str("anthropic_api_key", ""));
+    s.groq_api_key = get_secret("groq_api_key", &get_str("groq_api_key", ""));
+    s.gemini_api_key = get_secret("gemini_api_key", &get_str("gemini_api_key", ""));
+    s.google_client_id = get_secret("google_client_id", &get_str("google_client_id", ""));
+    s.google_client_secret = get_secret("google_client_secret", &get_str("google_client_secret", ""));
     s.default_model = get_str("default_model", "");
     s.ai_provider = get_str("ai_provider", "nvidia");
     s.color_scheme = get_str("color_scheme", "dark");
+    s.theme_preset = get_str("theme_preset", "dark-2026");
     s.locale = get_str("locale", "en-US");
     s.date_format = get_str("date_format", "YYYY-MM-DD");
     s.startup_behavior = get_str("startup_behavior", "minimized_to_tray");
@@ -161,13 +213,18 @@ pub async fn settings_save(
     let conn = crate::intent::db::open(&app_handle)?;
     let now = Utc::now().timestamp();
 
+    set_secret_safe(&conn, "nvidia_api_key",      &settings.nvidia_api_key,    now);
+    set_secret_safe(&conn, "openai_api_key",      &settings.openai_api_key,    now);
+    set_secret_safe(&conn, "anthropic_api_key",   &settings.anthropic_api_key,  now);
+    set_secret_safe(&conn, "groq_api_key",        &settings.groq_api_key,      now);
+    set_secret_safe(&conn, "gemini_api_key",      &settings.gemini_api_key,    now);
+    set_secret_safe(&conn, "google_client_id",    &settings.google_client_id,  now);
+    set_secret_safe(&conn, "google_client_secret",&settings.google_client_secret, now);
+
+    // Note: set_secret_safe handles SQLite cleanup internally after verifying keyring success.
+    // The old batch DELETE is no longer needed here.
+
     let pairs: &[(&str, String)] = &[
-        ("nvidia_api_key",       settings.nvidia_api_key.clone()),
-        ("openai_api_key",       settings.openai_api_key.clone()),
-        ("anthropic_api_key",    settings.anthropic_api_key.clone()),
-        ("groq_api_key",         settings.groq_api_key.clone()),
-        ("google_client_id",     settings.google_client_id.clone()),
-        ("google_client_secret", settings.google_client_secret.clone()),
         ("default_model",        settings.default_model.clone()),
         ("ai_provider",          settings.ai_provider.clone()),
         ("track_apps",           settings.track_apps.to_string()),
@@ -188,6 +245,7 @@ pub async fn settings_save(
         ("compact_mode",         settings.compact_mode.to_string()),
         ("font_scale_percent",   ((settings.font_scale * 100.0).round() as i64).to_string()),
         ("color_scheme",         settings.color_scheme.clone()),
+        ("theme_preset",         settings.theme_preset.clone()),
         ("locale",               settings.locale.clone()),
         ("date_format",          settings.date_format.clone()),
     ];
@@ -213,6 +271,7 @@ pub async fn settings_save(
         }
     }
 
+    crate::intent::activity_tracker::set_tracking_enabled(settings.track_apps);
     crate::intent::activity_tracker::set_track_media_enabled(settings.track_media);
     crate::intent::activity_tracker::set_track_browser_enabled(settings.track_browser);
     crate::intent::activity_tracker::set_excluded_apps(settings.excluded_apps.clone());
@@ -223,7 +282,7 @@ pub async fn settings_save(
 
 #[tauri::command]
 pub async fn settings_validate_api_key(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     provider: String,
     api_key: Option<String>,
 ) -> Result<KeyValidationResult, String> {
@@ -231,20 +290,14 @@ pub async fn settings_validate_api_key(
     let key = if let Some(k) = api_key.filter(|s| !s.trim().is_empty()) {
         k
     } else {
-        let conn = crate::intent::db::open(&app_handle)?;
         let setting_key = match provider_norm.as_str() {
             "openai" => "openai_api_key",
             "anthropic" => "anthropic_api_key",
             "groq" => "groq_api_key",
+            "gemini" => "gemini_api_key",
             _ => "nvidia_api_key",
         };
-        conn.query_row(
-            "SELECT value FROM app_settings WHERE key = ?1",
-            [setting_key],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .unwrap_or_default()
+        get_secret(setting_key, "")
     };
 
     if key.trim().is_empty() {
@@ -252,6 +305,22 @@ pub async fn settings_validate_api_key(
             valid: false,
             provider: provider_norm,
             message: "API key is empty".to_string(),
+        });
+    }
+
+    // Gemini validation: use the models list endpoint
+    if provider_norm == "gemini" {
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={}", key);
+        let response = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build().map_err(|e| e.to_string())?
+            .get(&url)
+            .send().await.map_err(|e| e.to_string())?;
+        let valid = response.status().is_success();
+        return Ok(KeyValidationResult {
+            valid,
+            provider: provider_norm,
+            message: if valid { "Gemini API key is valid".to_string() } else { format!("Validation failed: {}", response.status()) },
         });
     }
 
@@ -291,19 +360,20 @@ pub async fn settings_validate_api_key(
 
 #[tauri::command]
 pub async fn settings_get_nvidia_models(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     api_key: Option<String>,
 ) -> Result<Vec<ModelInfo>, String> {
     let key = if let Some(k) = api_key.filter(|s| !s.trim().is_empty()) {
         k
     } else {
-        let conn = crate::intent::db::open(&app_handle)?;
-        conn.query_row(
-            "SELECT value FROM app_settings WHERE key = 'nvidia_api_key'",
-            [], |row| row.get::<_, String>(0),
-        ).ok().filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("NVIDIA_API_KEY").ok().filter(|s| !s.is_empty()))
-        .ok_or_else(|| "Missing NVIDIA API key".to_string())?
+        // Read from OS keyring first (keys moved there after settings_save)
+        let from_keyring = get_secret("nvidia_api_key", "");
+        if !from_keyring.is_empty() {
+            from_keyring
+        } else {
+            std::env::var("NVIDIA_API_KEY").ok().filter(|s| !s.is_empty())
+                .ok_or_else(|| "Missing NVIDIA API key. Enter it in Settings > API Keys.".to_string())?
+        }
     };
 
     let value: serde_json::Value = reqwest::Client::builder()
@@ -379,20 +449,24 @@ pub async fn settings_get_lmstudio_models(
 
 #[tauri::command]
 pub async fn settings_nvidia_chat_completion(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     model: String,
     messages: Vec<ChatTurn>,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
+    api_key: Option<String>,
 ) -> Result<Value, String> {
-    let key = {
-        let conn = crate::intent::db::open(&app_handle)?;
-        conn.query_row(
-            "SELECT value FROM app_settings WHERE key = 'nvidia_api_key'",
-            [], |row| row.get::<_, String>(0),
-        ).ok().filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("NVIDIA_API_KEY").ok().filter(|s| !s.is_empty()))
-        .ok_or_else(|| "Missing NVIDIA API key".to_string())?
+    let key = if let Some(k) = api_key.filter(|s| !s.is_empty()) {
+        k
+    } else {
+        // Read from OS keyring first (keys moved there after settings_save)
+        let from_keyring = get_secret("nvidia_api_key", "");
+        if !from_keyring.is_empty() {
+            from_keyring
+        } else {
+            std::env::var("NVIDIA_API_KEY").ok().filter(|s| !s.is_empty())
+                .ok_or_else(|| "Missing NVIDIA API key. Enter it in Settings > API Keys.".to_string())?
+        }
     };
 
     let payload = serde_json::json!({
@@ -477,22 +551,49 @@ pub async fn brain_chat_stream(
     temperature: Option<f32>,
     use_local: bool,
     base_url: Option<String>,
+    api_key: Option<String>,
 ) -> Result<(), String> {
     use tauri::Emitter;
 
     BRAIN_STREAM_CANCELLED.store(false, Ordering::Relaxed);
 
-    let nvidia_key = if !use_local {
-        let conn = crate::intent::db::open(&app_handle)?;
-        conn.query_row(
-            "SELECT value FROM app_settings WHERE key = 'nvidia_api_key'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("NVIDIA_API_KEY").ok().filter(|s| !s.is_empty()))
-        .ok_or_else(|| "Missing NVIDIA API key".to_string())?
+    // Determine provider from stored settings
+    let provider = {
+        let conn = crate::intent::db::open(&app_handle).ok();
+        conn.as_ref()
+            .and_then(|c| c.query_row("SELECT value FROM app_settings WHERE key = 'ai_provider'", [], |row| row.get::<_, String>(0)).ok())
+            .unwrap_or_else(|| "nvidia".to_string())
+            .to_lowercase()
+    };
+
+    // Get the right API key from keyring based on provider, or use passed api_key
+    let api_key = if !use_local {
+        // Use passed api_key if provided
+        if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+            key
+        } else {
+            let key_name = match provider.as_str() {
+                "openai" => "openai_api_key",
+                "anthropic" => "anthropic_api_key",
+                "groq" => "groq_api_key",
+                "gemini" => "gemini_api_key",
+                _ => "nvidia_api_key",
+            };
+            let from_keyring = get_secret(key_name, "");
+            if !from_keyring.is_empty() {
+                from_keyring
+            } else {
+                // Fallback to env vars
+                let env_var = match provider.as_str() {
+                    "openai" => "OPENAI_API_KEY",
+                    "anthropic" => "ANTHROPIC_API_KEY",
+                    "groq" => "GROQ_API_KEY",
+                    "gemini" => "GEMINI_API_KEY",
+                    _ => "NVIDIA_API_KEY",
+                };
+                std::env::var(env_var).unwrap_or_default()
+            }
+        }
     } else {
         String::new()
     };
@@ -506,10 +607,63 @@ pub async fn brain_chat_stream(
         .build()
         .map_err(|e| format!("Failed to init HTTP client: {}", e))?;
 
+    // === Gemini AI Studio (non-streaming path via SSE-style)
+    if !use_local && provider == "gemini" {
+        if api_key.trim().is_empty() {
+            return Err("Missing Gemini API key. Add it in Settings > API Keys.".to_string());
+        }
+        let gemini_model = if model.contains('/') { model.clone() } else { format!("models/{}", model) };
+        let gemini_url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}/streamGenerateContent?key={}&alt=sse",
+            gemini_model, api_key
+        );
+        // Convert messages to Gemini format
+        let gemini_contents: Vec<serde_json::Value> = messages.iter().map(|m| {
+            let role = if m.role == "assistant" { "model" } else { "user" };
+            serde_json::json!({ "role": role, "parts": [{ "text": m.content }] })
+        }).collect();
+        let payload = serde_json::json!({ "contents": gemini_contents, "generationConfig": { "maxOutputTokens": max_tokens.unwrap_or(8192), "temperature": temperature.unwrap_or(0.5) } });
+        let mut response = client.post(&gemini_url).json(&payload).send().await.map_err(|e| format!("Gemini net error: {}", e))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("Gemini error {}: {}", status, &text[..text.len().min(400)]));
+        }
+        let mut buf = String::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            if BRAIN_STREAM_CANCELLED.load(Ordering::Relaxed) {
+                let _ = app_handle.emit("brain://done", "");
+                return Ok(());
+            }
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+            let lines: Vec<&str> = buf.split('\n').collect();
+            let keep = if chunk.ends_with(b"\n") { String::new() } else { lines.last().unwrap_or(&"").to_string() };
+            for line in &lines[..lines.len().saturating_sub(1)] {
+                let line = line.trim();
+                if !line.starts_with("data: ") { continue; }
+                let data = &line[6..];
+                if data == "[DONE]" { break; }
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(text) = json.pointer("/candidates/0/content/parts/0/text").and_then(|v| v.as_str()) {
+                        if !text.is_empty() { let _ = app_handle.emit("brain://token", text); }
+                    }
+                }
+            }
+            buf = keep;
+        }
+        let _ = app_handle.emit("brain://done", "");
+        return Ok(());
+    }
+
     let endpoint = if use_local {
         format!("{}/v1/chat/completions", lm_url_trimmed)
     } else {
-        "https://integrate.api.nvidia.com/v1/chat/completions".to_string()
+        match provider.as_str() {
+            "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
+            "anthropic" => "https://api.anthropic.com/v1/messages".to_string(),
+            "groq" => "https://api.groq.com/openai/v1/chat/completions".to_string(),
+            _ => "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
+        }
     };
 
     let payload = serde_json::json!({
@@ -526,7 +680,13 @@ pub async fn brain_chat_stream(
         .json(&payload);
 
     if !use_local {
-        req = req.header("Authorization", format!("Bearer {}", nvidia_key));
+        if provider == "anthropic" {
+            req = req.header("x-api-key", &api_key)
+                     .header("anthropic-version", "2023-06-01")
+                     .header("anthropic-beta", "messages-2023-06-01");
+        } else {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
     }
 
     let mut response = req.send().await.map_err(|e| format!("Net error: {}", e))?;

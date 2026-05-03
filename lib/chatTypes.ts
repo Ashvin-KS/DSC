@@ -35,13 +35,15 @@ export interface ChatMessage {
   tool_calls?: AgentStep[];
   activities?: ActivityRef[];
   created_at: number;
+  /** Raw metadata JSON string returned by the backend, if present. */
+  metadata?: string;
 }
 
 // ─── Settings shape exposed by useSettings hook ───────────────────────────────
 
 export interface AISettings {
   enabled: boolean;
-  provider: 'openai' | 'anthropic' | 'local' | 'nvidia' | 'lmstudio';
+  provider: 'openai' | 'anthropic' | 'local' | 'nvidia' | 'lmstudio' | 'groq' | 'gemini';
   api_key: string;
   model: string;
   local_only: boolean;

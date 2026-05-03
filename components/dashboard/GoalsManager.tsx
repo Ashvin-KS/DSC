@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Trash2, Plus, Target } from 'lucide-react';
-import { Goal } from './GoalsCard';
+
+export interface Goal {
+  id: number;
+  text: string;
+  completed: boolean;
+}
 
 interface GoalsManagerProps {
   goals: Goal[];
