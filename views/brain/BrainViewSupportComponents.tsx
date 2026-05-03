@@ -121,10 +121,20 @@ const ChatInputBox: React.FC<{
   mode?: 'lecture' | 'edit';
   onModeChange?: (mode: 'lecture' | 'edit') => void;
   placeholder: string;
-}> = ({ onSend, onStop, isLoading, showModeToggle = false, mode = 'lecture', onModeChange, placeholder }) => {
+  pendingInput?: string | null;
+  onPendingInputConsumed?: () => void;
+}> = ({ onSend, onStop, isLoading, showModeToggle = false, mode = 'lecture', onModeChange, placeholder, pendingInput, onPendingInputConsumed }) => {
   const [input, setInput] = useState('');
   const [isTextareaOverflowing, setIsTextareaOverflowing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (pendingInput !== undefined && pendingInput !== null) {
+      setInput(pendingInput);
+      onPendingInputConsumed?.();
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    }
+  }, [pendingInput, onPendingInputConsumed]);
 
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;

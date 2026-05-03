@@ -80,7 +80,27 @@ export const DiaryView: React.FC = () => {
     }, [settings]);
 
     const getApiKey = useCallback(() => {
-        return getProviderKey(settings, getDefaultModelProvider());
+        const provider = getDefaultModelProvider();
+        const key = getProviderKey(settings, provider);
+        if (key) return key;
+        const fallbacks = ['openai', 'nvidia', 'anthropic', 'groq', 'gemini'];
+        for (const p of fallbacks) {
+            const k = getProviderKey(settings, p);
+            if (k) return k;
+        }
+        return '';
+    }, [settings, getDefaultModelProvider]);
+
+    const getEffectiveProvider = useCallback(() => {
+        const provider = getDefaultModelProvider();
+        const key = getProviderKey(settings, provider);
+        if (key) return provider;
+        const fallbacks = ['openai', 'nvidia', 'anthropic', 'groq', 'gemini'];
+        for (const p of fallbacks) {
+            const k = getProviderKey(settings, p);
+            if (k) return p;
+        }
+        return provider;
     }, [settings, getDefaultModelProvider]);
 
     // Load entries for the ACTIVE DATE ONLY — no cross-date contamination
@@ -129,8 +149,10 @@ export const DiaryView: React.FC = () => {
             }
             extraContext += `[Only summarize activities from ${targetDate}. Do not reference other dates.]\n`;
 
-            const model = (settings as any)?.defaultModel || undefined;
-            const provider = getDefaultModelProvider();
+            const rawModel = (settings as any)?.defaultModel || undefined;
+            const defaultProvider = getDefaultModelProvider();
+            const provider = getEffectiveProvider();
+            const model = (provider === defaultProvider) ? rawModel : undefined;
             const content = await window.atheletiaAPI.diary.generateEntry(targetDate, extraContext, model, apiKey, provider);
             if (!content || typeof content !== 'string' || !content.trim()) {
                 if (!silent) setAiSummaryError('AI returned an empty summary. Ensure your API key is valid and the provider is reachable.');
@@ -173,22 +195,29 @@ export const DiaryView: React.FC = () => {
         }
     };
 
-    // ── Auto-create today's diary at 8 PM ──────────────────────────────────────
+    // ── Auto-create today's diary at 8 PM (retry until 8 AM) ─────────────────
     useEffect(() => {
         if (!autoCreateEnabled) return;
 
         const runAutoCreate = async (targetDate: string) => {
             const key = getAutoCreateKey(targetDate);
-            if (localStorage.getItem(key)) return;
+            if (localStorage.getItem(key)) return true;
 
             try {
-                if (window.atheletiaAPI?.diary) {
-                    const existing: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(targetDate);
-                    const hasAi = (existing || []).some((e: DiaryEntry) => e.isAiGenerated && e.date === targetDate);
-                    if (hasAi) {
-                        localStorage.setItem(key, '1');
-                        return;
-                    }
+                if (!window.atheletiaAPI?.diary) {
+                    console.log(`[Diary] Auto-create skipped for ${targetDate}: diary backend unavailable`);
+                    return false;
+                }
+                const existing: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(targetDate);
+                const hasAi = (existing || []).some((e: DiaryEntry) => e.isAiGenerated && e.date === targetDate);
+                if (hasAi) {
+                    localStorage.setItem(key, '1');
+                    return true;
+                }
+                const apiKey = getApiKey();
+                if (!apiKey) {
+                    console.log(`[Diary] Auto-create failed for ${targetDate}: no API key configured`);
+                    return false;
                 }
                 console.log(`[Diary] Auto-creating diary for ${targetDate}...`);
                 const result = await generateSummaryForDate(targetDate, true);
@@ -199,32 +228,78 @@ export const DiaryView: React.FC = () => {
                         setAiSummary(result);
                         setEntries(p => [result, ...p.filter(e => e.id !== result.id)]);
                     }
+                    return true;
                 }
-            } catch { /* ignore */ }
+                console.log(`[Diary] Auto-create returned empty for ${targetDate}`);
+            } catch (err) {
+                console.log(`[Diary] Auto-create failed for ${targetDate}:`, err);
+            }
+            return false;
         };
 
         const now = new Date();
         const today = todayStr();
         const yesterday = yesterdayStr();
+        const currentHour = now.getHours();
 
-        // If it's past 8 PM, auto-create for today
-        if (now.getHours() >= 20) {
-            runAutoCreate(today);
+        // Retry window: 8 PM (20:00) to 8 AM (08:00)
+        const isInRetryWindow = currentHour >= 20 || currentHour < 8;
+
+        // If past 8 PM, start retrying today's entry immediately
+        // If before 8 AM, also retry (might have failed overnight)
+        if (isInRetryWindow && !localStorage.getItem(getAutoCreateKey(today))) {
+            let attempts = 0;
+            const maxAttempts = 24; // ~2 hours of retries at 5-min intervals
+            const retryInterval = setInterval(async () => {
+                const hour = new Date().getHours();
+                if (hour >= 8 && hour < 20) {
+                    clearInterval(retryInterval);
+                    return; // outside window, stop
+                }
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(retryInterval);
+                    return;
+                }
+                const success = await runAutoCreate(today);
+                if (success) clearInterval(retryInterval);
+            }, 5 * 60 * 1000); // every 5 minutes
+            runAutoCreate(today); // first attempt immediately
+
+            // Cleanup on unmount or when deps change
+            return () => clearInterval(retryInterval);
         }
 
-        // Also catch up yesterday if missed
+        // Catch up yesterday if missed (one-shot, no retry)
         if (!localStorage.getItem(getAutoCreateKey(yesterday))) {
             runAutoCreate(yesterday);
         }
 
-        // Schedule at 8 PM today (or tomorrow if already past 8 PM)
+        // Schedule timer for next 8 PM
         const next8pm = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 5);
         if (next8pm <= now) {
             next8pm.setDate(next8pm.getDate() + 1);
         }
         const msUntil8pm = next8pm.getTime() - now.getTime();
         const timer = setTimeout(() => {
-            runAutoCreate(todayStr());
+            const targetDay = todayStr();
+            let attempts = 0;
+            const maxAttempts = 24;
+            const retryInterval = setInterval(async () => {
+                const hour = new Date().getHours();
+                if (hour >= 8 && hour < 20) {
+                    clearInterval(retryInterval);
+                    return;
+                }
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(retryInterval);
+                    return;
+                }
+                const success = await runAutoCreate(targetDay);
+                if (success) clearInterval(retryInterval);
+            }, 5 * 60 * 1000);
+            runAutoCreate(targetDay);
         }, msUntil8pm);
 
         return () => clearTimeout(timer);

@@ -817,18 +817,43 @@ pub async fn brain_chat_stream(
         if api_key.trim().is_empty() {
             return Err("Missing Gemini API key. Add it in Settings > API Keys.".to_string());
         }
-        let gemini_model = if model.contains('/') { model.clone() } else { format!("models/{}", model) };
+        let mut gemini_contents = Vec::new();
+        let mut system_text = String::new();
+        for msg in &messages {
+            if msg.role == "system" {
+                system_text.push_str(&msg.content);
+                system_text.push('\n');
+                continue;
+            }
+            let role = if msg.role == "assistant" { "model" } else { "user" };
+            let mut text = msg.content.clone();
+            if !system_text.is_empty() && msg.role == "user" && gemini_contents.is_empty() {
+                text = format!("{}\n\n{}", system_text.trim(), text);
+                system_text.clear();
+            }
+            gemini_contents.push(serde_json::json!({
+                "role": role,
+                "parts": [{ "text": text }]
+            }));
+        }
+        if !system_text.is_empty() {
+            gemini_contents.insert(0, serde_json::json!({
+                "role": "user",
+                "parts": [{ "text": system_text.trim() }]
+            }));
+        }
         let gemini_url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/{}/streamGenerateContent?key={}&alt=sse",
-            gemini_model, api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+            model, api_key
         );
-        // Convert messages to Gemini format
-        let gemini_contents: Vec<serde_json::Value> = messages.iter().map(|m| {
-            let role = if m.role == "assistant" { "model" } else { "user" };
-            serde_json::json!({ "role": role, "parts": [{ "text": m.content }] })
-        }).collect();
-        let payload = serde_json::json!({ "contents": gemini_contents, "generationConfig": { "maxOutputTokens": max_tokens.unwrap_or(8192), "temperature": temperature.unwrap_or(0.5) } });
-        let mut response = client.post(&gemini_url).json(&payload).send().await.map_err(|e| format!("Gemini net error: {}", e))?;
+        let payload = serde_json::json!({
+            "contents": gemini_contents,
+            "generationConfig": { "maxOutputTokens": max_tokens.unwrap_or(8192), "temperature": temperature.unwrap_or(0.5) }
+        });
+        let mut response = client.post(&gemini_url)
+            .header("Content-Type", "application/json")
+            .json(&payload).send().await
+            .map_err(|e| format!("Gemini net error: {}", e))?;
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();

@@ -40,6 +40,7 @@ import {
   Quote,
   Square,
   Trash2,
+  Undo2,
   Cloud,
   Cpu,
   Loader2,
@@ -156,6 +157,7 @@ export const BrainView: React.FC = () => {
   const [lmStudioLoading, setLmStudioLoading] = useState(false);
   const [lmStudioError, setLmStudioError] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [pendingRewindInput, setPendingRewindInput] = useState<string | null>(null);
   const [streamingMsgIndex, setStreamingMsgIndex] = useState<number | null>(null);
   const [aiMode, setAiMode] = useState<'lecture' | 'edit'>('lecture');
   const [proposedAction, setProposedAction] = useState<{
@@ -1963,13 +1965,13 @@ export const BrainView: React.FC = () => {
                   {msg.sender === 'user' && !isAiLoading && (
                     <button
                       onClick={() => {
-                        // Rewind: remove this message and everything after, no text reload (BrainView uses its own ChatInputBox)
+                        setPendingRewindInput(msg.text);
                         setCurrentMessages(prev => prev.slice(0, i));
                       }}
-                      className="absolute top-2 right-2 opacity-0 group-hover/msg:opacity-100 w-6 h-6 flex items-center justify-center rounded-md text-gray-600 hover:text-amber-400 hover:bg-white/5 transition-all"
-                      title="Undo — remove this message and re-ask"
+                      className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-md text-gray-500 hover:text-amber-400 hover:bg-white/10 transition-all border border-transparent hover:border-white/10 shadow-sm"
+                      title="Undo — rewind to this message and edit it"
                     >
-                      <Trash2 size={13} />
+                      <Undo2 size={16} />
                     </button>
                   )}
                 </div>
@@ -2132,6 +2134,8 @@ export const BrainView: React.FC = () => {
             placeholder={brainScope === 'vault'
               ? 'Ask about your markdown vault, or ask Brain to organize notes...'
               : `Ask Atheletia about ${selectedFile ? 'this note' : 'your notes'}...`}
+            pendingInput={pendingRewindInput}
+            onPendingInputConsumed={() => setPendingRewindInput(null)}
           />
         </div>
       )}
