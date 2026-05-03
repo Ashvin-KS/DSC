@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main desktop capability set",
+  "windows": ["main", "tray_panel"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "autostart:default"
+  ]
+}

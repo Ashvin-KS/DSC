@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atheletia — AI-Powered Personal Productivity Desktop App</title>
+    <meta name="description" content="Atheletia is a local-first AI-powered desktop app that tracks your activities, music, LeetCode progress, and writes your daily diary — all on your machine." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Atheletia — Your AI Personal Productivity Hub" />
+    <meta property="og:description" content="Track everything. Remember everything. A private desktop command center powered by AI." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#070b10" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+
+    <!-- NAVBAR -->
+    <header class="navbar" id="top">
+      <div class="navbar-inner">
+        <a class="logo" href="#top">
+          <span class="logo-mark">A</span>
+          <span class="logo-name">Atheletia</span>
+          <span class="logo-badge">beta</span>
+        </a>
+        <nav class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#demo">Demo</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <a class="btn btn-primary btn-sm" href="#download">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </a>
+      </div>
+    </header>
+
+    <main>
+
+      <!-- HERO -->
+      <section class="hero" id="hero">
+        <div class="hero-noise"></div>
+        <div class="hero-orb hero-orb-1"></div>
+        <div class="hero-orb hero-orb-2"></div>
+        <div class="hero-orb hero-orb-3"></div>
+
+        <div class="hero-content">
+          <div class="hero-eyebrow">
+            <span class="eyebrow-dot"></span>
+            Local-first · AI-powered · Windows desktop
+          </div>
+          <h1 class="hero-title">Your entire day,<br /><span class="gradient-text">understood by AI.</span></h1>
+          <p class="hero-sub">
+            Atheletia tracks your apps, music, LeetCode, and calendar — then uses AI to write your diary,
+            surface insights, and keep your life organized. All running locally on your machine.
+          </p>
+
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-lg" href="#download">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download for Windows
+            </a>
+            <a class="btn btn-ghost btn-lg" href="#demo">See demo →</a>
+          </div>
+
+          <div class="hero-pills">
+            <span>No cloud account</span>
+            <span>Local SQLite data</span>
+            <span>6+ AI providers</span>
+            <span>Free to try</span>
+          </div>
+
+          <!-- Stats row -->
+          <div class="hero-stats">
+            <div class="stat"><span class="stat-val">8</span><span class="stat-label">Core modules</span></div>
+            <div class="stat-div"></div>
+            <div class="stat"><span class="stat-val">17</span><span class="stat-label">Built-in themes</span></div>
+            <div class="stat-div"></div>
+            <div class="stat"><span class="stat-val">6+</span><span class="stat-label">AI providers</span></div>
+            <div class="stat-div"></div>
+            <div class="stat"><span class="stat-val">100%</span><span class="stat-label">Local-first</span></div>
+          </div>
+        </div>
+
+        <!-- Hero app mockup -->
+        <div class="hero-mockup-wrap">
+          <div class="hero-mockup">
+            <div class="mockup-bar">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+              <span class="mockup-title-text">Atheletia — Command Center</span>
+            </div>
+            <div class="mockup-body">
+              <aside class="mockup-sidebar">
+                <div class="sidebar-logo">A</div>
+                <nav class="sidebar-nav">
+                  <span class="snav active">Dashboard</span>
+                  <span class="snav">Activity</span>
+                  <span class="snav">Brain</span>
+                  <span class="snav">Chat</span>
+                  <span class="snav">LeetCode</span>
+                  <span class="snav">Schedule</span>
+                  <span class="snav">Diary</span>
+                  <span class="snav">Music</span>
+                  <span class="snav">Zen</span>
+                </nav>
+              </aside>
+              <div class="mockup-content">
+                <div class="mock-header">
+                  <span class="mock-greeting">Good morning, Ashvin 👋</span>
+                  <span class="mock-date">Saturday, May 3, 2026</span>
+                </div>
+                <div class="mock-cards">
+                  <div class="mock-card accent span2">
+                    <div class="card-top"><span class="card-tag">AI Briefing</span><span class="card-icon-sm">✦</span></div>
+                    <p class="card-title">Deep work day. 4h 12m tracked, 3 LeetCode solved, 1 deadline approaching.</p>
+                    <div class="card-bar-row"><div class="card-bar" style="width:72%"></div><span>72% focus</span></div>
+                  </div>
+                  <div class="mock-card">
+                    <div class="card-tag">LeetCode</div>
+                    <div class="card-big">3</div>
+                    <div class="card-sub">Problems solved today</div>
+                  </div>
+                  <div class="mock-card">
+                    <div class="card-tag">Activity</div>
+                    <div class="card-big">4h 12m</div>
+                    <div class="card-sub">Focus time logged</div>
+                  </div>
+                  <div class="mock-card">
+                    <div class="card-tag">Music</div>
+                    <div class="card-big">🎵</div>
+                    <div class="card-sub">Lofi beats playing</div>
+                  </div>
+                  <div class="mock-card span2">
+                    <div class="card-tag">Diary</div>
+                    <p class="card-title">AI summary ready for yesterday. Click to generate today's reflection.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mockup-glow"></div>
+        </div>
+      </section>
+
+      <!-- MODULE STRIP -->
+      <section class="strip">
+        <div class="strip-inner">
+          <span>Activity Tracking</span><span class="sep">·</span>
+          <span>Smart Diary</span><span class="sep">·</span>
+          <span>Brain Notes</span><span class="sep">·</span>
+          <span>AI Chat</span><span class="sep">·</span>
+          <span>LeetCode Desk</span><span class="sep">·</span>
+          <span>Calendar</span><span class="sep">·</span>
+          <span>Music Player</span><span class="sep">·</span>
+          <span>Zen Focus</span>
+        </div>
+      </section>
+
+      <!-- FEATURES -->
+      <section class="section" id="features">
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Everything in one place,<br />none of the cloud compromise.</h2>
+        <p class="section-sub">Atheletia is a single app that replaces 8 tabs. Built for developers and students who want to own their data.</p>
+
+        <div class="features-grid">
+          <div class="feat-card feat-large">
+            <div class="feat-icon">📊</div>
+            <h3>Command Center Dashboard</h3>
+            <p>AI-generated morning briefing, deadline tracking, project updates, LeetCode progress, and a live fitness card — all visible at a glance without opening another browser tab.</p>
+            <div class="feat-demo feat-demo-dashboard">
+              <div class="fd-row"><span class="fd-tag">Today</span><span class="fd-val accent">72% focus</span></div>
+              <div class="fd-row"><span class="fd-tag">LeetCode</span><span class="fd-val">3 solved</span></div>
+              <div class="fd-row"><span class="fd-tag">Next deadline</span><span class="fd-val warn">Tomorrow 5pm</span></div>
+              <div class="fd-row"><span class="fd-tag">AI brief</span><span class="fd-val green">Ready ✓</span></div>
+            </div>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">🧠</div>
+            <h3>Brain Vault</h3>
+            <p>A full Notion-style markdown note editor with an AI side panel. Write, search, and get AI to expand or rewrite your ideas — all stored locally.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">📖</div>
+            <h3>Smart Diary</h3>
+            <p>Per-day AI summaries built from your actual activity, LeetCode sessions, and music. Auto-generates yesterday's entry at midnight so you never miss a day.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">⚡</div>
+            <h3>Activity Tracker</h3>
+            <p>Tracks every app you use with window-level detail. Categorizes time automatically and builds a daily timeline — no browser extension needed.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">💻</div>
+            <h3>LeetCode Study Desk</h3>
+            <p>Browse problems, track solve status, write notes, run timers, get AI hints, see complexity analysis and Mermaid algorithm diagrams — a full study tool.</p>
+          </div>
+
+          <div class="feat-card feat-large">
+            <div class="feat-icon">🎵</div>
+            <h3>Built-in Music Player</h3>
+            <p>A full Spotify-style music app powered by YouTube. Create playlists, search tracks, use the Dynamic Island controls from anywhere in the app, and sync music with your focus timer.</p>
+            <div class="feat-demo feat-demo-music">
+              <div class="player-bar">
+                <div class="player-art">🎵</div>
+                <div class="player-info">
+                  <span class="player-track">Lofi Study Beats</span>
+                  <span class="player-artist">Chill Hop</span>
+                </div>
+                <div class="player-controls">
+                  <span>⏮</span><span class="play-btn">▶</span><span>⏭</span>
+                </div>
+              </div>
+              <div class="player-progress"><div class="player-fill"></div></div>
+            </div>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">🗓️</div>
+            <h3>Schedule & Tasks</h3>
+            <p>Weekly calendar view, task management, and optional Google Calendar + Google Tasks sync. Plan your day visually without leaving the app.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">🧘</div>
+            <h3>Zen Focus Mode</h3>
+            <p>Pomodoro timer with short/long break modes, auto-sync with your music player, and playlist quick-launch — the minimal focus tool that actually works.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="feat-icon">💬</div>
+            <h3>AI Chat</h3>
+            <p>Multi-session chat with streaming responses, markdown rendering, Mermaid diagrams, code blocks, and optional context injection from your Brain notes or activities.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- HOW IT WORKS -->
+      <section class="section how-section">
+        <div class="section-label">How it works</div>
+        <h2 class="section-title">Your day, from open to close.</h2>
+        <div class="steps">
+          <div class="step">
+            <span class="step-num">01</span>
+            <h3>Start with the briefing</h3>
+            <p>Open Atheletia and see your AI morning brief — deadlines, yesterday's digest, focus time stats, and what's on the calendar today.</p>
+          </div>
+          <div class="step-arrow">→</div>
+          <div class="step">
+            <span class="step-num">02</span>
+            <h3>Work with context</h3>
+            <p>Activity tracker runs silently. Open the Brain for notes, the LeetCode desk for practice, or chat with AI using your local context.</p>
+          </div>
+          <div class="step-arrow">→</div>
+          <div class="step">
+            <span class="step-num">03</span>
+            <h3>Let AI close out the day</h3>
+            <p>At midnight, your diary auto-generates using only that day's data. Wake up tomorrow with yesterday fully documented.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- DEMO SECTION -->
+      <section class="section" id="demo">
+        <div class="section-label">App demos</div>
+        <h2 class="section-title">What it actually looks like.</h2>
+        <p class="section-sub">Screenshots from the real app. Drop your own into <code>website/assets/</code>.</p>
+
+        <div class="demo-grid">
+          <figure class="demo-card demo-card-large">
+            <div class="demo-placeholder">
+              <img src="./assets/dashboard-hero.png" alt="Atheletia dashboard" onerror="this.parentElement.querySelector('.demo-fallback').hidden=false; this.hidden=true" />
+              <div class="demo-fallback">
+                <div class="demo-mockup-mini">
+                  <div class="dmm-sidebar">
+                    <div class="dmm-item active"></div>
+                    <div class="dmm-item"></div>
+                    <div class="dmm-item"></div>
+                    <div class="dmm-item"></div>
+                  </div>
+                  <div class="dmm-content">
+                    <div class="dmm-card accent"></div>
+                    <div class="dmm-card"></div>
+                    <div class="dmm-card"></div>
+                    <div class="dmm-card wide"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <figcaption>
+              <strong>Command Center Dashboard</strong>
+              <span>AI brief, LeetCode card, activity stats, and project tracking in a single glance</span>
+            </figcaption>
+          </figure>
+
+          <figure class="demo-card">
+            <div class="demo-placeholder">
+              <img src="./assets/brain-notes.png" alt="Brain vault notes editor" onerror="this.parentElement.querySelector('.demo-fallback').hidden=false; this.hidden=true" />
+              <div class="demo-fallback">
+                <div class="demo-icon">🧠</div>
+                <p>Brain Vault<br/><code>brain-notes.png</code></p>
+              </div>
+            </div>
+            <figcaption>
+              <strong>Brain Vault</strong>
+              <span>Rich markdown editor with AI side panel</span>
+            </figcaption>
+          </figure>
+
+          <figure class="demo-card">
+            <div class="demo-placeholder">
+              <img src="./assets/leetcode-desk.png" alt="LeetCode study desk" onerror="this.parentElement.querySelector('.demo-fallback').hidden=false; this.hidden=true" />
+              <div class="demo-fallback">
+                <div class="demo-icon">💻</div>
+                <p>LeetCode Desk<br/><code>leetcode-desk.png</code></p>
+              </div>
+            </div>
+            <figcaption>
+              <strong>LeetCode Study Desk</strong>
+              <span>Problems, notes, AI hints, and diagrams</span>
+            </figcaption>
+          </figure>
+
+          <figure class="demo-card">
+            <div class="demo-placeholder">
+              <img src="./assets/diary-view.png" alt="Smart diary with AI summaries" onerror="this.parentElement.querySelector('.demo-fallback').hidden=false; this.hidden=true" />
+              <div class="demo-fallback">
+                <div class="demo-icon">📖</div>
+                <p>Smart Diary<br/><code>diary-view.png</code></p>
+              </div>
+            </div>
+            <figcaption>
+              <strong>Smart Diary</strong>
+              <span>Per-day AI reflections + manual notes</span>
+            </figcaption>
+          </figure>
+
+          <figure class="demo-card">
+            <div class="demo-placeholder">
+              <img src="./assets/music-player.png" alt="Built-in music player" onerror="this.parentElement.querySelector('.demo-fallback').hidden=false; this.hidden=true" />
+              <div class="demo-fallback">
+                <div class="demo-icon">🎵</div>
+                <p>Music Player<br/><code>music-player.png</code></p>
+              </div>
+            </div>
+            <figcaption>
+              <strong>Music Player</strong>
+              <span>YouTube-backed with playlists and search</span>
+            </figcaption>
+          </figure>
+
+          <figure class="demo-card">
+            <div class="demo-placeholder">
+              <img src="./assets/zen-focus.png" alt="Zen focus timer" onerror="this.parentElement.querySelector('.demo-fallback').hidden=false; this.hidden=true" />
+              <div class="demo-fallback">
+                <div class="demo-icon">🧘</div>
+                <p>Zen Focus<br/><code>zen-focus.png</code></p>
+              </div>
+            </div>
+            <figcaption>
+              <strong>Zen Focus Mode</strong>
+              <span>Pomodoro timer with music sync</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- DOWNLOAD -->
+      <section class="section download-section" id="download">
+        <div class="download-card">
+          <div class="download-orb"></div>
+          <div class="download-left">
+            <div class="section-label">Download</div>
+            <h2 class="download-title">Install Atheletia<br />on your Windows PC.</h2>
+            <p class="download-sub">
+              A single MSI installer. Run it, launch the app, and follow the first-time setup to connect your AI key and pick a theme. Takes under 2 minutes.
+            </p>
+            <div class="download-steps">
+              <div class="dl-step"><span class="dl-num">1</span><span>Download the MSI installer below</span></div>
+              <div class="dl-step"><span class="dl-num">2</span><span>Run the installer (Windows may show a SmartScreen prompt — click "More info → Run anyway")</span></div>
+              <div class="dl-step"><span class="dl-num">3</span><span>Launch Atheletia and complete the first-time setup guide</span></div>
+              <div class="dl-step"><span class="dl-num">4</span><span>Add your AI API key in Settings and start tracking</span></div>
+            </div>
+          </div>
+          <div class="download-right">
+            <div class="download-box">
+              <div class="dl-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </div>
+              <h3>Atheletia for Windows</h3>
+              <div class="dl-meta">
+                <span>Version 0.1.0</span>
+                <span>·</span>
+                <span>Windows 10/11 x64</span>
+                <span>·</span>
+                <span>Tauri 2</span>
+              </div>
+              <a class="btn btn-primary btn-xl" href="./assets/Atheletia_0.1.0_x64_en-US.msi" download>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download .msi
+              </a>
+              <p class="dl-note">Or contact the author to get the installer.</p>
+              <div class="dl-reqs">
+                <div class="req-item">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  Windows 10 or 11 (64-bit)
+                </div>
+                <div class="req-item">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  4 GB RAM minimum
+                </div>
+                <div class="req-item">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  AI API key (NVIDIA NIM free tier works)
+                </div>
+                <div class="req-item">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  Internet (for YouTube music + AI calls)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="section" id="faq">
+        <div class="section-label">FAQ</div>
+        <h2 class="section-title">Common questions.</h2>
+        <div class="faq-grid">
+          <div class="faq-item">
+            <h3>Does it require a cloud account?</h3>
+            <p>No. Core features run entirely on your machine using a local SQLite database. AI and Google Calendar features only need keys or accounts when you opt in through Settings.</p>
+          </div>
+          <div class="faq-item">
+            <h3>Which AI providers are supported?</h3>
+            <p>NVIDIA NIM (recommended, has a free tier), OpenAI, Anthropic Claude, Groq, and Google Gemini. You pick one and paste your key — nothing else needed.</p>
+          </div>
+          <div class="faq-item">
+            <h3>Is my data private?</h3>
+            <p>Activity data, notes, diary entries, and settings are stored in a local SQLite file. Only AI summary calls and music streaming touch the internet. Incognito mode pauses all tracking instantly.</p>
+          </div>
+          <div class="faq-item">
+            <h3>Does it work on Mac or Linux?</h3>
+            <p>Windows 10/11 is the primary target because activity tracking, OCR, and media detection use Windows-specific APIs. Mac/Linux builds may have reduced features.</p>
+          </div>
+          <div class="faq-item">
+            <h3>How does the Diary work?</h3>
+            <p>The diary creates per-day entries using only that day's activity, LeetCode data, and music history. Today never gets a summary — it auto-generates at midnight for yesterday, keeping everything clean and isolated.</p>
+          </div>
+          <div class="faq-item">
+            <h3>Is YouTube music legal to use?</h3>
+            <p>Atheletia uses the YouTube embedded player, similar to how YouTube Music works in a browser. It streams content you could watch on YouTube normally. No audio is downloaded or stored.</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="logo-mark sm">A</span>
+          <div>
+            <p class="footer-name">Atheletia</p>
+            <p class="footer-tagline">Built with Tauri 2, React 18, TypeScript, and Rust.</p>
+          </div>
+        </div>
+        <div class="footer-authors">
+          <p class="footer-credit">
+            Created by <strong>Ashvin KS</strong><br />
+            <span class="footer-assist">Assisted by <strong>Saarathi</strong></span>
+          </p>
+        </div>
+        <div class="footer-links">
+          <a href="#features">Features</a>
+          <a href="#demo">Demo</a>
+          <a href="#download">Download</a>
+          <a href="#faq">FAQ</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 Atheletia. All rights reserved.</span>
+        <span>Local-first · Privacy-respecting · Windows desktop</span>
+      </div>
+    </footer>
+
+    <script>
+      // Smooth scroll
+      document.querySelectorAll('a[href^="#"]').forEach(a => {
+        a.addEventListener('click', e => {
+          const target = document.querySelector(a.getAttribute('href'));
+          if (target) { e.preventDefault(); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        });
+      });
+      // Navbar scroll shadow
+      const nav = document.querySelector('.navbar');
+      window.addEventListener('scroll', () => {
+        nav.classList.toggle('scrolled', window.scrollY > 20);
+      });
+      // Intersection observer for fade-in
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+      }, { threshold: 0.1 });
+      document.querySelectorAll('.feat-card, .demo-card, .step, .faq-item').forEach(el => observer.observe(el));
+    </script>
+  </body>
+</html>

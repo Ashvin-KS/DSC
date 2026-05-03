@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Atheletia</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            background: 'var(--bg-canvas)',
+            sidebar: 'var(--bg-elev-1)',
+            border: 'var(--border-soft)',
+            accent: 'var(--accent)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    :root {
+      --bg-app: #0b1016;
+      --bg-canvas: #101720;
+      --bg-elev-1: #141d28;
+      --bg-elev-2: #182231;
+      --bg-elev-3: #202d3e;
+      --bg-hover: #263548;
+      --bg-soft: rgba(90, 154, 255, 0.12);
+      --border-soft: #233245;
+      --border-strong: #324459;
+      --text-strong: #eef4ff;
+      --text-main: #d8e0ee;
+      --text-soft: #b6c1d4;
+      --text-muted: #94a1b8;
+      --text-faint: #748196;
+      --accent: #5a9aff;
+      --accent-strong: #86b6ff;
+      --accent-soft: rgba(90, 154, 255, 0.18);
+      --accent-contrast: #08111d;
+      --success: #4fd1a5;
+      --warning: #f3b74f;
+      --danger: #f27d68;
+      --shadow-color: rgba(0, 0, 0, 0.34);
+    }
+
+    html, body {
+      overflow: hidden;
+      height: 100%;
+      width: 100%;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+        sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background-color: var(--bg-app);
+      color: var(--text-main);
+      transition: background-color 180ms ease, color 180ms ease;
+    }
+
+    /* Custom scrollbar for better aesthetics */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background-color: var(--border-strong);
+      border-radius: 20px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background-color: var(--bg-hover);
+    }
+
+    ::selection {
+      background: var(--accent-soft);
+      color: var(--text-strong);
+    }
+
+    /* Global Scrollbar Styling */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, var(--accent-strong) 0%, var(--accent) 100%);
+      border-radius: 10px;
+      opacity: 0.6;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, var(--accent-strong) 0%, var(--accent) 100%);
+      opacity: 1;
+    }
+
+    /* Firefox scrollbar */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent) transparent;
+    }
+
+    /* Hide scrollbar completely */
+    .scrollbar-none::-webkit-scrollbar {
+      display: none;
+    }
+    .scrollbar-none {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    /* Shared overlay layers: base app < dropdowns < sidebar/widgets < modals < system overlays */
+    .z-dropdown { z-index: 60; }
+    .z-sidebar { z-index: 70; }
+    .z-modal { z-index: 90; }
+    .z-system { z-index: 110; }
+
+    /* MDEditor Dark Theme Overrides */
+    .w-md-editor {
+      background-color: var(--bg-canvas) !important;
+      border: none !important;
+      box-shadow: none !important;
+      color: var(--text-main) !important;
+    }
+
+    .w-md-editor-toolbar {
+      background-color: var(--bg-elev-1) !important;
+      border-bottom: 1px solid var(--border-soft) !important;
+      padding: 8px !important;
+    }
+
+    .w-md-editor-toolbar li>button {
+      color: var(--text-muted) !important;
+    }
+
+    .w-md-editor-toolbar li>button:hover {
+      color: var(--text-strong) !important;
+      background: var(--bg-hover) !important;
+    }
+
+    .w-md-editor-text-pre>code,
+    .w-md-editor-text-input,
+    .w-md-editor-text {
+      font-size: 14px !important;
+      line-height: 1.7 !important;
+      color: var(--text-main) !important;
+    }
+
+    .w-md-editor-preview {
+      background-color: var(--bg-canvas) !important;
+      padding: 16px 24px !important;
+    }
+
+    .w-md-editor-content {
+      background-color: var(--bg-canvas) !important;
+    }
+
+    .w-md-editor-area {
+      background-color: var(--bg-canvas) !important;
+    }
+
+    .wmde-markdown {
+      background-color: transparent !important;
+      color: var(--text-main) !important;
+    }
+
+    .wmde-markdown h1,
+    .wmde-markdown h2,
+    .wmde-markdown h3,
+    .wmde-markdown h4,
+    .wmde-markdown h5,
+    .wmde-markdown h6 {
+      color: var(--text-strong) !important;
+      border-bottom: none !important;
+    }
+
+    .wmde-markdown code {
+      background-color: var(--bg-elev-2) !important;
+      color: var(--accent-strong) !important;
+      padding: 2px 6px !important;
+      border-radius: 4px !important;
+    }
+
+    .wmde-markdown pre {
+      background-color: var(--bg-elev-1) !important;
+      border: 1px solid var(--border-strong) !important;
+      border-radius: 8px !important;
+    }
+
+    .wmde-markdown pre code {
+      background: transparent !important;
+      color: var(--text-main) !important;
+    }
+
+    .wmde-markdown blockquote {
+      border-left: 4px solid var(--accent) !important;
+      color: var(--text-muted) !important;
+      background: transparent !important;
+    }
+
+    .wmde-markdown table th {
+      background-color: var(--bg-elev-1) !important;
+    }
+
+    .wmde-markdown table td,
+    .wmde-markdown table th {
+      border-color: var(--border-strong) !important;
+    }
+
+    .wmde-markdown a {
+      color: var(--accent) !important;
+    }
+
+    .wmde-markdown hr {
+      border-color: var(--border-strong) !important;
+    }
+
+    /* Tiptap / Prosemirror Task List Fixes */
+    .ProseMirror .task-list,
+    .ProseMirror ul[data-type="taskList"],
+    .ProseMirror ol[data-type="taskList"] {
+      list-style: none !important;
+      padding: 0 !important;
+      margin: 0.5rem 0 !important;
+    }
+
+    .ProseMirror .task-item,
+    .ProseMirror li[data-type="taskItem"] {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: flex-start !important;
+      gap: 0.5rem !important;
+      margin-bottom: 0.25rem !important;
+      list-style: none !important;
+    }
+
+    .ProseMirror li[data-type="taskItem"]>label {
+      display: inline-flex !important;
+      align-items: center !important;
+      flex-shrink: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      margin-top: 0.1rem !important;
+      cursor: pointer !important;
+    }
+
+    .ProseMirror li[data-type="taskItem"]>label input[type="checkbox"] {
+      cursor: pointer !important;
+      width: 1rem !important;
+      height: 1rem !important;
+      accent-color: var(--success) !important;
+      margin: 0 !important;
+    }
+
+    .ProseMirror li[data-type="taskItem"]>div {
+      flex: 1 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      min-width: 0 !important;
+    }
+
+    .ProseMirror li[data-type="taskItem"]>div>p {
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    /* Checked state styling */
+    .ProseMirror li[data-type="taskItem"][data-checked="true"]>div {
+      text-decoration: line-through;
+      opacity: 0.6;
+    }
+
+    /* Hide Mermaid's built-in syntax-error placeholder blocks if any external
+       renderer auto-processes invalid chart text. */
+    .mermaid:has(svg .error-icon),
+    .mermaid:has(.error-icon),
+    .mermaid:has(.error-text) {
+      display: none !important;
+    }
+
+    .text-white { color: var(--text-strong) !important; }
+    .text-gray-100, .text-gray-200 { color: var(--text-main) !important; }
+    .text-gray-300 { color: var(--text-soft) !important; }
+    .text-gray-400 { color: var(--text-muted) !important; }
+    .text-gray-500, .text-gray-600 { color: var(--text-faint) !important; }
+
+    .bg-\[\#0a0a0a\],
+    .bg-\[\#0d0d0d\],
+    .bg-\[\#101114\],
+    .bg-\[\#111\] {
+      background-color: var(--bg-canvas) !important;
+    }
+
+    .bg-\[\#141414\],
+    .bg-\[\#151821\],
+    .bg-\[\#161616\],
+    .bg-\[\#1a1a1a\],
+    .bg-\[\#1d1d1d\],
+    .bg-\[\#1f2431\],
+    .bg-\[\#222733\],
+    .bg-\[\#232838\],
+    .bg-\[\#262626\] {
+      background-color: var(--bg-elev-1) !important;
+    }
+
+    .border-\[\#1a1a1a\],
+    .border-\[\#1e1e1e\],
+    .border-\[\#1f2329\],
+    .border-\[\#222\],
+    .border-\[\#262626\],
+    .border-\[\#282828\],
+    .border-\[\#2a2a2a\],
+    .border-\[\#2a2c32\],
+    .border-\[\#333\] {
+      border-color: var(--border-strong) !important;
+    }
+
+    .hover\:bg-\[\#161616\]:hover,
+    .hover\:bg-\[\#1a1a1a\]:hover,
+    .hover\:bg-\[\#1d1d1d\]:hover,
+    .hover\:bg-\[\#262626\]:hover,
+    .hover\:bg-\[\#2a3141\]:hover,
+    .hover\:bg-\[\#2f3646\]:hover,
+    .hover\:bg-\[\#2f3650\]:hover,
+    .hover\:bg-\[\#333845\]:hover {
+      background-color: var(--bg-hover) !important;
+    }
+
+    .bg-white\/5 { background-color: color-mix(in srgb, var(--bg-elev-3) 36%, transparent) !important; }
+    .bg-white\/10 { background-color: color-mix(in srgb, var(--bg-elev-3) 54%, transparent) !important; }
+    .border-white\/10 { border-color: color-mix(in srgb, var(--border-soft) 58%, transparent) !important; }
+    .border-white\/20 { border-color: color-mix(in srgb, var(--border-strong) 70%, transparent) !important; }
+    .hover\:bg-white\/5:hover,
+    .hover\:bg-white\/10:hover {
+      background-color: var(--bg-hover) !important;
+    }
+
+    .text-cyan-300,
+    .text-cyan-400,
+    .text-purple-300,
+    .text-purple-400 {
+      color: var(--accent-strong) !important;
+    }
+
+    .bg-cyan-500\/5,
+    .bg-cyan-500\/10,
+    .bg-cyan-500\/20,
+    .bg-purple-500\/10,
+    .bg-purple-500\/20 {
+      background-color: var(--accent-soft) !important;
+    }
+
+    .border-cyan-500\/30,
+    .border-cyan-500\/40,
+    .border-cyan-500\/50,
+    .border-purple-500\/10,
+    .border-purple-500\/30,
+    .border-purple-500\/40,
+    .border-purple-500\/50,
+    .border-purple-500\/60 {
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+    }
+
+    .hover\:text-cyan-400:hover,
+    .hover\:text-purple-400:hover {
+      color: var(--accent-strong) !important;
+    }
+
+    .hover\:border-cyan-500\/30:hover,
+    .hover\:border-purple-500\/60:hover {
+      border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+    }
+
+    input,
+    textarea,
+    select {
+      color-scheme: inherit;
+    }
+
+    /* ── Global border-default for inline-style usage ── */
+    :root {
+      --border-default: var(--border-strong);
+    }
+
+    /* Divide (section separators) */
+    .divide-\\[\\#1a1a1a\\] > :not([hidden]) ~ :not([hidden]) {
+      border-color: var(--border-strong) !important;
+    }
+
+    /* Opacity-variant border classes used in ChatPage controls */
+    .border-\\[\\#333\\]\\/50 { border-color: var(--border-soft) !important; }
+    .border-\\[\\#333\\]\\/70 { border-color: var(--border-strong) !important; }
+
+  </style>
+
+  <!-- Global styles injected by Vite build -->
+  
+  <!-- Disable DevTools in production -->
+  <script>
+    // Disable right-click context menu
+    document.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+    });
+    
+    // Disable DevTools keyboard shortcuts and refresh
+    document.addEventListener('keydown', function(e) {
+      // Ctrl+Shift+I (DevTools)
+      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+        e.preventDefault();
+      }
+      // Ctrl+Shift+J (Console)
+      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
+        e.preventDefault();
+      }
+      // Ctrl+Shift+C (Inspect Element)
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+      }
+      // F12 (DevTools)
+      if (e.key === 'F12') {
+        e.preventDefault();
+      }
+      // Ctrl+U (View Source)
+      if (e.ctrlKey && e.key === 'U') {
+        e.preventDefault();
+      }
+      // Ctrl+R (Refresh)
+      if (e.ctrlKey && e.key === 'r') {
+        e.preventDefault();
+      }
+      // F5 (Refresh)
+      if (e.key === 'F5') {
+        e.preventDefault();
+      }
+    });
+  </script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
+</html>

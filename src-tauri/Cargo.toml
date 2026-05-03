@@ -1,0 +1,43 @@
+[package]
+name = "atheletia"
+version = "0.1.0"
+description = "Atheletia desktop app powered by Tauri v2"
+authors = ["you"]
+edition = "2021"
+
+[package.metadata]
+
+[lib]
+name = "atheletia_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow        = "1.0"
+chrono        = { version = "0.4", features = ["clock", "serde"] }
+dotenvy       = "0.15"
+futures-util  = "0.3"
+open          = "5"
+reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite      = { version = "0.31", features = ["bundled"] }
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+tauri         = { version = "2", features = ["tray-icon", "unstable"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2"
+tokio         = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+url           = "2"
+uuid          = { version = "1.8", features = ["v4", "serde"] }
+winapi        = { version = "0.3", features = ["winuser", "processthreadsapi", "handleapi", "psapi"] }
+active-win-pos-rs = "0.8"
+image         = "0.25"
+xcap          = "0.0.14"
+walkdir       = "2.5"
+windows       = { version = "0.58", features = ["Media_Ocr", "Media_Control", "Graphics_Imaging", "Storage", "Storage_Streams", "Foundation"] }
+twox-hash     = "1.6"
+regex         = "1"
+fastembed     = "5"
+keyring = "3.6.3"

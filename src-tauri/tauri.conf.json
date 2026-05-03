@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Atheletia",
+  "version": "0.1.0",
+  "identifier": "com.atheletia.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5180",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Atheletia",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "visible": false,
+        "center": true,
+        "skipTaskbar": false,
+        "decorations": true,
+        "shadow": true,
+        "devtools": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Atheletia",
+    "copyright": "© 2026 Atheletia. All rights reserved.",
+    "category": "Productivity",
+    "shortDescription": "Your personal AI-powered productivity dashboard",
+    "longDescription": "Atheletia is an AI-powered personal productivity and life-tracking app. It tracks your daily activities, music, LeetCode progress, and provides intelligent diary summaries. Built with Tauri 2 and React 18.",
+    "resources": [
+      "../leetcode_problems.csv"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}

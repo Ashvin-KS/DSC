@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="128" fill="#0a0a0a"/>
+  
+  <!-- Robot Face -->
+  <g fill="none" stroke="#22d3ee" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Head outline -->
+    <rect x="96" y="128" width="320" height="256" rx="48"/>
+    
+    <!-- Eyes -->
+    <rect x="160" y="208" width="64" height="64" rx="12"/>
+    <rect x="288" y="208" width="64" height="64" rx="12"/>
+    
+    <!-- Antenna -->
+    <line x1="256" y1="128" x2="256" y2="64"/>
+    <circle cx="256" cy="48" r="16"/>
+    
+    <!-- Mouth/smile -->
+    <line x1="192" y1="320" x2="320" y2="320"/>
+  </g>
+</svg>
