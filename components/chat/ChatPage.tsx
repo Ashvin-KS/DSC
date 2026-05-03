@@ -48,6 +48,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useFavoriteModels } from '../../hooks/useFavoriteModels';
 import { useIntentStore } from '../../store/useIntentStore';
 import { useMultiProviderModels, setStoredModelWithProvider, getStoredModelWithProvider } from '../../hooks/useMultiProviderModels';
+import { getProviderKey, resolveProviderForModel } from '../../lib/modelFetch';
 
 // Source options
 const SOURCE_OPTIONS: Array<{ id: ChatSourceId; label: string; default: boolean }> = [
@@ -268,11 +269,11 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         if (!settings?.defaultModel) return;
         if (!selectedModel) {
             setSelectedModel(settings.defaultModel);
-            const prov = (settings.aiProvider || 'nvidia').toLowerCase();
+            const prov = resolveProviderForModel(settings.defaultModel);
             setSelectedProvider(prov);
             setStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY, settings.defaultModel, prov);
         }
-    }, [settings?.defaultModel, settings?.aiProvider, selectedModel]);
+    }, [settings?.defaultModel, selectedModel]);
 
     useEffect(() => {
         try {
@@ -315,14 +316,6 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             setLmStudioLoading(false);
         }
     }, [selectedModel]);
-
-    // Sync modelMode from settings.aiProvider (mirrors CodeView/BrainView aiProvider derivation)
-    useEffect(() => {
-        if (!settings) return;
-        const provider = (settings.aiProvider || 'nvidia').toLowerCase();
-        const isLocal = provider === 'local' || provider === 'lmstudio';
-        setModelMode(isLocal ? 'local' : 'cloud');
-    }, [settings?.aiProvider]);
 
     // Auto-fetch models when mode changes
     useEffect(() => {
@@ -528,16 +521,10 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         setMessages((prev) => [...prev, tempUserMsg]);
 
         try {
-            const provider = modelMode === 'local' ? 'local' : (selectedProvider || settings?.aiProvider || 'nvidia').toLowerCase();
-            const apiKey = (() => {
-                switch (provider) {
-                    case 'openai': return settings?.openaiApiKey?.trim() || '';
-                    case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
-                    case 'groq': return settings?.groqApiKey?.trim() || '';
-                    case 'gemini': return (settings as any)?.geminiApiKey?.trim() || '';
-                    default: return settings?.nvidiaApiKey?.trim() || '';
-                }
-            })();
+            const provider = modelMode === 'local'
+                ? 'local'
+                : resolveProviderForModel(selectedModel, selectedProvider);
+            const apiKey = getProviderKey(settings, provider);
 
             const response = await sendChatMessage(
                 sessionId,
@@ -734,8 +721,11 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     const selectChatModel = (modelId: string, modelName?: string, provider?: string) => {
         const normalizedId = modelId.trim();
         if (!normalizedId) return;
+        const resolvedProvider = modelMode === 'local'
+            ? 'local'
+            : resolveProviderForModel(normalizedId, provider);
         setSelectedModel(normalizedId);
-        if (provider) setSelectedProvider(provider);
+        setSelectedProvider(resolvedProvider);
         addFavorite({ id: normalizedId, name: modelName || normalizedId });
         setShowModelDropdown(false);
         setModelSearch('');

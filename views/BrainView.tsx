@@ -50,6 +50,7 @@ import {
 import { BrainActionType, BrainChatMessage, BrainChatOption, ParsedActionPayload, buildBrainNoteContext, buildModelConversation, inferActionContentFromResponse, isUiTranscriptNoise, parseActionPayload, sanitizeProposedMarkdown } from '../services/brainAiService';
 import { useIntentStore } from '../store/useIntentStore';
 import { useMultiProviderModels, getStoredModelWithProvider, setStoredModelWithProvider, inferProviderFromModel } from '../hooks/useMultiProviderModels';
+import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
 import { MermaidBlock } from '../components/MermaidBlock';
 import { buildFileTreeSignature, cacheFileContent, cacheFileTree, getCachedFileContent, getCachedFileTree, invalidateFileTreeCache } from '../lib/notesCache';
 import { ChatInputBox, FileTreeItemReal, MarkdownRenderer, ChatBubble } from './brain/BrainViewSupportComponents';
@@ -478,17 +479,9 @@ export const BrainView: React.FC = () => {
     }
   }, [selectedModel]);
 
-  // Detect initial provider on mount
   useEffect(() => {
-    const provider = ((settings?.aiProvider || 'nvidia').toLowerCase() as 'nvidia' | 'local' | 'lmstudio');
-    const localProvider = provider === 'local' || provider === 'lmstudio';
-    setAiProvider(localProvider ? 'lmstudio' : 'nvidia');
-    if (localProvider) {
-      fetchLMStudioModels();
-    } else {
-      setModelsLoading(false);
-    }
-  }, [settings?.aiProvider, fetchLMStudioModels]);
+    setModelsLoading(false);
+  }, []);
 
   // Switch provider at runtime
   const switchProvider = useCallback((mode: 'nvidia' | 'lmstudio') => {
@@ -524,6 +517,16 @@ export const BrainView: React.FC = () => {
     if (aiProvider === 'lmstudio' || aiProvider === 'local') return lmStudioModels;
     return cloudModels;
   }, [aiProvider, lmStudioModels, cloudModels]);
+  const effectiveSelectedProvider = useMemo(
+    () => (aiProvider === 'lmstudio' || aiProvider === 'local')
+      ? 'local'
+      : resolveProviderForModel(selectedModel, selectedProvider),
+    [aiProvider, selectedModel, selectedProvider]
+  );
+  const effectiveApiKey = useMemo(
+    () => getProviderKey(settings, effectiveSelectedProvider),
+    [settings, effectiveSelectedProvider]
+  );
   const showVaultIndexDoneMark = brainScope === 'vault' && !isVaultReindexing && vaultIndexProgress?.stage === 'completed';
   const showVaultProgressInHeader = isVaultReindexing || vaultIndexProgress?.stage === 'indexing' || vaultIndexProgress?.stage === 'started';
 
@@ -1393,7 +1396,7 @@ export const BrainView: React.FC = () => {
   const buildBrainVaultContext = createBuildBrainVaultContext({ selectedFile, selectedTreePath, toVaultRelativePath, isVaultPathActionIntent, suggestVaultDirectoryPaths, suggestVaultNotePaths, vaultPath, vaultActionRoot });
 
   const handleAiSend = createHandleAiSend({
-    isAiLoading, brainScope, vaultPath, setCurrentMessages, aiProvider, nvidiaApiKey: settings?.nvidiaApiKey || '', abortControllerRef,
+    isAiLoading, brainScope, vaultPath, setCurrentMessages, aiProvider, selectedProvider: effectiveSelectedProvider, apiKey: effectiveApiKey, nvidiaApiKey: effectiveApiKey, abortControllerRef,
     selectedContext, selectionRange, tiptapRange, isEditing, setSelectedContext, setTiptapRange,
     setSelectionRange, setIsAiLoading, setProposedAction, setVaultSearchMeta, setIsVaultSearchLoading,
     setVaultStatusMessage, tryHandleVaultMultiFileChainIntent, tryHandleVaultFileListIntent, editContent,
@@ -2135,4 +2138,3 @@ export const BrainView: React.FC = () => {
     </div>
   );
 };
-

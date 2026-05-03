@@ -6,6 +6,7 @@ import {
 import { AppSettings, useIntentStore } from '../store/useIntentStore';
 import { THEME_GROUPS, getThemePreset, resolveColorSchemeForTheme, type ThemePresetId } from '../lib/theme';
 import { useMultiProviderModels } from '../hooks/useMultiProviderModels';
+import { inferProviderFromModel } from '../lib/modelFetch';
 
 const DEFAULT_SETTINGS: AppSettings = {
   nvidiaApiKey: '',
@@ -15,7 +16,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   geminiApiKey: '',
   googleClientId: '',
   googleClientSecret: '',
-  aiProvider: 'nvidia',
   defaultModel: 'meta/llama-3.3-70b-instruct',
   trackApps: true,
   trackScreenOcr: false,
@@ -45,14 +45,6 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
   { id: 'storage', label: 'Storage', icon: HardDrive },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'about', label: 'About', icon: Info },
-];
-
-const PROVIDERS = [
-  { id: 'nvidia', label: 'NVIDIA NIM' },
-  { id: 'openai', label: 'OpenAI' },
-  { id: 'anthropic', label: 'Anthropic' },
-  { id: 'groq', label: 'Groq' },
-  { id: 'gemini', label: 'Google Gemini (AI Studio)' },
 ];
 
 function SecretInput({ label, value, onChange, helpText }: {
@@ -118,24 +110,11 @@ export const SettingsView: React.FC = () => {
   const { groups: modelGroups, allModels: allCloudModels, loading: modelsLoading, error: modelsErrorRaw, refetch: refetchModels } = useMultiProviderModels(local);
   const modelsError = modelsErrorRaw ? String(modelsErrorRaw) : '';
 
-  const [validationMsg, setValidationMsg] = useState('');
-  const [validationOk, setValidationOk] = useState<boolean | null>(null);
-  const [validating, setValidating] = useState(false);
-
   const [storageStats, setStorageStats] = useState<any>(null);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageMsg, setStorageMsg] = useState('');
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const currentProviderKey = useMemo(() => {
-    const provider = (local.aiProvider || 'nvidia').toLowerCase();
-    if (provider === 'openai') return local.openaiApiKey || '';
-    if (provider === 'anthropic') return local.anthropicApiKey || '';
-    if (provider === 'groq') return local.groqApiKey || '';
-    if (provider === 'gemini') return (local as any).geminiApiKey || '';
-    return local.nvidiaApiKey || '';
-  }, [local.aiProvider, local.nvidiaApiKey, local.openaiApiKey, local.anthropicApiKey, local.groqApiKey, (local as any).geminiApiKey]);
 
   const set = <K extends keyof AppSettings>(key: K) => (val: AppSettings[K]) => setLocal((p) => ({ ...p, [key]: val }));
   const setThemePreset = (themePreset: ThemePresetId) =>
@@ -189,38 +168,12 @@ export const SettingsView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const inferProviderFromModel = (modelId: string): string => {
-    const lower = modelId.toLowerCase();
-    if (lower.startsWith('gemini')) return 'gemini';
-    if (lower.startsWith('gpt-') || lower.startsWith('o')) return 'openai';
-    if (lower.startsWith('claude')) return 'anthropic';
-    if (lower.startsWith('meta/') || lower.startsWith('nvidia/') || lower.includes('nim')) return 'nvidia';
-    if (lower.startsWith('llama-') || lower.startsWith('mixtral')) return 'groq';
-    return 'nvidia';
-  };
-
-  const validateCurrentKey = async () => {
-    setValidationMsg('');
-    setValidationOk(null);
-    setValidating(true);
-    try {
-      const provider = local.aiProvider || 'nvidia';
-      const result = await window.atheletiaAPI?.settings?.validateApiKey?.(provider, currentProviderKey);
-      setValidationOk(!!result?.valid);
-      setValidationMsg(result?.message || (result?.valid ? 'Valid key' : 'Invalid key'));
-    } catch (e: any) {
-      setValidationOk(false);
-      setValidationMsg(`Validation failed: ${e.message || e}`);
-    } finally {
-      setValidating(false);
-    }
-  };
-
   const handleSave = async () => {
-    setSettings(local);
+    const next = { ...local, aiProvider: inferProviderFromModel(local.defaultModel || '') };
+    setSettings(next);
     setIsSaving(true);
     try {
-      if (window.atheletiaAPI?.settings) await window.atheletiaAPI.settings.save(local);
+      if (window.atheletiaAPI?.settings) await window.atheletiaAPI.settings.save(next);
       await loadStorageStats();
     } catch {
       // keep local settings
@@ -316,18 +269,8 @@ export const SettingsView: React.FC = () => {
           {activeSection === 'api' && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-lg font-bold text-white">API Provider & Keys</h2>
-                <p className="text-xs text-gray-500">Switch provider and validate keys before saving.</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-400 block mb-2">AI Provider</label>
-                <select
-                  value={local.aiProvider || 'nvidia'}
-                  onChange={(e) => set('aiProvider')(e.target.value)}
-                  className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200"
-                >
-                  {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
+                <h2 className="text-lg font-bold text-white">API Keys</h2>
+                <p className="text-xs text-gray-500">Add keys for any providers you want to use. Atheletia routes requests by the selected model.</p>
               </div>
 
               <SecretInput label="NVIDIA API Key" value={local.nvidiaApiKey || ''} onChange={set('nvidiaApiKey')} helpText="Get from build.nvidia.com" />
@@ -338,18 +281,6 @@ export const SettingsView: React.FC = () => {
               <SecretInput label="Google Client ID" value={local.googleClientId} onChange={set('googleClientId')} helpText="For Google Calendar / Tasks OAuth" />
               <SecretInput label="Google Client Secret" value={local.googleClientSecret} onChange={set('googleClientSecret')} />
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={validateCurrentKey}
-                  disabled={validating}
-                  className="px-3 py-2 text-xs rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] text-gray-300 hover:text-white disabled:opacity-50"
-                >
-                  {validating ? 'Testing...' : 'Test Active Provider Key'}
-                </button>
-                {validationMsg && (
-                  <p className={`text-xs ${validationOk ? 'text-green-400' : 'text-red-400'}`}>{validationMsg}</p>
-                )}
-              </div>
             </div>
           )}
 
@@ -418,7 +349,6 @@ export const SettingsView: React.FC = () => {
                               key={m.id}
                               onClick={() => {
                                 set('defaultModel')(m.id);
-                                set('aiProvider')(group.provider);
                               }}
                               className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl border text-left text-xs ${local.defaultModel === m.id ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-300' : 'border-[#1a1a1a] bg-[#141414] text-gray-400 hover:text-gray-200'}`}
                             >

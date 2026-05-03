@@ -204,6 +204,14 @@ export function initAtheletiaApi() {
         temperature?: number,
         apiKey?: string,
       ) => invoke<any>('settings_nvidia_chat_completion', { model, messages, maxTokens, temperature, apiKey }),
+      chatCompletion: (
+        model: string,
+        messages: { role: string; content: string }[],
+        maxTokens?: number,
+        temperature?: number,
+        apiKey?: string,
+        provider?: string,
+      ) => invoke<any>('settings_chat_completion', { model, messages, maxTokens, temperature, apiKey, provider }),
       lmstudioChatCompletion: (
         model: string,
         messages: { role: string; content: string }[],
@@ -328,6 +336,14 @@ declare global {
           maxTokens?: number,
           temperature?: number,
           apiKey?: string,
+        ) => Promise<any>;
+        chatCompletion: (
+          model: string,
+          messages: { role: string; content: string }[],
+          maxTokens?: number,
+          temperature?: number,
+          apiKey?: string,
+          provider?: string,
         ) => Promise<any>;
         lmstudioChatCompletion: (
           model: string,

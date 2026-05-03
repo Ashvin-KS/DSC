@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
-use tauri_plugin_autostart::ManagerExt;
 use keyring::Entry;
 
 static BRAIN_STREAM_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -132,6 +131,21 @@ pub struct ChatTurn {
     pub content: String,
 }
 
+fn infer_provider_from_model(model: &str) -> String {
+    let lower = model.trim().to_lowercase();
+    if lower.starts_with("gemini") || lower.starts_with("models/gemini") {
+        "gemini".to_string()
+    } else if lower.starts_with("gpt-") || lower.starts_with('o') {
+        "openai".to_string()
+    } else if lower.starts_with("claude") {
+        "anthropic".to_string()
+    } else if lower.starts_with("llama-") || lower.starts_with("mixtral") {
+        "groq".to_string()
+    } else {
+        "nvidia".to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyValidationResult {
     pub valid: bool,
@@ -172,7 +186,7 @@ fn load_settings_inner(conn: &rusqlite::Connection) -> AppSettings {
     s.google_client_id = get_secret("google_client_id", &get_str("google_client_id", ""));
     s.google_client_secret = get_secret("google_client_secret", &get_str("google_client_secret", ""));
     s.default_model = get_str("default_model", "");
-    s.ai_provider = get_str("ai_provider", "nvidia");
+    s.ai_provider = infer_provider_from_model(&s.default_model);
     s.color_scheme = get_str("color_scheme", "dark");
     s.theme_preset = get_str("theme_preset", "dark-2026");
     s.locale = get_str("locale", "en-US");
@@ -229,7 +243,7 @@ pub async fn settings_save(
 
     let pairs: &[(&str, String)] = &[
         ("default_model",        settings.default_model.clone()),
-        ("ai_provider",          settings.ai_provider.clone()),
+        ("ai_provider",          infer_provider_from_model(&settings.default_model)),
         ("track_apps",           settings.track_apps.to_string()),
         ("track_screen_ocr",     settings.track_screen_ocr.to_string()),
         ("track_media",          settings.track_media.to_string()),
@@ -499,6 +513,194 @@ pub async fn settings_nvidia_chat_completion(
 }
 
 #[tauri::command]
+pub async fn settings_chat_completion(
+    _app_handle: AppHandle,
+    model: String,
+    messages: Vec<ChatTurn>,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    api_key: Option<String>,
+    provider: Option<String>,
+) -> Result<Value, String> {
+    let provider = provider
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| infer_provider_from_model(&model))
+        .trim()
+        .to_lowercase();
+
+    if provider == "local" || provider == "lmstudio" {
+        return settings_lmstudio_chat_completion(
+            _app_handle,
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            None,
+        ).await;
+    }
+
+    let key = if let Some(k) = api_key.filter(|s| !s.trim().is_empty()) {
+        k
+    } else {
+        let key_name = match provider.as_str() {
+            "openai" => "openai_api_key",
+            "anthropic" => "anthropic_api_key",
+            "groq" => "groq_api_key",
+            "gemini" => "gemini_api_key",
+            _ => "nvidia_api_key",
+        };
+        let from_keyring = get_secret(key_name, "");
+        if !from_keyring.is_empty() {
+            from_keyring
+        } else {
+            let env_var = match provider.as_str() {
+                "openai" => "OPENAI_API_KEY",
+                "anthropic" => "ANTHROPIC_API_KEY",
+                "groq" => "GROQ_API_KEY",
+                "gemini" => "GEMINI_API_KEY",
+                _ => "NVIDIA_API_KEY",
+            };
+            std::env::var(env_var).ok().filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("Missing {} API key. Enter it in Settings > API Keys.", provider.to_uppercase()))?
+        }
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build().map_err(|e| e.to_string())?;
+
+    if provider == "gemini" {
+        let gemini_model = if model.starts_with("models/") { model.clone() } else { format!("models/{}", model) };
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:generateContent?key={}",
+            gemini_model, key
+        );
+        let mut system_text = String::new();
+        let mut contents = Vec::new();
+        for msg in &messages {
+            if msg.role == "system" {
+                system_text.push_str(&msg.content);
+                system_text.push('\n');
+            } else {
+                let role = if msg.role == "assistant" { "model" } else { "user" };
+                contents.push(serde_json::json!({
+                    "role": role,
+                    "parts": [{ "text": msg.content }]
+                }));
+            }
+        }
+        if !system_text.trim().is_empty() {
+            contents.insert(0, serde_json::json!({
+                "role": "user",
+                "parts": [{ "text": system_text.trim() }]
+            }));
+        }
+        let payload = serde_json::json!({
+            "contents": contents,
+            "generationConfig": {
+                "maxOutputTokens": max_tokens.unwrap_or(1024),
+                "temperature": temperature.unwrap_or(0.7)
+            }
+        });
+        let response = client.post(&url)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send().await.map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("Gemini API {} - {}", status, &text[..text.len().min(400)]));
+        }
+        let value: Value = response.json().await.map_err(|e| e.to_string())?;
+        let content = value.pointer("/candidates/0/content/parts/0/text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        return Ok(serde_json::json!({
+            "choices": [{ "message": { "content": content } }],
+            "raw": value
+        }));
+    }
+
+    if provider == "anthropic" {
+        let mut system_prompt = String::new();
+        let mut api_messages = Vec::new();
+        for msg in &messages {
+            if msg.role == "system" {
+                system_prompt.push_str(&msg.content);
+                system_prompt.push('\n');
+            } else {
+                api_messages.push(serde_json::json!({
+                    "role": if msg.role == "assistant" { "assistant" } else { "user" },
+                    "content": msg.content
+                }));
+            }
+        }
+        let mut payload = serde_json::json!({
+            "model": model,
+            "messages": api_messages,
+            "max_tokens": max_tokens.unwrap_or(1024),
+            "temperature": temperature.unwrap_or(0.7)
+        });
+        if !system_prompt.trim().is_empty() {
+            payload.as_object_mut().unwrap().insert(
+                "system".to_string(),
+                Value::String(system_prompt.trim().to_string()),
+            );
+        }
+        let response = client.post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send().await.map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("Anthropic API {} - {}", status, &text[..text.len().min(400)]));
+        }
+        let value: Value = response.json().await.map_err(|e| e.to_string())?;
+        let content = value.get("content")
+            .and_then(|v| v.as_array())
+            .map(|parts| {
+                parts.iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
+        return Ok(serde_json::json!({
+            "choices": [{ "message": { "content": content } }],
+            "raw": value
+        }));
+    }
+
+    let endpoint = match provider.as_str() {
+        "openai" => "https://api.openai.com/v1/chat/completions",
+        "groq" => "https://api.groq.com/openai/v1/chat/completions",
+        _ => "https://integrate.api.nvidia.com/v1/chat/completions",
+    };
+    let payload = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens.unwrap_or(1024),
+        "temperature": temperature.unwrap_or(0.7),
+        "stream": false
+    });
+    let response = client.post(endpoint)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("{} API {} - {}", provider.to_uppercase(), status, &text[..text.len().min(400)]));
+    }
+    response.json::<Value>().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn settings_lmstudio_chat_completion(
     _app_handle: AppHandle,
     model: String,
@@ -567,13 +769,7 @@ pub async fn brain_chat_stream(
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_lowercase())
-        .unwrap_or_else(|| {
-            let conn = crate::intent::db::open(&app_handle).ok();
-            conn.as_ref()
-                .and_then(|c| c.query_row("SELECT value FROM app_settings WHERE key = 'ai_provider'", [], |row| row.get::<_, String>(0)).ok())
-                .unwrap_or_else(|| "nvidia".to_string())
-                .to_lowercase()
-        });
+        .unwrap_or_else(|| infer_provider_from_model(&model));
 
     // Get the right API key from keyring based on provider, or use passed api_key
     let api_key = if !use_local {
@@ -836,4 +1032,3 @@ pub fn brain_cancel_stream() -> Result<bool, String> {
     BRAIN_STREAM_CANCELLED.store(true, Ordering::Relaxed);
     Ok(true)
 }
-

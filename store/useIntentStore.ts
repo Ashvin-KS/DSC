@@ -107,7 +107,6 @@ const DEFAULT_SETTINGS: AppSettings = {
     googleClientId: '',
     googleClientSecret: '',
     defaultModel: 'meta/llama-3.3-70b-instruct',
-    aiProvider: 'nvidia',
     trackApps: true,
     trackScreenOcr: false,
     trackMedia: true,

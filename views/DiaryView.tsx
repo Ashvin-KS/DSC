@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { BookOpen, Sparkles, PenLine, ChevronLeft, ChevronRight, Loader2, Trash2, CalendarClock, BellRing, CheckCircle2 } from 'lucide-react';
+import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
 
 interface DiaryEntry {
     id: string;
@@ -74,17 +75,13 @@ export const DiaryView: React.FC = () => {
     const manualEntries = currentDateEntries.filter(e => !e.isAiGenerated);
     const aiEntries = currentDateEntries.filter(e => e.isAiGenerated);
 
-    /** Resolve API key from settings for the active provider */
-    const getApiKey = useCallback(() => {
-        const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
-        switch (provider) {
-            case 'openai': return settings?.openaiApiKey?.trim() || '';
-            case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
-            case 'groq': return settings?.groqApiKey?.trim() || '';
-            case 'gemini': return (settings as any)?.geminiApiKey?.trim() || '';
-            default: return settings?.nvidiaApiKey?.trim() || '';
-        }
+    const getDefaultModelProvider = useCallback(() => {
+        return resolveProviderForModel((settings as any)?.defaultModel || '');
     }, [settings]);
+
+    const getApiKey = useCallback(() => {
+        return getProviderKey(settings, getDefaultModelProvider());
+    }, [settings, getDefaultModelProvider]);
 
     // Load entries for the ACTIVE DATE ONLY — no cross-date contamination
     useEffect(() => {
@@ -133,7 +130,7 @@ export const DiaryView: React.FC = () => {
             extraContext += `[Only summarize activities from ${targetDate}. Do not reference other dates.]\n`;
 
             const model = (settings as any)?.defaultModel || undefined;
-            const provider = (settings as any)?.aiProvider || undefined;
+            const provider = getDefaultModelProvider();
             const content = await window.atheletiaAPI.diary.generateEntry(targetDate, extraContext, model, apiKey, provider);
             if (!content || typeof content !== 'string' || !content.trim()) {
                 if (!silent) setAiSummaryError('AI returned an empty summary. Ensure your API key is valid and the provider is reachable.');

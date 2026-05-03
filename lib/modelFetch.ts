@@ -13,15 +13,36 @@ export interface MultiProviderModelsResult {
   error: string | null;
 }
 
-function getProviderKey(settings: Record<string, any>, provider: string): string | undefined {
-  switch (provider) {
-    case 'nvidia': return settings?.nvidiaApiKey?.trim();
-    case 'openai': return settings?.openaiApiKey?.trim();
-    case 'anthropic': return settings?.anthropicApiKey?.trim();
-    case 'groq': return settings?.groqApiKey?.trim();
-    case 'gemini': return (settings as any)?.geminiApiKey?.trim();
-    default: return undefined;
+export function normalizeProvider(provider?: string | null): string {
+  const normalized = (provider || '').trim().toLowerCase();
+  if (normalized === 'lmstudio') return 'local';
+  return normalized || 'nvidia';
+}
+
+export function getProviderKey(settings: Record<string, any> | null | undefined, provider: string): string {
+  switch (normalizeProvider(provider)) {
+    case 'nvidia': return settings?.nvidiaApiKey?.trim() || '';
+    case 'openai': return settings?.openaiApiKey?.trim() || '';
+    case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
+    case 'groq': return settings?.groqApiKey?.trim() || '';
+    case 'gemini': return (settings as any)?.geminiApiKey?.trim() || '';
+    default: return '';
   }
+}
+
+export function resolveProviderForModel(
+  modelId?: string | null,
+  explicitProvider?: string | null,
+  fallbackProvider?: string | null
+): string {
+  const explicit = normalizeProvider(explicitProvider);
+  if (modelId?.trim()) {
+    const inferred = inferProviderFromModel(modelId.trim());
+    if (inferred !== 'nvidia') return inferred;
+    if (explicitProvider && explicit !== 'nvidia') return explicit;
+    return inferred;
+  }
+  return normalizeProvider(fallbackProvider);
 }
 
 export async function fetchAllProviderModels(
