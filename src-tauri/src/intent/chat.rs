@@ -130,12 +130,27 @@ fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &st
 
 /// FIXED: API keys are stored in the OS keyring after settings_save (deleted from SQLite).
 /// Read from keyring first, then fall back to SQLite (legacy) and finally env vars.
+fn infer_provider_from_model(model: &str) -> String {
+    let lower = model.trim().to_lowercase();
+    if lower.starts_with("gemini") || lower.starts_with("models/gemini") {
+        "gemini".to_string()
+    } else if lower.starts_with("gpt-") || lower.starts_with('o') {
+        "openai".to_string()
+    } else if lower.starts_with("claude") {
+        "anthropic".to_string()
+    } else if lower.contains("groq") || lower.starts_with("llama-3.3") || lower.starts_with("mixtral") {
+        "groq".to_string()
+    } else {
+        "nvidia".to_string()
+    }
+}
+
 fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
-    // Respect the user's configured ai_provider setting
-    let provider = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'ai_provider'",
+    let model = conn.query_row(
+        "SELECT value FROM app_settings WHERE key = 'default_model'",
         [], |row| row.get::<_, String>(0),
-    ).unwrap_or_else(|_| "nvidia".to_string());
+    ).unwrap_or_default();
+    let provider = infer_provider_from_model(&model);
 
     let key_name = match provider.to_lowercase().as_str() {
         "openai" => "openai_api_key",

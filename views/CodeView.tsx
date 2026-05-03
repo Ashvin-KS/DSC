@@ -32,6 +32,8 @@ import {
 import { useCodeStore, Problem } from '../store/useCodeStore';
 import { useIntentStore } from '../store/useIntentStore';
 import { MermaidBlock } from '../components/MermaidBlock';
+import { useMultiProviderModels, getStoredModelWithProvider, setStoredModelWithProvider } from '../hooks/useMultiProviderModels';
+import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
 
 // --- AI Response Types ---
 interface AiResponse {
@@ -629,20 +631,16 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
   const [aiInput, setAiInput] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState<AiResponse | null>(null);
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(CODE_LAST_MODEL_STORAGE_KEY) || DEFAULT_NIM_MODEL);
-  const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
-  const aiProvider = (settings?.aiProvider || 'nvidia').toLowerCase();
-  const isLocalProvider = aiProvider === 'local' || aiProvider === 'lmstudio';
-  const apiKey = (() => {
-    const provider = (settings?.aiProvider || 'nvidia').toLowerCase();
-    switch (provider) {
-      case 'openai': return settings?.openaiApiKey?.trim() || '';
-      case 'anthropic': return settings?.anthropicApiKey?.trim() || '';
-      case 'groq': return settings?.groqApiKey?.trim() || '';
-      case 'gemini': return settings?.geminiApiKey?.trim() || '';
-      default: return settings?.nvidiaApiKey?.trim() || '';
-    }
-  })();
+  const storedCodeModel = getStoredModelWithProvider(CODE_LAST_MODEL_STORAGE_KEY);
+  const [selectedModel, setSelectedModel] = useState(() => storedCodeModel?.model || localStorage.getItem(CODE_LAST_MODEL_STORAGE_KEY) || settings?.defaultModel || DEFAULT_NIM_MODEL);
+  const [selectedProvider, setSelectedProvider] = useState(() => storedCodeModel?.provider || '');
+  const [availableModels, setAvailableModels] = useState<{ id: string; name?: string; provider?: string }[]>([]);
+  const isLocalProvider = selectedProvider === 'local' || selectedProvider === 'lmstudio';
+  const { groups: cloudGroups, allModels: allCloudModels } = useMultiProviderModels(settings);
+  const effectiveProvider = isLocalProvider
+    ? 'local'
+    : resolveProviderForModel(selectedModel, selectedProvider);
+  const apiKey = getProviderKey(settings, effectiveProvider);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -668,7 +666,7 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
   const shouldCloseBrowser = showSaveConfirm || showFileExistsModal;
   const isResizing = isResizingHorizontal || isResizingVertical;
 
-  // Fetch models on mount
+  // Fetch models on provider/settings changes
   useEffect(() => {
     const fetchModels = async () => {
       try {
@@ -681,33 +679,20 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
             .filter((m: { id: string }) => !!m.id);
 
           if (normalized.length > 0) {
-            setAvailableModels(normalized);
+            setAvailableModels(normalized.map((m: { id: string }) => ({ ...m, provider: 'local' })));
             const hasLastModel = normalized.some((m: { id: string }) => m.id === lastModel);
             setSelectedModel(hasLastModel ? lastModel : normalized[0].id);
+            setSelectedProvider('local');
           } else {
-            setAvailableModels([{ id: lastModel }]);
+            setAvailableModels([{ id: lastModel, provider: 'local' }]);
             setSelectedModel(lastModel);
+            setSelectedProvider('local');
           }
           return;
         }
 
-        if (!apiKey) {
-          setAvailableModels([{ id: DEFAULT_NIM_MODEL }]);
-          setSelectedModel(lastModel);
-          return;
-        }
-
-        const modelsRaw = window.atheletiaAPI?.settings?.getNvidiaModels
-          ? await window.atheletiaAPI.settings.getNvidiaModels(apiKey)
-          : await (async () => {
-            const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
-              headers: { Authorization: `Bearer ${apiKey}` }
-            });
-            return response.json();
-          })();
-
-        const normalized = (Array.isArray(modelsRaw) ? modelsRaw : (modelsRaw?.data || []))
-          .map((m: any) => ({ id: m?.id || String(m) }))
+        const normalized = allCloudModels
+          .map((m: any) => ({ id: m.id, name: m.name || m.id, provider: m.provider }))
           .filter((m: { id: string }) => !!m.id);
 
         if (normalized.length > 0) {
@@ -715,24 +700,28 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
           const hasLastModel = normalized.some((m: { id: string }) => m.id === lastModel);
           if (hasLastModel) {
             setSelectedModel(lastModel);
+            setSelectedProvider(resolveProviderForModel(lastModel, selectedProvider));
           } else {
-            setSelectedModel(normalized[0].id);
+            setSelectedModel(settings?.defaultModel || normalized[0].id);
+            setSelectedProvider(resolveProviderForModel(settings?.defaultModel || normalized[0].id, selectedProvider));
           }
         } else {
-          setAvailableModels([{ id: DEFAULT_NIM_MODEL }]);
+          setAvailableModels([{ id: lastModel, provider: resolveProviderForModel(lastModel, selectedProvider) }]);
           setSelectedModel(lastModel);
+          setSelectedProvider(resolveProviderForModel(lastModel, selectedProvider));
         }
       } catch (e) {
-        setAvailableModels([{ id: DEFAULT_NIM_MODEL }]);
+        setAvailableModels([{ id: DEFAULT_NIM_MODEL, provider: 'nvidia' }]);
       }
     };
     fetchModels();
-  }, [apiKey, settings?.defaultModel, isLocalProvider]);
+  }, [allCloudModels, settings?.defaultModel, isLocalProvider]);
 
   useEffect(() => {
     if (!selectedModel?.trim()) return;
-    localStorage.setItem(CODE_LAST_MODEL_STORAGE_KEY, selectedModel);
-  }, [selectedModel]);
+    const provider = isLocalProvider ? 'local' : resolveProviderForModel(selectedModel, selectedProvider);
+    setStoredModelWithProvider(CODE_LAST_MODEL_STORAGE_KEY, selectedModel, provider);
+  }, [selectedModel, selectedProvider, isLocalProvider]);
 
   useEffect(() => {
     setNotes(problem.notes || '');
@@ -957,7 +946,7 @@ const SplitWorkspace: React.FC<WorkspaceProps> = ({ problem, onBack, onNotify })
 
     if (!isLocalProvider && !apiKey) {
       setAiResponse({
-        explanation: 'API key is not configured. Add it in Settings → API Keys, or switch provider to local LM Studio.',
+        explanation: `${effectiveProvider.toUpperCase()} API key is not configured. Add it in Settings -> API Keys, or switch provider to local LM Studio.`,
         code: '',
         pattern: ''
       });
@@ -1020,8 +1009,9 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
           return response.json();
         }
 
-        if (window.atheletiaAPI?.settings?.nvidiaChatCompletion) {
-          return await window.atheletiaAPI.settings.nvidiaChatCompletion(
+        const provider = resolveProviderForModel(modelId, selectedProvider);
+        if (window.atheletiaAPI?.settings?.chatCompletion) {
+          return await window.atheletiaAPI.settings.chatCompletion(
             modelId,
             [
               { role: 'system', content: systemPrompt },
@@ -1030,10 +1020,11 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
             1024,
             0.2,
             apiKey,
+            provider,
           );
         }
 
-        throw new Error('NVIDIA chat completion not available');
+        throw new Error('Provider-aware chat completion not available');
       };
 
       let data: any;
@@ -1199,17 +1190,43 @@ Your response must be ONLY valid JSON. Do not include any text before or after t
                       autoFocus
                     />
                   </div>
-                  {availableModels
-                    .filter(m => m.id.toLowerCase().includes(modelSearchQuery.toLowerCase()))
-                    .map(m => (
-                      <button
-                        key={m.id}
-                        onClick={() => { setSelectedModel(m.id); setShowModelDropdown(false); setModelSearchQuery(''); }}
-                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#262626] ${selectedModel === m.id ? 'text-purple-400' : 'text-gray-400'}`}
-                      >
-                        {m.id}
-                      </button>
-                    ))}
+                  {isLocalProvider ? (
+                    availableModels
+                      .filter(m => m.id.toLowerCase().includes(modelSearchQuery.toLowerCase()))
+                      .map(m => (
+                        <button
+                          key={m.id}
+                          onClick={() => { setSelectedModel(m.id); setSelectedProvider('local'); setShowModelDropdown(false); setModelSearchQuery(''); }}
+                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#262626] ${selectedModel === m.id ? 'text-purple-400' : 'text-gray-400'}`}
+                        >
+                          {m.name || m.id}
+                        </button>
+                      ))
+                  ) : (
+                    cloudGroups.map(group => {
+                      const models = group.models.filter(m => {
+                        const q = modelSearchQuery.toLowerCase();
+                        return (m.name || m.id).toLowerCase().includes(q) || m.id.toLowerCase().includes(q);
+                      });
+                      if (!models.length) return null;
+                      return (
+                        <div key={group.provider} className="border-b border-[#333]/40 last:border-b-0">
+                          <div className="px-3 py-1 bg-white/5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                            {group.label}
+                          </div>
+                          {models.map(m => (
+                            <button
+                              key={m.id}
+                              onClick={() => { setSelectedModel(m.id); setSelectedProvider(group.provider); setShowModelDropdown(false); setModelSearchQuery(''); }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#262626] ${selectedModel === m.id ? 'text-purple-400' : 'text-gray-400'}`}
+                            >
+                              {m.name || m.id}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               )}
             </div>

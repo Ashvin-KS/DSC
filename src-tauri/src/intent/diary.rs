@@ -103,6 +103,41 @@ fn is_browser_app(app_name: &str) -> bool {
         || app.contains("safari")
 }
 
+fn infer_provider_from_model(model: &str) -> String {
+    let lower = model.trim().to_lowercase();
+    if lower.starts_with("gemini") || lower.starts_with("models/gemini") {
+        "gemini".to_string()
+    } else if lower.starts_with("gpt-") || lower.starts_with('o') {
+        "openai".to_string()
+    } else if lower.starts_with("claude") {
+        "anthropic".to_string()
+    } else if lower.contains("groq") || lower.starts_with("llama-3.3") || lower.starts_with("mixtral") {
+        "groq".to_string()
+    } else {
+        "nvidia".to_string()
+    }
+}
+
+fn provider_key_name(provider: &str) -> &'static str {
+    match provider.to_lowercase().as_str() {
+        "openai" => "openai_api_key",
+        "anthropic" => "anthropic_api_key",
+        "groq" => "groq_api_key",
+        "gemini" => "gemini_api_key",
+        _ => "nvidia_api_key",
+    }
+}
+
+fn provider_env_name(provider: &str) -> &'static str {
+    match provider.to_lowercase().as_str() {
+        "openai" => "OPENAI_API_KEY",
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "groq" => "GROQ_API_KEY",
+        "gemini" => "GEMINI_API_KEY",
+        _ => "NVIDIA_API_KEY",
+    }
+}
+
 fn db_gather_generate_context(
     conn: &rusqlite::Connection,
     date: &str,
@@ -285,25 +320,13 @@ fn db_gather_generate_context(
         context_sections.join("\n\n")
     };
 
-    // Read the user's configured AI provider and model
-    let ai_provider = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'ai_provider'",
-        [], |row| row.get::<_, String>(0),
-    ).unwrap_or_else(|_| "nvidia".to_string());
-
     let ai_model = conn.query_row(
         "SELECT value FROM app_settings WHERE key = 'default_model'",
         [], |row| row.get::<_, String>(0),
     ).unwrap_or_default();
 
-    // Determine the correct API key based on provider
-    let env_key_name = match ai_provider.to_lowercase().as_str() {
-        "openai" => "openai_api_key",
-        "anthropic" => "anthropic_api_key",
-        "groq" => "groq_api_key",
-        "gemini" => "gemini_api_key",
-        _ => "nvidia_api_key",
-    };
+    let ai_provider = infer_provider_from_model(&ai_model);
+    let env_key_name = provider_key_name(&ai_provider);
 
     let mut api_key = None;
     if let Ok(entry) = Entry::new("Atheletia", env_key_name) {
@@ -315,19 +338,11 @@ fn db_gather_generate_context(
     }
     
     if api_key.is_none() {
-        let env_var_name = match ai_provider.to_lowercase().as_str() {
-            "openai" => "OPENAI_API_KEY",
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "groq" => "GROQ_API_KEY",
-            "gemini" => "GEMINI_API_KEY",
-            _ => "NVIDIA_API_KEY",
-        };
-
         api_key = conn.query_row(
             "SELECT value FROM app_settings WHERE key = ?1",
             rusqlite::params![env_key_name], |row| row.get::<_, String>(0),
         ).ok().filter(|s| !s.is_empty())
-        .or_else(|| std::env::var(env_var_name).ok().filter(|s| !s.is_empty()));
+        .or_else(|| std::env::var(provider_env_name(&ai_provider)).ok().filter(|s| !s.is_empty()));
     }
 
     Ok((context_summary, api_key, ai_model, ai_provider))

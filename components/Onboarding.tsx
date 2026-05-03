@@ -84,7 +84,6 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
 
         const updated = {
             ...settings,
-            aiProvider: selectedProvider,
             [provider.settingsKey]: apiKeyInput.trim(),
         };
         setSettings(updated as any);
@@ -143,9 +142,9 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
         return (
             <div className="space-y-4">
                 <p className="text-sm text-gray-300 leading-relaxed">
-                    Pick your AI provider and paste your API key below. You can always change this later in Settings.
+                    Add an API key for any provider you want to use. Atheletia routes requests by the selected model.
                 </p>
-                {/* Provider selector */}
+                {/* API key target */}
                 <div className="space-y-1.5">
                     {AI_PROVIDERS.map((p) => (
                         <button

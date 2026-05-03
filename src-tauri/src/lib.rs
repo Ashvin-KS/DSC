@@ -2096,6 +2096,7 @@ pub fn run() {
             intent::settings::settings_get_lmstudio_models,
             intent::settings::settings_validate_api_key,
             intent::settings::settings_nvidia_chat_completion,
+            intent::settings::settings_chat_completion,
             intent::settings::settings_lmstudio_chat_completion,
             intent::settings::brain_chat_stream,
             intent::settings::brain_cancel_stream,

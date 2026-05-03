@@ -287,6 +287,7 @@ export const createHandleAiSend =
       setCurrentMessages,
       aiProvider,
       selectedProvider,
+      apiKey,
       nvidiaApiKey,
       abortControllerRef,
       selectedContext,
@@ -356,10 +357,13 @@ export const createHandleAiSend =
       return;
     }
 
-    if (aiProvider === 'nvidia' && !nvidiaApiKey) {
+    const effectiveProvider = selectedProvider || aiProvider;
+    const effectiveApiKey = apiKey || nvidiaApiKey || '';
+    const isCloudProvider = aiProvider !== 'local' && aiProvider !== 'lmstudio';
+    if (isCloudProvider && !effectiveApiKey) {
       setCurrentMessages((prev: any[]) => [...prev, {
         sender: 'ai',
-        text: 'NVIDIA API key is missing. Add it in Settings -> API Keys, or switch provider to local LM Studio.'
+        text: `${String(effectiveProvider || 'AI').toUpperCase()} API key is missing. Add it in Settings -> API Keys, or switch provider to local LM Studio.`
       }]);
       return;
     }
@@ -561,8 +565,8 @@ Output rules:
           65536,
           aiMode === 'edit' ? 0.15 : 0.45,
           undefined,
-          nvidiaApiKey,
-          selectedProvider || aiProvider,
+          effectiveApiKey,
+          effectiveProvider,
         );
       } catch (err: any) {
         setCurrentMessages((prev: any[]) => prev.filter((_, i) => i !== msgIdx));

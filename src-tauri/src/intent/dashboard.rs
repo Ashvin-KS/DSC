@@ -204,7 +204,42 @@ pub async fn dashboard_refresh_overview(
     refresh_dashboard_snapshot(app_handle).await
 }
 
-/// Resolve the AI endpoint URL and model name based on the user's AI provider setting.
+fn infer_provider_from_model(model: &str) -> String {
+    let lower = model.trim().to_lowercase();
+    if lower.starts_with("gemini") || lower.starts_with("models/gemini") {
+        "gemini".to_string()
+    } else if lower.starts_with("gpt-") || lower.starts_with('o') {
+        "openai".to_string()
+    } else if lower.starts_with("claude") {
+        "anthropic".to_string()
+    } else if lower.starts_with("llama-") || lower.starts_with("mixtral") {
+        "groq".to_string()
+    } else {
+        "nvidia".to_string()
+    }
+}
+
+fn provider_key_name(provider: &str) -> &'static str {
+    match provider.to_lowercase().as_str() {
+        "openai" => "openai_api_key",
+        "anthropic" => "anthropic_api_key",
+        "groq" => "groq_api_key",
+        "gemini" => "gemini_api_key",
+        _ => "nvidia_api_key",
+    }
+}
+
+fn provider_env_name(provider: &str) -> &'static str {
+    match provider.to_lowercase().as_str() {
+        "openai" => "OPENAI_API_KEY",
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "groq" => "GROQ_API_KEY",
+        "gemini" => "GEMINI_API_KEY",
+        _ => "NVIDIA_API_KEY",
+    }
+}
+
+/// Resolve the AI endpoint URL and model name based on the selected model's provider.
 fn resolve_dashboard_ai_endpoint(provider: &str, user_model: Option<&str>) -> (String, String) {
     match provider.to_lowercase().as_str() {
         "openai" => (
@@ -249,16 +284,15 @@ pub async fn dashboard_summarize_item(
         let item_name2 = item_name.clone();
         move || -> Result<(Option<String>, String, Option<String>, String), String> {
             let conn = crate::intent::db::open(&app)?;
-            let key_name = match conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'ai_provider'",
+            let model = conn.query_row(
+                "SELECT value FROM app_settings WHERE key = 'default_model'",
                 [], |row| row.get::<_, String>(0),
-            ).unwrap_or_else(|_| "nvidia".to_string()).to_lowercase().as_str() {
-                "openai" => "openai_api_key",
-                "anthropic" => "anthropic_api_key",
-                "groq" => "groq_api_key",
-                "gemini" => "gemini_api_key",
-                _ => "nvidia_api_key",
-            };
+            ).ok().filter(|s| !s.is_empty());
+            let provider = model
+                .as_deref()
+                .map(infer_provider_from_model)
+                .unwrap_or_else(|| "nvidia".to_string());
+            let key_name = provider_key_name(&provider);
             
             let mut key = None;
             if let Ok(entry) = Entry::new("Atheletia", key_name) {
@@ -275,24 +309,9 @@ pub async fn dashboard_summarize_item(
                     rusqlite::params![key_name], |row| row.get::<_, String>(0),
                 ).ok().filter(|s| !s.is_empty())
                 .or_else(|| {
-                    let env_key = match key_name {
-                        "openai_api_key" => "OPENAI_API_KEY",
-                        "anthropic_api_key" => "ANTHROPIC_API_KEY",
-                        "groq_api_key" => "GROQ_API_KEY",
-                        "gemini_api_key" => "GEMINI_API_KEY",
-                        _ => "NVIDIA_API_KEY",
-                    };
-                    std::env::var(env_key).ok().filter(|s| !s.is_empty())
+                    std::env::var(provider_env_name(&provider)).ok().filter(|s| !s.is_empty())
                 });
             }
-            let provider = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'ai_provider'",
-                [], |row| row.get::<_, String>(0),
-            ).unwrap_or_else(|_| "nvidia".to_string());
-            let model = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'default_model'",
-                [], |row| row.get::<_, String>(0),
-            ).ok().filter(|s| !s.is_empty());
 
             let mut evidence_lines: Vec<String> = Vec::new();
             if item_type2 == "project" {
@@ -393,35 +412,72 @@ Return plain text with:\n1) What was happening\n2) Key mentions / action items\n
         ));
     };
 
+    let (endpoint, model_name) = resolve_dashboard_ai_endpoint(&provider, model.as_deref());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build().map_err(|e| e.to_string())?;
+
+    let provider_norm = provider.to_lowercase();
+    let system = "You are an assistant that summarizes activity evidence factually. Avoid hallucinations. Do not include romantic, intimate, or personal relationship labels (e.g. 'love interest', 'crush', 'girlfriend', 'boyfriend') or descriptions of personal habits or bad habits in your summaries. Focus only on observable communication patterns and activity evidence. Never output the full name 'Sneha Nair'.";
+
+    if provider_norm == "gemini" {
+        let gemini_url = format!("{}?key={}", endpoint, api_key);
+        let body = serde_json::json!({
+            "contents": [{ "parts": [{ "text": format!("{}\n\n{}", system, prompt) }] }],
+            "generationConfig": { "temperature": 0.2, "maxOutputTokens": 600 }
+        });
+        let value: serde_json::Value = client.post(&gemini_url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send().await.map_err(|e| e.to_string())?
+            .json().await.map_err(|e| e.to_string())?;
+        return Ok(value.pointer("/candidates/0/content/parts/0/text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No summary generated.")
+            .to_string());
+    }
+
+    if provider_norm == "anthropic" {
+        let body = serde_json::json!({
+            "model": model_name,
+            "system": system,
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": 0.2,
+            "max_tokens": 600
+        });
+        let value: serde_json::Value = client.post(&endpoint)
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send().await.map_err(|e| e.to_string())?
+            .json().await.map_err(|e| e.to_string())?;
+        return Ok(value.get("content")
+            .and_then(|v| v.as_array())
+            .map(|parts| parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "No summary generated.".to_string()));
+    }
+
     #[derive(Serialize)] struct Msg { role: String, content: String }
     #[derive(Serialize)] struct Req { model: String, messages: Vec<Msg>, temperature: f32, max_tokens: u32 }
     #[derive(Deserialize)] struct Resp { choices: Vec<Ch> }
     #[derive(Deserialize)] struct Ch { message: Mc }
     #[derive(Deserialize)] struct Mc { content: String }
 
-    let (endpoint, model_name) = resolve_dashboard_ai_endpoint(&provider, model.as_deref());
-
     let req = Req {
         model: model_name,
         messages: vec![
-            Msg { role: "system".into(), content: "You are an assistant that summarizes activity evidence factually. Avoid hallucinations. Do not include romantic, intimate, or personal relationship labels (e.g. 'love interest', 'crush', 'girlfriend', 'boyfriend') or descriptions of personal habits or bad habits in your summaries. Focus only on observable communication patterns and activity evidence. Never output the full name 'Sneha Nair'.".into() },
+            Msg { role: "system".into(), content: system.into() },
             Msg { role: "user".into(), content: prompt },
         ],
         temperature: 0.2,
         max_tokens: 600,
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|e| e.to_string())?;
-    let mut request = client.post(&endpoint).json(&req);
-    request = if provider.to_lowercase() == "anthropic" {
-        request
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-    } else {
-        request.header("Authorization", format!("Bearer {}", api_key))
-    };
+    let request = client.post(&endpoint)
+        .json(&req)
+        .header("Authorization", format!("Bearer {}", api_key));
     let res: Resp = request
         .send().await.map_err(|e| e.to_string())?
         .json().await.map_err(|e| e.to_string())?;
@@ -461,17 +517,15 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
                 Ok(c) => c,
                 Err(_) => return (None, "nvidia".to_string(), None),
             };
-            let provider = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'ai_provider'",
+            let model = conn.query_row(
+                "SELECT value FROM app_settings WHERE key = 'default_model'",
                 [], |row| row.get::<_, String>(0),
-            ).unwrap_or_else(|_| "nvidia".to_string());
-            let key_name = match provider.to_lowercase().as_str() {
-                "openai" => "openai_api_key",
-                "anthropic" => "anthropic_api_key",
-                "groq" => "groq_api_key",
-                "gemini" => "gemini_api_key",
-                _ => "nvidia_api_key",
-            };
+            ).ok().filter(|s| !s.is_empty());
+            let provider = model
+                .as_deref()
+                .map(infer_provider_from_model)
+                .unwrap_or_else(|| "nvidia".to_string());
+            let key_name = provider_key_name(&provider);
             
             let mut key = None;
             if let Ok(entry) = Entry::new("Atheletia", key_name) {
@@ -488,20 +542,9 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
                     rusqlite::params![key_name], |row| row.get::<_, String>(0),
                 ).ok().filter(|s| !s.is_empty())
                 .or_else(|| {
-                    let env_key = match key_name {
-                        "openai_api_key" => "OPENAI_API_KEY",
-                        "anthropic_api_key" => "ANTHROPIC_API_KEY",
-                        "groq_api_key" => "GROQ_API_KEY",
-                        "gemini_api_key" => "GEMINI_API_KEY",
-                        _ => "NVIDIA_API_KEY",
-                    };
-                    std::env::var(env_key).ok().filter(|s| !s.is_empty())
+                    std::env::var(provider_env_name(&provider)).ok().filter(|s| !s.is_empty())
                 });
             }
-            let model = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'default_model'",
-                [], |row| row.get::<_, String>(0),
-            ).ok().filter(|s| !s.is_empty());
             (key, provider, model)
         }
     }).await.unwrap_or((None, "nvidia".to_string(), None));
@@ -835,6 +878,29 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
             .and_then(|p| p.as_array()).and_then(|parts| parts.first())
             .and_then(|part| part.get("text")).and_then(|t| t.as_str())
             .unwrap_or("{}").to_string()
+    } else if provider_norm == "anthropic" {
+        let body = serde_json::json!({
+            "model": model_name,
+            "system": "You output valid JSON only. For the contacts array, the 'context' field must only describe professional or social interaction patterns (e.g. '3 interactions in WhatsApp'). Never include romantic, intimate, or personal relationship labels such as 'love interest', 'crush', 'girlfriend', 'boyfriend', or descriptions of personal habits. Do not include any person named 'Sneha Nair' in the contacts array.",
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": 0.2,
+            "max_tokens": 2048
+        });
+        let resp = client.post(&endpoint)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body).send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("AI {} - {}", status, &text[..text.len().min(300)]));
+        }
+        let value: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        value.get("content")
+            .and_then(|v| v.as_array())
+            .map(|parts| parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""))
+            .unwrap_or_default()
     } else {
         let req = Req {
             model: model_name,
@@ -844,15 +910,10 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
             ],
             temperature: 0.2,
         };
-        let mut request = client.post(&endpoint).json(&req);
-        request = if provider_norm == "anthropic" {
-            request
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
-        } else {
-            request.header("Authorization", format!("Bearer {}", api_key))
-        };
-        let res: Resp = request.send().await.map_err(|e| e.to_string())?
+        let res: Resp = client.post(&endpoint)
+            .json(&req)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send().await.map_err(|e| e.to_string())?
             .json().await.map_err(|e| e.to_string())?;
         res.choices.into_iter().next().map(|c| c.message.content).unwrap_or_default()
     };
