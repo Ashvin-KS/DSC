@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
+use tauri_plugin_autostart::ManagerExt;
 use keyring::Entry;
 
 static BRAIN_STREAM_CANCELLED: AtomicBool = AtomicBool::new(false);
