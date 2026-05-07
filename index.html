@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atheletia — Your AI-Powered Productivity Command Center</title>
+  <meta name="description" content="A beautiful desktop app that combines AI chat, task management, code practice, music, and focus tools into one seamless experience. Built with Tauri + Rust.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- LOADING SCREEN -->
+<div class="loader" id="loader">
+  <div class="loader-logo">
+    <svg viewBox="0 0 100 100"><path d="M50 10 L20 90 L35 90 L43 65 L57 65 L65 90 L80 90 L50 10 M46 55 L50 35 L54 55 Z"/></svg>
+  </div>
+  <div class="loader-bar"><div class="loader-bar-inner"></div></div>
+  <div class="loader-text">INITIALIZING</div>
+</div>
+
+<!-- LOGO CURSOR -->
+<div class="logo-cursor" id="logoCursor">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#e07a5f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L4 21h16L12 3z"/><path d="M8 14h8"/></svg>
+</div>
+<div class="cursor-dot" id="cursorDot"></div>
+
+<!-- GRAIN OVERLAY -->
+<div class="grain"></div>
+
+<!-- NAVBAR -->
+<nav class="navbar" id="navbar">
+  <div class="navbar-inner">
+    <a href="#" class="logo">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L4 21h16L12 3z"/><path d="M8 14h8"/></svg>
+      </div>
+      <span class="logo-name">Atheletia</span>
+    </a>
+    <div class="nav-right">
+      <div class="nav-links">
+        <a href="#manifesto">Story</a>
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+      </div>
+      <button class="menu-toggle" id="menuToggle" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- FULL-SCREEN MENU -->
+<div class="fs-menu" id="fsMenu">
+  <div class="fs-menu-inner">
+    <a href="#" class="fs-menu-item" onclick="closeMenu()"><span class="fs-menu-index">01</span><span class="fs-menu-link">Home<span class="fs-menu-dot"></span></span></a>
+    <a href="#manifesto" class="fs-menu-item" onclick="closeMenu()"><span class="fs-menu-index">02</span><span class="fs-menu-link">The Story<span class="fs-menu-dot"></span></span></a>
+    <a href="#features" class="fs-menu-item" onclick="closeMenu()"><span class="fs-menu-index">03</span><span class="fs-menu-link">Features<span class="fs-menu-dot"></span></span></a>
+    <a href="#download" class="fs-menu-item" onclick="closeMenu()"><span class="fs-menu-index">04</span><span class="fs-menu-link">Download<span class="fs-menu-dot"></span></span></a>
+  </div>
+</div>
+
+<!-- HERO -->
+<section class="hero" id="hero">
+  <canvas class="hero-canvas" id="heroCanvas"></canvas>
+  <div class="hero-content">
+    <div class="hero-badge" id="heroBadge">
+      <span class="hero-badge-dot"></span>
+      <span>AI-Powered Desktop Experience</span>
+    </div>
+    <h1 class="hero-title" id="heroTitle">
+      <span class="line"><span class="line-inner">Your Personal</span></span>
+      <span class="line"><span class="line-inner">Command Center</span></span>
+    </h1>
+    <p class="hero-sub" id="heroSub">Atheletia brings together AI chat, task management, code practice, music, and focus tools into one beautiful, seamless desktop experience. Built with Tauri for blazing performance.</p>
+    <div class="hero-cta-group" id="heroCta">
+      <a href="assets/Atheletia.msi" class="btn-main" download>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </a>
+      <a href="#features" class="btn-ghost-main">Explore Features</a>
+    </div>
+    <div class="hero-stats-row" id="heroStats">
+      <div class="hero-stat"><div class="hero-stat-value">10+</div><div class="hero-stat-label">Integrated Tools</div></div>
+      <div class="hero-stat"><div class="hero-stat-value">16</div><div class="hero-stat-label">Theme Presets</div></div>
+      <div class="hero-stat"><div class="hero-stat-value">100%</div><div class="hero-stat-label">Free &amp; Open</div></div>
+    </div>
+  </div>
+  <div class="scroll-indicator" id="scrollInd">
+    <span>Scroll</span>
+    <div class="scroll-arrow"></div>
+  </div>
+</section>
+
+<!-- MARQUEE -->
+<div class="marquee-section">
+  <div class="marquee-track">
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Built with Tauri + Rust</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>React + TypeScript</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Windows Desktop</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Multi-Provider AI</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Google Calendar Sync</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Markdown Vault</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Built with Tauri + Rust</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>React + TypeScript</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Windows Desktop</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Multi-Provider AI</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Google Calendar Sync</div>
+    <div class="marquee-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Markdown Vault</div>
+  </div>
+</div>
+
+<!-- MANIFESTO -->
+<section class="section section-pinned section-dark" id="manifesto">
+  <div class="watermark" style="top: 2rem; left: 6vw;">01</div>
+  <div class="scene-grid">
+    <div class="scene-text">
+      <span class="section-label reveal">The Problem</span>
+      <h2 class="section-headline reveal">Your workflow is broken.</h2>
+      <p class="section-body reveal">12 apps. 12 contexts. Zero focus. Developers and creatives juggle a dozen tools daily. ChatGPT here, Spotify there, Notion somewhere else. Your attention is shattered before you even start.</p>
+      <div class="manifesto-counter reveal">
+        <div class="manifesto-counter-value" id="counterApps">0</div>
+        <div class="manifesto-counter-label">Average app switches per hour</div>
+      </div>
+    </div>
+    <div class="scene-visual reveal reveal-d2">
+      <div class="scene-frame">
+        <div class="preview-titlebar">
+          <div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+          <span class="titlebar-title">Context Switching — The Cost</span>
+        </div>
+        <div style="padding: 2rem; background: var(--bg1); display: flex; flex-direction: column; gap: 1rem;">
+          <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg2); border-radius: 12px; border: 1px solid var(--border);">
+            <div style="width: 36px; height: 36px; background: var(--bg3); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--accent);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+            <div><div style="font-size: 0.8rem; font-weight: 600;">ChatGPT</div><div style="font-size: 0.7rem; color: var(--text3);">Switching away...</div></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg2); border-radius: 12px; border: 1px solid var(--border);">
+            <div style="width: 36px; height: 36px; background: var(--bg3); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--sage);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+            <div><div style="font-size: 0.8rem; font-weight: 600;">Google Calendar</div><div style="font-size: 0.7rem; color: var(--text3);">Checking schedule...</div></div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--bg2); border-radius: 12px; border: 1px solid var(--border);">
+            <div style="width: 36px; height: 36px; background: var(--bg3); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--peach);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+            <div><div style="font-size: 0.8rem; font-weight: 600;">Spotify</div><div style="font-size: 0.7rem; color: var(--text3);">Need focus music...</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PHILOSOPHY -->
+<section class="section" id="philosophy">
+  <div class="watermark" style="top: 4rem; right: 6vw;">02</div>
+  <div style="max-width: 1400px; margin: 0 auto;">
+    <span class="section-label reveal">The Philosophy</span>
+    <h2 class="section-headline reveal">What if one app<br>could replace them all?</h2>
+    <p class="section-body reveal">Atheletia is a statement against fragmented workflows. One native desktop app. Every tool. Zero compromise.</p>
+    <div class="pillars-grid">
+      <div class="pillar-card reveal reveal-d1">
+        <div class="pillar-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+        <h3>Native Speed</h3>
+        <p>Sub-50ms cold start. Rust + Tauri. No Electron bloat. Your app opens faster than your browser.</p>
+      </div>
+      <div class="pillar-card reveal reveal-d2">
+        <div class="pillar-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h3>Local First</h3>
+        <p>Your data lives on your device in SQLite. API keys stored in system keyring. Never phoned home.</p>
+      </div>
+      <div class="pillar-card reveal reveal-d3">
+        <div class="pillar-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <h3>Always There</h3>
+        <p>System tray. One click. Every tool. Start a Pomodoro, control music, or navigate anywhere instantly.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features-cinematic" id="features">
+  <div class="features-header">
+    <span class="section-label reveal">The Workspace</span>
+    <h2 class="section-headline reveal">Everything you need.</h2>
+    <p class="section-body reveal">Eight powerful tools. One cohesive experience. No more switching apps — everything is right where you need it.</p>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="showcase-row">
+    <div class="showcase-text reveal">
+      <h3>Command Center</h3>
+      <p>Your daily overview with LeetCode progress, fitness tracking, goals, AI-powered summaries, and project updates. Everything you need at a single glance.</p>
+      <div class="showcase-tags"><span>Real-time stats</span><span>AI summaries</span><span>Goal tracking</span><span>Projects</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Command Center</span></div>
+        <img src="assets/dashboard.png" alt="Dashboard">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- AI Chat -->
+  <div class="showcase-row reverse">
+    <div class="showcase-text reveal">
+      <h3>Multi-Provider AI Chat</h3>
+      <p>Connect to OpenAI, NVIDIA NIM, Anthropic, Groq, or Gemini. Switch models on the fly, save favorites, and get intelligent assistance with streaming markdown responses.</p>
+      <div class="showcase-tags"><span>5+ Providers</span><span>Model favorites</span><span>Streaming</span><span>Markdown</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — AI Chat</span></div>
+        <img src="assets/chat.png" alt="AI Chat">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- Brain Vault -->
+  <div class="showcase-row">
+    <div class="showcase-text reveal">
+      <h3>Brain Vault</h3>
+      <p>Markdown-based note-taking with an AI assistant that understands your entire vault. Search across all notes, get summaries, and let AI organize your thoughts.</p>
+      <div class="showcase-tags"><span>Markdown</span><span>Vault search</span><span>AI assistant</span><span>TipTap editor</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Brain Vault</span></div>
+        <img src="assets/vault.png" alt="Brain Vault">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- Schedule -->
+  <div class="showcase-row reverse">
+    <div class="showcase-text reveal">
+      <h3>Smart Schedule</h3>
+      <p>Google Calendar integration with beautiful day and week views. Drag-and-drop tasks, set reminders, and stay on top of your commitments.</p>
+      <div class="showcase-tags"><span>Google Sync</span><span>Timeline view</span><span>Drag &amp; drop</span><span>Reminders</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Schedule</span></div>
+        <img src="assets/schedule.png" alt="Schedule">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- Zen -->
+  <div class="showcase-row">
+    <div class="showcase-text reveal">
+      <h3>Zen Mode</h3>
+      <p>Pomodoro timer with music sync. Start a focus session and let the app automatically manage your music, breaks, and notifications.</p>
+      <div class="showcase-tags"><span>Pomodoro</span><span>Music sync</span><span>Break reminders</span><span>Fullscreen</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Zen Mode</span></div>
+        <img src="assets/zen.png" alt="Zen Mode">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- Music -->
+  <div class="showcase-row reverse">
+    <div class="showcase-text reveal">
+      <h3>Music Player</h3>
+      <p>Built-in music player with YouTube integration. Create playlists, search for tracks, and sync playback with your focus sessions.</p>
+      <div class="showcase-tags"><span>YouTube Search</span><span>Playlists</span><span>Queue</span><span>Focus sync</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Music</span></div>
+        <img src="assets/music.png" alt="Music">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- Code -->
+  <div class="showcase-row">
+    <div class="showcase-text reveal">
+      <h3>Code Practice</h3>
+      <p>LeetCode problem tracker with AI-powered hints. Import your CSV, filter by difficulty, track your progress, and get intelligent explanations when stuck.</p>
+      <div class="showcase-tags"><span>CSV Import</span><span>AI Hints</span><span>Progress</span><span>Difficulty</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Code Practice</span></div>
+        <img src="assets/leetcode-editor.png" alt="Code Practice">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+
+  <!-- Diary -->
+  <div class="showcase-row reverse">
+    <div class="showcase-text reveal">
+      <h3>AI Diary</h3>
+      <p>Daily journaling with AI-generated summaries based on your tracked activity. Reflect on your day, track your thoughts, and watch your progress over time.</p>
+      <div class="showcase-tags"><span>Daily entries</span><span>AI summaries</span><span>Date nav</span><span>Markdown</span></div>
+    </div>
+    <div class="showcase-media reveal reveal-d2">
+      <div class="showcase-media-inner">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Diary</span></div>
+        <img src="assets/diary.png" alt="Diary">
+      </div>
+      <div class="showcase-glow"></div>
+    </div>
+  </div>
+</section>
+
+<!-- TRAY -->
+<section class="section section-dark" id="tray">
+  <div class="tray-showcase-section">
+    <div class="tray-visual reveal">
+      <div class="tray-phone">
+        <div class="preview-titlebar"><div class="titlebar-dots"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div><span class="titlebar-title">Atheletia — Tray</span></div>
+        <img src="assets/tray.png" alt="Tray Window">
+      </div>
+    </div>
+    <div>
+      <span class="section-label reveal">System Tray</span>
+      <h2 class="section-headline reveal">Always within reach.</h2>
+      <p class="section-body reveal">Atheletia lives in your system tray. Quick-open any tool, control music, start focus sessions, and navigate instantly without breaking your workflow.</p>
+      <div class="tray-features-list">
+        <div class="tray-feat reveal reveal-d1"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg><span>Quick navigation to any tool</span></div>
+        <div class="tray-feat reveal reveal-d2"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Music playback controls</span></div>
+        <div class="tray-feat reveal reveal-d3"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Pomodoro timer from tray</span></div>
+        <div class="tray-feat reveal reveal-d4"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>System tray access</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SPECS -->
+<section class="specs-section" id="specs">
+  <div style="max-width: 1400px; margin: 0 auto;">
+    <span class="section-label reveal">Specifications</span>
+    <h2 class="section-headline reveal">Built without compromise.</h2>
+    <div class="specs-grid">
+      <div class="spec-card reveal reveal-d1">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+        <h4>16 Theme Presets</h4>
+        <p>From Dark 2026 to Solarized, Monokai to Quiet Light. Light and dark for every preference.</p>
+      </div>
+      <div class="spec-card reveal reveal-d2">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <h4>Multi-Provider AI</h4>
+        <p>OpenAI, NVIDIA NIM, Anthropic, Groq, Gemini, and local LM Studio endpoints.</p>
+      </div>
+      <div class="spec-card reveal reveal-d3">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        <h4>Local SQLite</h4>
+        <p>All your data stored locally. No cloud dependency. Your privacy, your rules.</p>
+      </div>
+      <div class="spec-card reveal reveal-d4">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <h4>Google Sync</h4>
+        <p>Calendar and Tasks integration with OAuth. Optional and fully controlled by you.</p>
+      </div>
+      <div class="spec-card reveal reveal-d1">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        <h4>YouTube Music</h4>
+        <p>Search, playlists, liked songs, queue, and playback controls with focus sync.</p>
+      </div>
+      <div class="spec-card reveal reveal-d2">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <h4>Pomodoro Timer</h4>
+        <p>Focus sessions with configurable durations. Syncs with music automatically.</p>
+      </div>
+      <div class="spec-card reveal reveal-d3">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <h4>Activity Tracking</h4>
+        <p>Tracks active windows and apps. Categorizes usage and shows time breakdowns.</p>
+      </div>
+      <div class="spec-card reveal reveal-d4">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <h4>Secure Keyring</h4>
+        <p>API keys stored in your OS keyring. Encrypted. Never written to plain text.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD -->
+<section class="download-section" id="download">
+  <div class="download-card">
+    <div>
+      <span class="section-label reveal">Download</span>
+      <h2 class="download-title reveal">Ready to take control?</h2>
+      <p class="download-sub reveal">Download Atheletia for your desktop. Free, open source, and built to last.</p>
+      <div class="download-steps">
+        <div class="dl-step reveal"><span class="dl-num">1</span><span>Download the installer</span></div>
+        <div class="dl-step reveal"><span class="dl-num">2</span><span>Run the .msi file</span></div>
+        <div class="dl-step reveal"><span class="dl-num">3</span><span>Add your API keys</span></div>
+        <div class="dl-step reveal"><span class="dl-num">4</span><span>Start being productive</span></div>
+      </div>
+    </div>
+    <div class="download-box reveal">
+      <div class="dl-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+      <h3>Windows Application</h3>
+      <div class="dl-meta"><span>Windows 10+</span><span>/</span><span>Tauri + Rust</span><span>/</span><span>Open Source</span></div>
+      <a href="assets/Atheletia.msi" class="btn-main" style="width:100%; justify-content:center;" download>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download for Windows
+      </a>
+      <p class="dl-note">MIT License. Free forever.</p>
+    </div>
+    <div class="download-orb"></div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq-section" id="faq">
+  <span class="section-label reveal">FAQ</span>
+  <h2 class="section-headline reveal" style="margin-bottom: 3rem;">Questions.</h2>
+  <div class="faq-list">
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><h3>Is Atheletia really free?</h3><span class="faq-toggle">+</span></div>
+      <div class="faq-answer"><p>Yes. Completely free and open source under the MIT License. You only provide your own API keys for AI features.</p></div>
+    </div>
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><h3>Does my data leave my machine?</h3><span class="faq-toggle">+</span></div>
+      <div class="faq-answer"><p>Absolutely. All data is stored locally in SQLite on your device. API keys go to your OS keyring. Nothing is collected.</p></div>
+    </div>
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><h3>Which AI models does it support?</h3><span class="faq-toggle">+</span></div>
+      <div class="faq-answer"><p>OpenAI, NVIDIA NIM, Anthropic, Groq, Gemini, and local LM Studio endpoints. Switch anytime in Settings.</p></div>
+    </div>
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><h3>Will it slow down my PC?</h3><span class="faq-toggle">+</span></div>
+      <div class="faq-answer"><p>Not at all. Atheletia is a native binary built with Rust. It uses less RAM than a single browser tab.</p></div>
+    </div>
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><h3>Can I use it without any AI provider?</h3><span class="faq-toggle">+</span></div>
+      <div class="faq-answer"><p>Absolutely. The scheduler, music player, LeetCode browser, activity tracker, vault, and Pomodoro timer all work completely offline. AI features degrade gracefully when no key is configured.</p></div>
+    </div>
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><h3>How do I install it?</h3><span class="faq-toggle">+</span></div>
+      <div class="faq-answer"><p>Download the Windows .msi installer from GitHub and run it. Requires Windows 10 or later.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="footer-watermark">A</div>
+  <div style="max-width: 1400px; margin: 0 auto; padding: 0 6vw;">
+    <p class="footer-tagline">Built for the obsessively productive.</p>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="logo-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L4 21h16L12 3z"/><path d="M8 14h8"/></svg>
+        </div>
+        <div>
+          <div class="footer-name">Atheletia</div>
+          <div class="footer-tag">Your AI-Powered Command Center</div>
+        </div>
+      </div>
+      <div class="footer-nav">
+        <a href="#manifesto">Story</a>
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <div class="footer-contact">
+        <div class="footer-contact-label">Open Source</div>
+        <p>MIT License<br>Built with Tauri + Rust<br>React + TypeScript</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2026 Atheletia</span>
+      <span>Made with Tauri</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ============================================================
+// LOADING SCREEN
+// ============================================================
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    document.getElementById('loader').classList.add('hidden');
+    revealHero();
+  }, 1500);
+});
+
+function revealHero() {
+  document.getElementById('heroTitle').classList.add('revealed');
+  document.getElementById('heroSub').classList.add('revealed');
+  document.getElementById('heroCta').classList.add('revealed');
+  document.getElementById('heroStats').classList.add('revealed');
+  document.getElementById('scrollInd').classList.add('revealed');
+}
+
+// ============================================================
+// LOGO CURSOR (rocket-fast, trails, directional rotation)
+// ============================================================
+const cursor = document.getElementById('logoCursor');
+const cursorDot = document.getElementById('cursorDot');
+let mouseX = 0, mouseY = 0;
+let curX = 0, curY = 0, dotX = 0, dotY = 0;
+let prevX = 0, prevY = 0, angle = 0;
+let lastTrailX = 0, lastTrailY = 0;
+
+document.addEventListener('mousemove', (e) => {
+  mouseX = e.clientX; mouseY = e.clientY;
+
+  // Trail particles
+  const dist = Math.hypot(e.clientX - lastTrailX, e.clientY - lastTrailY);
+  const speed = Math.hypot(e.clientX - prevX, e.clientY - prevY);
+  if (dist > 5) {
+    lastTrailX = e.clientX; lastTrailY = e.clientY;
+    const size = Math.min(12, 4 + speed * 0.6);
+    const trail = document.createElement('div');
+    trail.className = 'pixel-trail';
+    trail.style.width = size + 'px';
+    trail.style.height = size + 'px';
+    trail.style.left = (e.clientX - size / 2) + 'px';
+    trail.style.top = (e.clientY - size / 2) + 'px';
+    document.body.appendChild(trail);
+    setTimeout(() => trail.remove(), 500);
+  }
+  prevX = e.clientX; prevY = e.clientY;
+});
+
+// Click boost animation
+document.addEventListener('mousedown', (e) => {
+  const boost = document.createElement('div');
+  boost.className = 'cursor-boost';
+  boost.style.left = (e.clientX - 20) + 'px';
+  boost.style.top = (e.clientY - 20) + 'px';
+  document.body.appendChild(boost);
+  setTimeout(() => boost.remove(), 400);
+});
+
+function animateCursor() {
+  // Logo — instant follow + directional rotation
+  curX += (mouseX - curX) * 0.75;
+  curY += (mouseY - curY) * 0.75;
+  const dx = mouseX - curX;
+  const dy = mouseY - curY;
+  const velocityAngle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+  angle += (velocityAngle - angle) * 0.15;
+  cursor.style.left = (curX - 14) + 'px';
+  cursor.style.top = (curY - 14) + 'px';
+  cursor.style.transform = `rotate(${angle}deg)`;
+
+  // Dot — instant
+  dotX += (mouseX - dotX) * 0.8;
+  dotY += (mouseY - dotY) * 0.8;
+  cursorDot.style.left = (dotX - 2) + 'px';
+  cursorDot.style.top = (dotY - 2) + 'px';
+
+  requestAnimationFrame(animateCursor);
+}
+animateCursor();
+
+document.querySelectorAll('a, button, .menu-toggle, .faq-item, .spec-card, .showcase-media-inner, .tray-phone, .btn-main, .btn-ghost-main').forEach(el => {
+  el.addEventListener('mouseenter', () => cursor.classList.add('hover'));
+  el.addEventListener('mouseleave', () => cursor.classList.remove('hover'));
+});
+
+// ============================================================
+// NAVBAR SCROLL
+// ============================================================
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 50);
+});
+
+// ============================================================
+// FULL-SCREEN MENU
+// ============================================================
+const menuToggle = document.getElementById('menuToggle');
+const fsMenu = document.getElementById('fsMenu');
+
+menuToggle.addEventListener('click', () => {
+  menuToggle.classList.toggle('active');
+  fsMenu.classList.toggle('open');
+  document.body.style.overflow = fsMenu.classList.contains('open') ? 'hidden' : '';
+});
+
+function closeMenu() {
+  menuToggle.classList.remove('active');
+  fsMenu.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+// ============================================================
+// FAQ ACCORDION
+// ============================================================
+function toggleFaq(item) {
+  const isOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item').forEach(el => el.classList.remove('open'));
+  if (!isOpen) item.classList.add('open');
+}
+
+// ============================================================
+// CANVAS MESH GRADIENT (Hero Background)
+// ============================================================
+const canvas = document.getElementById('heroCanvas');
+const ctx = canvas.getContext('2d');
+let cw, ch;
+
+function resizeCanvas() {
+  cw = canvas.width = window.innerWidth;
+  ch = canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+const points = [
+  { x: 0.2, y: 0.3, vx: 0.0003, vy: 0.0002, r: 0.4, color: [224, 122, 95] },
+  { x: 0.7, y: 0.2, vx: -0.0002, vy: 0.0003, r: 0.35, color: [242, 204, 143] },
+  { x: 0.5, y: 0.7, vx: 0.0002, vy: -0.0003, r: 0.45, color: [122, 154, 122] },
+  { x: 0.8, y: 0.6, vx: -0.0003, vy: -0.0002, r: 0.3, color: [224, 122, 95] },
+  { x: 0.3, y: 0.8, vx: 0.0001, vy: 0.0002, r: 0.25, color: [242, 162, 133] },
+];
+
+function drawGradient() {
+  const imageData = ctx.createImageData(cw, ch);
+  const data = imageData.data;
+  
+  for (let y = 0; y < ch; y += 2) {
+    for (let x = 0; x < cw; x += 2) {
+      let r = 8, g = 8, b = 8, total = 0;
+      for (const p of points) {
+        const dx = (x / cw) - p.x;
+        const dy = (y / ch) - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const influence = Math.max(0, 1 - dist / p.r);
+        const weight = influence * influence;
+        r += p.color[0] * weight;
+        g += p.color[1] * weight;
+        b += p.color[2] * weight;
+        total += weight;
+      }
+      if (total > 0) { r /= total; g /= total; b /= total; }
+      r = Math.min(255, r * 0.15 + 8);
+      g = Math.min(255, g * 0.15 + 8);
+      b = Math.min(255, b * 0.15 + 8);
+      
+      const idx = (y * cw + x) * 4;
+      data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
+      if (x + 1 < cw) { data[idx + 4] = r; data[idx + 5] = g; data[idx + 6] = b; data[idx + 7] = 255; }
+      if (y + 1 < ch) {
+        const idx2 = ((y + 1) * cw + x) * 4;
+        data[idx2] = r; data[idx2 + 1] = g; data[idx2 + 2] = b; data[idx2 + 3] = 255;
+      }
+    }
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function animateCanvas() {
+  for (const p of points) {
+    p.x += p.vx; p.y += p.vy;
+    if (p.x < -0.2 || p.x > 1.2) p.vx *= -1;
+    if (p.y < -0.2 || p.y > 1.2) p.vy *= -1;
+  }
+  // Redraw only every 2nd frame for performance
+  drawGradient();
+  requestAnimationFrame(animateCanvas);
+}
+animateCanvas();
+
+// ============================================================
+// SCROLL REVEAL (Intersection Observer)
+// ============================================================
+const revealObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+      // Counter animation for manifesto
+      if (entry.target.id === 'manifesto') animateCounter();
+    }
+  });
+}, { threshold: 0.15 });
+
+document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+// Counter animation
+let counterAnimated = false;
+function animateCounter() {
+  if (counterAnimated) return;
+  counterAnimated = true;
+  const el = document.getElementById('counterApps');
+  let n = 0;
+  const target = 47;
+  const interval = setInterval(() => {
+    n += 1;
+    el.textContent = n;
+    if (n >= target) clearInterval(interval);
+  }, 30);
+}
+
+// ============================================================
+// SPEC CARD SPOTLIGHT (mouse follow)
+// ============================================================
+document.querySelectorAll('.spec-card').forEach(card => {
+  card.addEventListener('mousemove', (e) => {
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty('--mouse-x', (e.clientX - rect.left) + 'px');
+    card.style.setProperty('--mouse-y', (e.clientY - rect.top) + 'px');
+  });
+});
+</script>
+
+</body>
+</html>
