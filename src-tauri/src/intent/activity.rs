@@ -59,19 +59,19 @@ impl ActivityEvent {
         start_time: i64,
         end_time: i64,
     ) -> Self {
-        use twox_hash::XxHash64;
         use std::hash::Hasher;
-        
+        use twox_hash::XxHash64;
+
         let mut hasher = XxHash64::default();
         hasher.write(app_name.as_bytes());
         let app_hash = hasher.finish();
-        
+
         let mut hasher = XxHash64::default();
         hasher.write(window_title.to_lowercase().as_bytes());
         let window_title_hash = hasher.finish();
-        
+
         let duration_seconds = (end_time - start_time) as i32;
-        
+
         Self {
             app_name,
             app_hash,
@@ -85,7 +85,6 @@ impl ActivityEvent {
         }
     }
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ActivityStats {
@@ -126,33 +125,35 @@ pub async fn get_activities(
          LIMIT ?3",
     ).map_err(|e| e.to_string())?;
 
-    let rows = stmt.query_map(
-        rusqlite::params![start_time, end_time, lim],
-        |row| {
-            let metadata: Option<crate::intent::activity::ActivityMetadata> = row.get::<_, Option<Vec<u8>>>(7)
+    let rows = stmt
+        .query_map(rusqlite::params![start_time, end_time, lim], |row| {
+            let metadata: Option<crate::intent::activity::ActivityMetadata> = row
+                .get::<_, Option<Vec<u8>>>(7)
                 .ok()
                 .flatten()
                 .and_then(|blob| serde_json::from_slice(&blob).ok());
             Ok(Activity {
-                id:               row.get(0)?,
-                app_name:         row.get(1)?,
-                window_title:     row.get(2)?,
-                category_id:      row.get(3)?,
-                start_time:       row.get(4)?,
-                end_time:         row.get(5)?,
+                id: row.get(0)?,
+                app_name: row.get(1)?,
+                window_title: row.get(2)?,
+                category_id: row.get(3)?,
+                start_time: row.get(4)?,
+                end_time: row.get(5)?,
                 duration_seconds: row.get(6)?,
                 metadata,
             })
-        },
-    ).map_err(|e| e.to_string())?;
+        })
+        .map_err(|e| e.to_string())?;
 
-    Ok(rows.filter_map(|r| match r {
-        Ok(activity) => Some(activity),
-        Err(e) => {
-            eprintln!("[get_activities] Failed to parse activity row: {}", e);
-            None
-        }
-    }).collect())
+    Ok(rows
+        .filter_map(|r| match r {
+            Ok(activity) => Some(activity),
+            Err(e) => {
+                eprintln!("[get_activities] Failed to parse activity row: {}", e);
+                None
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -163,34 +164,43 @@ pub async fn get_activity_stats(
 ) -> Result<ActivityStats, String> {
     let conn = crate::intent::db::open(&app_handle)?;
 
-    let (total_seconds, total_events): (i64, i64) = conn.query_row(
-        "SELECT COALESCE(SUM(duration_seconds), 0), COUNT(*)
+    let (total_seconds, total_events): (i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(duration_seconds), 0), COUNT(*)
          FROM activities WHERE start_time >= ?1 AND start_time <= ?2",
-        rusqlite::params![start_time, end_time],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).map_err(|e| e.to_string())?;
+            rusqlite::params![start_time, end_time],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare(
-        "SELECT app_name, SUM(duration_seconds) as total, COUNT(*) as sessions
+    let mut stmt = conn
+        .prepare(
+            "SELECT app_name, SUM(duration_seconds) as total, COUNT(*) as sessions
          FROM activities
          WHERE start_time >= ?1 AND start_time <= ?2
          GROUP BY app_name
          ORDER BY total DESC
          LIMIT 10",
-    ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
-    let top_apps = stmt.query_map(
-        rusqlite::params![start_time, end_time],
-        |row| Ok(AppUsage {
-            app_name:      row.get(0)?,
-            total_seconds: row.get(1)?,
-            sessions:      row.get(2)?,
-        }),
-    ).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+    let top_apps = stmt
+        .query_map(rusqlite::params![start_time, end_time], |row| {
+            Ok(AppUsage {
+                app_name: row.get(0)?,
+                total_seconds: row.get(1)?,
+                sessions: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    Ok(ActivityStats { total_seconds, total_events, top_apps })
+    Ok(ActivityStats {
+        total_seconds,
+        total_events,
+        top_apps,
+    })
 }
 
 /// Start the activity tracker — placeholder until the full tracker service is wired.

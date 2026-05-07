@@ -1,8 +1,6 @@
 use winapi::shared::minwindef::{BOOL, LPARAM};
 use winapi::shared::windef::HWND;
-use winapi::um::winuser::{
-    EnumWindows, GetWindowTextW, GetWindowTextLengthW, IsWindowVisible, 
-};
+use winapi::um::winuser::{EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible};
 
 /// Get a list of titles for all currently visible windows
 pub fn get_open_windows() -> Vec<String> {
@@ -35,22 +33,28 @@ pub fn get_open_windows() -> Vec<String> {
 
         EnumWindows(Some(enum_window_callback), &mut titles as *mut _ as LPARAM);
     }
-    
+
     // Sort and deduplicate
     titles.sort();
     titles.dedup();
-    
+
     titles
 }
 
 pub fn get_media_info() -> Option<crate::intent::activity::MediaInfo> {
-    use windows::Media::Control::{GlobalSystemMediaTransportControlsSessionManager, GlobalSystemMediaTransportControlsSessionPlaybackStatus};
-    
+    use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSessionManager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    };
+
     // We use .get() which blocks. This function should be called inside spawn_blocking.
-    
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?.get().ok()?;
+
+    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+        .ok()?
+        .get()
+        .ok()?;
     let session = manager.GetCurrentSession().ok()?;
-    
+
     let info = session.GetPlaybackInfo().ok()?;
     let status = info.PlaybackStatus().ok()?;
 

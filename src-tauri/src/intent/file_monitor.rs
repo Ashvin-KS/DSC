@@ -1,6 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -34,7 +34,10 @@ pub fn start_file_monitor(app_handle: AppHandle) {
             println!("[FileMonitor] No valid roots found. Set INTENTFLOW_CODE_ROOTS to enable monitoring.");
             return;
         }
-        println!("[FileMonitor] Active monitoring started (interval={}s, depth={})", SCAN_INTERVAL_SECS, MAX_SCAN_DEPTH);
+        println!(
+            "[FileMonitor] Active monitoring started (interval={}s, depth={})",
+            SCAN_INTERVAL_SECS, MAX_SCAN_DEPTH
+        );
         for root in &roots {
             println!("[FileMonitor] Watching root: {}", root.to_string_lossy());
         }
@@ -162,7 +165,9 @@ fn scan_root(
             continue;
         }
 
-        let Some(mtime) = modified_unix_millis(path) else { continue };
+        let Some(mtime) = modified_unix_millis(path) else {
+            continue;
+        };
         let path_str = path.to_string_lossy().to_string();
         seen_in_scan.insert(path_str.clone());
 
@@ -173,8 +178,12 @@ fn scan_root(
                     known_hashes.insert(path_str.clone(), hash_content(&content));
                 }
                 if now_ms - mtime <= RECENT_CREATE_WINDOW_MS {
-                    let created_preview = read_file_snapshot(path)
-                        .map(|content| format!("Initial content:\n{}", truncate_chars(&content, MAX_PREVIEW_CHARS)));
+                    let created_preview = read_file_snapshot(path).map(|content| {
+                        format!(
+                            "Initial content:\n{}",
+                            truncate_chars(&content, MAX_PREVIEW_CHARS)
+                        )
+                    });
                     let _ = insert_event(
                         app_handle,
                         conn,
@@ -201,7 +210,9 @@ fn scan_root(
                     if let Some(h) = current_hash {
                         known_hashes.insert(path_str.clone(), h);
                     }
-                    let preview = current.as_deref().map(|c| truncate_chars(c, MAX_PREVIEW_CHARS));
+                    let preview = current
+                        .as_deref()
+                        .map(|c| truncate_chars(c, MAX_PREVIEW_CHARS));
                     let _ = insert_event(
                         app_handle,
                         conn,
@@ -294,7 +305,9 @@ fn insert_event(
         entity_type,
         change_type,
         path,
-        content_preview.map(|p| format!(" | {}", p.replace('\n', " "))).unwrap_or_default()
+        content_preview
+            .map(|p| format!(" | {}", p.replace('\n', " ")))
+            .unwrap_or_default()
     );
 
     let event_id = conn.last_insert_rowid();

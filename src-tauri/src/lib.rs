@@ -4,6 +4,7 @@ mod services;
 mod utils;
 
 use chrono::Utc;
+use keyring::Entry;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -11,16 +12,15 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
 use url::Url;
-use keyring::Entry;
 
 static GAME_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
 static INCOGNITO_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -146,21 +146,25 @@ fn load_tokens(app: &tauri::AppHandle) -> Result<TokenStore, String> {
         return Ok(TokenStore::default());
     }
     let data = fs::read_to_string(&path).map_err(|e| format!("Unable to read token file: {e}"))?;
-    let tokens: TokenStore = serde_json::from_str(&data).map_err(|e| format!("Unable to parse token file: {e}"))?;
-    
+    let tokens: TokenStore =
+        serde_json::from_str(&data).map_err(|e| format!("Unable to parse token file: {e}"))?;
+
     // Migrate to keyring and delete file
     if let Ok(entry) = Entry::new("Atheletia", "google_tokens") {
         let _ = entry.set_password(&data);
         let _ = fs::remove_file(path);
     }
-    
+
     Ok(tokens)
 }
 
 fn save_tokens(app: &tauri::AppHandle, tokens: &TokenStore) -> Result<(), String> {
-    let payload = serde_json::to_string_pretty(tokens).map_err(|e| format!("Unable to encode tokens: {e}"))?;
+    let payload = serde_json::to_string_pretty(tokens)
+        .map_err(|e| format!("Unable to encode tokens: {e}"))?;
     if let Ok(entry) = Entry::new("Atheletia", "google_tokens") {
-        entry.set_password(&payload).map_err(|e| format!("Unable to persist tokens to OS keyring: {e}"))?;
+        entry
+            .set_password(&payload)
+            .map_err(|e| format!("Unable to persist tokens to OS keyring: {e}"))?;
         let path = app_data_tokens_path(app)?;
         if path.exists() {
             let _ = fs::remove_file(path);
@@ -186,6 +190,7 @@ fn google_client_credentials(app: &tauri::AppHandle) -> Result<(String, String),
     let mut db_client_id = String::new();
     let mut db_client_secret = String::new();
 
+    // Try OS keyring first (most secure)
     if let Ok(entry) = Entry::new("Atheletia", "google_client_id") {
         db_client_id = entry.get_password().unwrap_or_default();
     }
@@ -193,32 +198,55 @@ fn google_client_credentials(app: &tauri::AppHandle) -> Result<(String, String),
         db_client_secret = entry.get_password().unwrap_or_default();
     }
 
+    // Fallback: SQLite settings (user-configured)
     if db_client_id.trim().is_empty() || db_client_secret.trim().is_empty() {
         if let Ok(conn) = intent::db::open(app) {
             if db_client_id.trim().is_empty() {
                 db_client_id = conn
-                    .query_row("SELECT value FROM app_settings WHERE key = 'google_client_id'", [], |row| row.get::<_, String>(0))
+                    .query_row(
+                        "SELECT value FROM app_settings WHERE key = 'google_client_id'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
                     .unwrap_or_default();
             }
             if db_client_secret.trim().is_empty() {
                 db_client_secret = conn
-                    .query_row("SELECT value FROM app_settings WHERE key = 'google_client_secret'", [], |row| row.get::<_, String>(0))
+                    .query_row(
+                        "SELECT value FROM app_settings WHERE key = 'google_client_secret'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
                     .unwrap_or_default();
             }
         }
     }
 
+    // If user has configured credentials, use them
     if !db_client_id.trim().is_empty() && !db_client_secret.trim().is_empty() {
         return Ok((db_client_id, db_client_secret));
     }
 
+    // Fallback: Compile-time embedded credentials (from .env.build)
+    // These are embedded during build and NOT in GitHub
+    let embedded_client_id = option_env!("ATHELETIA_GOOGLE_CLIENT_ID").unwrap_or("");
+    let embedded_client_secret = option_env!("ATHELETIA_GOOGLE_CLIENT_SECRET").unwrap_or("");
+    
+    if !embedded_client_id.is_empty() && !embedded_client_secret.is_empty() {
+        return Ok((embedded_client_id.to_string(), embedded_client_secret.to_string()));
+    }
+
+    // Last resort: Runtime environment variables (for development)
     dotenvy::dotenv().ok();
     let client_id = std::env::var("GOOGLE_CLIENT_ID")
         .or_else(|_| std::env::var("VITE_GOOGLE_CLIENT_ID"))
-        .map_err(|_| "Missing Google Client ID. Set it in Settings > API Keys or GOOGLE_CLIENT_ID env var.".to_string())?;
+        .map_err(|_| {
+            "Google Calendar integration requires credentials. Please connect your Google account in Settings."
+                .to_string()
+        })?;
     let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
         .or_else(|_| std::env::var("VITE_GOOGLE_CLIENT_SECRET"))
-        .map_err(|_| "Missing Google Client Secret. Set it in Settings > API Keys or GOOGLE_CLIENT_SECRET env var.".to_string())?;
+        .map_err(|_| "Google Calendar integration requires credentials. Please connect your Google account in Settings.".to_string())?;
     Ok((client_id, client_secret))
 }
 
@@ -230,8 +258,8 @@ fn configured_google_redirect_uri() -> Option<String> {
 }
 
 fn parse_google_redirect_uri(redirect_uri: &str) -> Result<(String, String), String> {
-    let parsed = Url::parse(&redirect_uri)
-        .map_err(|e| format!("Invalid GOOGLE_REDIRECT_URI: {e}"))?;
+    let parsed =
+        Url::parse(&redirect_uri).map_err(|e| format!("Invalid GOOGLE_REDIRECT_URI: {e}"))?;
 
     if parsed.scheme() != "http" {
         return Err("GOOGLE_REDIRECT_URI must use http for local OAuth callback".to_string());
@@ -361,7 +389,10 @@ async fn refresh_access_token_if_needed(app: &tauri::AppHandle) -> Result<String
         .map_err(|e| format!("Token refresh request failed: {e}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("Token refresh failed with status {}", response.status()));
+        return Err(format!(
+            "Token refresh failed with status {}",
+            response.status()
+        ));
     }
 
     let payload: Value = response
@@ -373,7 +404,10 @@ async fn refresh_access_token_if_needed(app: &tauri::AppHandle) -> Result<String
         .and_then(Value::as_str)
         .ok_or_else(|| "Token refresh response missing access_token".to_string())?
         .to_string();
-    let expires_in = payload.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
+    let expires_in = payload
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .unwrap_or(3600);
     tokens.access_token = Some(new_access.clone());
     tokens.expiry_date = Some(now_ms + expires_in * 1000);
     save_tokens(app, &tokens)?;
@@ -404,7 +438,13 @@ fn get_directory_tree_inner(dir_path: &Path, depth: usize, max_depth: usize) -> 
         }
 
         // Ignore massive or system generated directories to prevent UI lag.
-        if name == "node_modules" || name == "target" || name == "dist" || name == "build" || name == "__pycache__" || name == "venv" {
+        if name == "node_modules"
+            || name == "target"
+            || name == "dist"
+            || name == "build"
+            || name == "__pycache__"
+            || name == "venv"
+        {
             continue;
         }
 
@@ -486,7 +526,10 @@ fn app_toggle_incognito(app: tauri::AppHandle) -> Result<IncognitoStatus, String
         INCOGNITO_UNTIL_TS.store(0, Ordering::Relaxed);
         apply_monitoring_state(&app);
         if let Some(window) = app.get_webview_window("main") {
-            let _ = window.emit("tray:incognito-tick", json!({ "active": true, "remainingSeconds": 0 }));
+            let _ = window.emit(
+                "tray:incognito-tick",
+                json!({ "active": true, "remainingSeconds": 0 }),
+            );
         }
     }
 
@@ -619,10 +662,22 @@ fn read_runtime_settings(app_handle: &tauri::AppHandle) -> RuntimeSettings {
 
     RuntimeSettings {
         track_apps: map.get("track_apps").map(|v| v == "true").unwrap_or(true),
-        track_screen_ocr: map.get("track_screen_ocr").map(|v| v == "true").unwrap_or(false),
-        enable_startup: map.get("enable_startup").map(|v| v == "true").unwrap_or(true),
-        startup_behavior: map.get("startup_behavior").cloned().unwrap_or_else(|| "minimized_to_tray".to_string()),
-        close_to_tray: map.get("close_to_tray").map(|v| v == "true").unwrap_or(true),
+        track_screen_ocr: map
+            .get("track_screen_ocr")
+            .map(|v| v == "true")
+            .unwrap_or(false),
+        enable_startup: map
+            .get("enable_startup")
+            .map(|v| v == "true")
+            .unwrap_or(true),
+        startup_behavior: map
+            .get("startup_behavior")
+            .cloned()
+            .unwrap_or_else(|| "minimized_to_tray".to_string()),
+        close_to_tray: map
+            .get("close_to_tray")
+            .map(|v| v == "true")
+            .unwrap_or(true),
     }
 }
 
@@ -632,9 +687,8 @@ fn apply_monitoring_state(app_handle: &tauri::AppHandle) {
     let incognito_active = INCOGNITO_ENABLED.load(Ordering::Relaxed)
         || INCOGNITO_UNTIL_TS.load(Ordering::Relaxed) > now;
 
-    let tracking_enabled = settings.track_apps
-        && !GAME_MODE_ENABLED.load(Ordering::Relaxed)
-        && !incognito_active;
+    let tracking_enabled =
+        settings.track_apps && !GAME_MODE_ENABLED.load(Ordering::Relaxed) && !incognito_active;
 
     let ocr_enabled = settings.track_screen_ocr
         && !GAME_MODE_ENABLED.load(Ordering::Relaxed)
@@ -654,7 +708,10 @@ fn disable_incognito(app_handle: &tauri::AppHandle) {
     INCOGNITO_UNTIL_TS.store(0, Ordering::Relaxed);
     apply_monitoring_state(app_handle);
     if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.emit("tray:incognito-tick", json!({ "active": false, "remainingSeconds": 0 }));
+        let _ = window.emit(
+            "tray:incognito-tick",
+            json!({ "active": false, "remainingSeconds": 0 }),
+        );
     }
 }
 
@@ -664,7 +721,10 @@ fn set_incognito_for(app_handle: &tauri::AppHandle, minutes: i64) {
     INCOGNITO_UNTIL_TS.store(until, Ordering::Relaxed);
     apply_monitoring_state(app_handle);
     if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.emit("tray:incognito-tick", json!({ "active": true, "remainingSeconds": minutes * 60 }));
+        let _ = window.emit(
+            "tray:incognito-tick",
+            json!({ "active": true, "remainingSeconds": minutes * 60 }),
+        );
     }
 
     let handle = app_handle.clone();
@@ -798,21 +858,56 @@ fn register_global_media_shortcuts(app: &tauri::AppHandle) {
 
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let launch_item = MenuItem::with_id(app, "launch_app", "Launch App", true, None::<&str>)?;
-    let open_control_center_item = MenuItem::with_id(app, "open_control_center", "Open Control Center", true, None::<&str>)?;
-    let open_dashboard_item = MenuItem::with_id(app, "open_dashboard", "Open Dashboard", true, None::<&str>)?;
+    let open_control_center_item = MenuItem::with_id(
+        app,
+        "open_control_center",
+        "Open Control Center",
+        true,
+        None::<&str>,
+    )?;
+    let open_dashboard_item =
+        MenuItem::with_id(app, "open_dashboard", "Open Dashboard", true, None::<&str>)?;
     let open_diary_item = MenuItem::with_id(app, "open_diary", "Open Diary", true, None::<&str>)?;
     let open_chat_item = MenuItem::with_id(app, "open_chat", "Open Chat", true, None::<&str>)?;
     let open_code_item = MenuItem::with_id(app, "open_code", "Open Code", true, None::<&str>)?;
     let open_music_item = MenuItem::with_id(app, "open_music", "Open Music", true, None::<&str>)?;
-    let refresh_ai_item = MenuItem::with_id(app, "refresh_ai", "Refresh AI Updates", true, None::<&str>)?;
-    let clear_notifications_item = MenuItem::with_id(app, "clear_notifications", "Clear Notifications", true, None::<&str>)?;
-    let music_play_pause_item = MenuItem::with_id(app, "music_play_pause", "Music: Play/Pause", true, None::<&str>)?;
-    let music_prev_item = MenuItem::with_id(app, "music_prev", "Music: Previous", true, None::<&str>)?;
+    let refresh_ai_item =
+        MenuItem::with_id(app, "refresh_ai", "Refresh AI Updates", true, None::<&str>)?;
+    let clear_notifications_item = MenuItem::with_id(
+        app,
+        "clear_notifications",
+        "Clear Notifications",
+        true,
+        None::<&str>,
+    )?;
+    let music_play_pause_item = MenuItem::with_id(
+        app,
+        "music_play_pause",
+        "Music: Play/Pause",
+        true,
+        None::<&str>,
+    )?;
+    let music_prev_item =
+        MenuItem::with_id(app, "music_prev", "Music: Previous", true, None::<&str>)?;
     let music_next_item = MenuItem::with_id(app, "music_next", "Music: Next", true, None::<&str>)?;
-    let game_mode_item = MenuItem::with_id(app, "toggle_game_mode", "Game Mode: OFF", true, None::<&str>)?;
-    let incognito_item = MenuItem::with_id(app, "toggle_incognito", "Incognito: OFF", true, None::<&str>)?;
-    let incognito_15_item = MenuItem::with_id(app, "incognito_15m", "Incognito 15m", true, None::<&str>)?;
-    let incognito_30_item = MenuItem::with_id(app, "incognito_30m", "Incognito 30m", true, None::<&str>)?;
+    let game_mode_item = MenuItem::with_id(
+        app,
+        "toggle_game_mode",
+        "Game Mode: OFF",
+        true,
+        None::<&str>,
+    )?;
+    let incognito_item = MenuItem::with_id(
+        app,
+        "toggle_incognito",
+        "Incognito: OFF",
+        true,
+        None::<&str>,
+    )?;
+    let incognito_15_item =
+        MenuItem::with_id(app, "incognito_15m", "Incognito 15m", true, None::<&str>)?;
+    let incognito_30_item =
+        MenuItem::with_id(app, "incognito_30m", "Incognito 30m", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -878,7 +973,11 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 "toggle_game_mode" => {
                     let next = !GAME_MODE_ENABLED.load(Ordering::Relaxed);
                     GAME_MODE_ENABLED.store(next, Ordering::Relaxed);
-                    let _ = game_mode_item_handle.set_text(if next { "Game Mode: ON" } else { "Game Mode: OFF" });
+                    let _ = game_mode_item_handle.set_text(if next {
+                        "Game Mode: ON"
+                    } else {
+                        "Game Mode: OFF"
+                    });
                     apply_monitoring_state(app);
                 }
                 "toggle_incognito" => {
@@ -894,7 +993,10 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         apply_monitoring_state(app);
                         let _ = incognito_item_handle.set_text("Incognito: ON");
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.emit("tray:incognito-tick", json!({ "active": true, "remainingSeconds": 0 }));
+                            let _ = window.emit(
+                                "tray:incognito-tick",
+                                json!({ "active": true, "remainingSeconds": 0 }),
+                            );
                         }
                     }
                 }
@@ -963,9 +1065,7 @@ fn infer_vault_root_for_path(app: &tauri::AppHandle, target_path: &Path) -> Opti
              WHERE entity_type = 'vault_note' AND project_root IS NOT NULL",
         )
         .ok()?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .ok()?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
 
     let target_key = normalize_path_key(target_path);
     let mut best_match: Option<String> = None;
@@ -988,15 +1088,14 @@ fn resolve_effective_vault_path(
     provided_vault_path: Option<String>,
     path_hint: &Path,
 ) -> Option<String> {
-    let provided = provided_vault_path
-        .and_then(|value| {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
+    let provided = provided_vault_path.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     provided.or_else(|| infer_vault_root_for_path(app, path_hint))
 }
@@ -1011,15 +1110,18 @@ fn validate_notes_path(file_path: &str, vault_path: Option<&str>) -> Result<Path
             if let Some(parent) = p.parent() {
                 std::fs::canonicalize(parent).map(|cp| cp.join(p.file_name().unwrap_or_default()))
             } else {
-                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "invalid path"))
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "invalid path",
+                ))
             }
         })
         .map_err(|e| format!("Invalid path: {e}"))?;
 
     // If a vault path is provided, ensure the target is within it
     if let Some(vault) = vault_path {
-        let vault_canon = std::fs::canonicalize(vault)
-            .map_err(|e| format!("Invalid vault path: {e}"))?;
+        let vault_canon =
+            std::fs::canonicalize(vault).map_err(|e| format!("Invalid vault path: {e}"))?;
         if !target.starts_with(&vault_canon) {
             return Err("Access denied: path is outside the vault directory".to_string());
         }
@@ -1034,18 +1136,81 @@ fn validate_notes_path(file_path: &str, vault_path: Option<&str>) -> Result<Path
     Ok(target)
 }
 
-#[tauri::command]
-async fn notes_get_file_tree(vault_path: String) -> Result<Vec<FileNode>, String> {
-    tokio::task::spawn_blocking(move || {
-        Ok(get_directory_tree(Path::new(&vault_path)))
-    }).await.map_err(|e| e.to_string())?
+fn validate_notes_path_for_app(
+    app: &tauri::AppHandle,
+    file_path: &str,
+    vault_path: Option<String>,
+) -> Result<PathBuf, String> {
+    let hint = PathBuf::from(file_path);
+    let vault = resolve_effective_vault_path(app, vault_path, &hint).ok_or_else(|| {
+        "Access denied: no trusted vault root is available for this path".to_string()
+    })?;
+    validate_notes_path(file_path, Some(&vault))
+}
+
+fn validate_note_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || Path::new(name).is_absolute()
+    {
+        return Err("Invalid file or folder name".to_string());
+    }
+    Ok(())
+}
+
+fn validate_vault_path(vault_path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(vault_path);
+    if !path.is_absolute() {
+        return Err("Vault path must be absolute".into());
+    }
+    let canon = std::fs::canonicalize(&path)
+        .map_err(|e| format!("Invalid vault path: {e}"))?;
+    if !canon.is_dir() {
+        return Err("Vault path must be a directory".into());
+    }
+    let path_str = canon.to_string_lossy().to_lowercase();
+    let blocked = [
+        "\\windows",
+        "\\system32",
+        "\\program files",
+        "\\program files (x86)",
+        "\\programdata",
+        "\\inetpub",
+        "\\boot",
+        "\\efi",
+        "\\recovery",
+    ];
+    for bad in &blocked {
+        if path_str.contains(bad) {
+            return Err(format!(
+                "Access denied: vault path is inside a protected system directory ({bad})"
+            ));
+        }
+    }
+    Ok(canon)
 }
 
 #[tauri::command]
-async fn notes_reindex_vault(app_handle: tauri::AppHandle, vault_path: String) -> Result<crate::intent::retrieval::VaultIndexStats, String> {
-    tokio::task::spawn_blocking(move || crate::intent::retrieval::reindex_markdown_vault(&app_handle, &vault_path))
+async fn notes_get_file_tree(vault_path: String) -> Result<Vec<FileNode>, String> {
+    let safe_vault = validate_vault_path(&vault_path)?;
+    tokio::task::spawn_blocking(move || Ok(get_directory_tree(&safe_vault)))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn notes_reindex_vault(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+) -> Result<crate::intent::retrieval::VaultIndexStats, String> {
+    let _safe_vault = validate_vault_path(&vault_path)?;
+    tokio::task::spawn_blocking(move || {
+        crate::intent::retrieval::reindex_markdown_vault(&app_handle, &vault_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1082,6 +1247,7 @@ async fn notes_search_vault(
     query: String,
     max_hits: Option<usize>,
 ) -> Result<VaultSearchResult, String> {
+    let _safe_vault = validate_vault_path(&vault_path)?;
     let stats = tokio::task::spawn_blocking({
         let app_handle = app_handle.clone();
         let vault_path = vault_path.clone();
@@ -1091,7 +1257,12 @@ async fn notes_search_vault(
     .map_err(|e| e.to_string())??;
 
     let context = tokio::task::spawn_blocking(move || {
-        crate::intent::retrieval::build_vault_context(&app_handle, &vault_path, &query, max_hits.unwrap_or(8))
+        crate::intent::retrieval::build_vault_context(
+            &app_handle,
+            &vault_path,
+            &query,
+            max_hits.unwrap_or(8),
+        )
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -1124,23 +1295,44 @@ async fn notes_search_vault(
 }
 
 #[tauri::command]
-async fn notes_read_file(file_path: String) -> Result<Option<String>, String> {
-    validate_notes_path(&file_path, None)?;
-    tokio::task::spawn_blocking(move || {
-        Ok(fs::read_to_string(file_path).ok())
-    }).await.map_err(|e| e.to_string())?
+async fn notes_read_file(
+    app_handle: tauri::AppHandle,
+    file_path: String,
+    vault_path: Option<String>,
+) -> Result<Option<String>, String> {
+    let file_path = validate_notes_path_for_app(&app_handle, &file_path, vault_path)?;
+    tokio::task::spawn_blocking(move || Ok(fs::read_to_string(file_path).ok()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn notes_write_file(file_path: String, content: String) -> Result<bool, String> {
-    validate_notes_path(&file_path, None)?;
-    tokio::task::spawn_blocking(move || {
-        Ok(fs::write(file_path, content).is_ok())
-    }).await.map_err(|e| e.to_string())?
+async fn notes_write_file(
+    app_handle: tauri::AppHandle,
+    file_path: String,
+    content: String,
+    vault_path: Option<String>,
+) -> Result<bool, String> {
+    let file_path = validate_notes_path_for_app(&app_handle, &file_path, vault_path)?;
+    tokio::task::spawn_blocking(move || Ok(fs::write(file_path, content).is_ok()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn notes_create_file(dir_path: String, file_name: String) -> MutationResult {
+fn notes_create_file(
+    app_handle: tauri::AppHandle,
+    dir_path: String,
+    file_name: String,
+    vault_path: Option<String>,
+) -> MutationResult {
+    let dir_path = match validate_notes_path_for_app(&app_handle, &dir_path, vault_path) {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
+    if let Err(e) = validate_note_name(&file_name) {
+        return mutation_err(e);
+    }
     let mut file_path = PathBuf::from(dir_path);
     let normalized = if file_name.ends_with(".md") {
         file_name
@@ -1159,7 +1351,19 @@ fn notes_create_file(dir_path: String, file_name: String) -> MutationResult {
 }
 
 #[tauri::command]
-fn notes_create_folder(dir_path: String, folder_name: String) -> MutationResult {
+fn notes_create_folder(
+    app_handle: tauri::AppHandle,
+    dir_path: String,
+    folder_name: String,
+    vault_path: Option<String>,
+) -> MutationResult {
+    let dir_path = match validate_notes_path_for_app(&app_handle, &dir_path, vault_path) {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
+    if let Err(e) = validate_note_name(&folder_name) {
+        return mutation_err(e);
+    }
     let mut folder_path = PathBuf::from(dir_path);
     folder_path.push(folder_name);
     if folder_path.exists() {
@@ -1172,7 +1376,15 @@ fn notes_create_folder(dir_path: String, folder_name: String) -> MutationResult 
 }
 
 #[tauri::command]
-fn notes_ensure_dir(dir_path: String) -> MutationResult {
+fn notes_ensure_dir(
+    app_handle: tauri::AppHandle,
+    dir_path: String,
+    vault_path: Option<String>,
+) -> MutationResult {
+    let dir_path = match validate_notes_path_for_app(&app_handle, &dir_path, vault_path) {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
     match fs::create_dir_all(&dir_path) {
         Ok(_) => mutation_ok(None, None),
         Err(e) => mutation_err(e.to_string()),
@@ -1180,11 +1392,15 @@ fn notes_ensure_dir(dir_path: String) -> MutationResult {
 }
 
 #[tauri::command]
-fn notes_delete(item_path: String) -> MutationResult {
-    if let Err(e) = validate_notes_path(&item_path, None) {
-        return mutation_err(e);
-    }
-    let path = PathBuf::from(item_path);
+fn notes_delete(
+    app_handle: tauri::AppHandle,
+    item_path: String,
+    vault_path: Option<String>,
+) -> MutationResult {
+    let path = match validate_notes_path_for_app(&app_handle, &item_path, vault_path) {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
     let result = if path.is_dir() {
         fs::remove_dir_all(path)
     } else {
@@ -1197,15 +1413,19 @@ fn notes_delete(item_path: String) -> MutationResult {
 }
 
 #[tauri::command]
-fn notes_rename(old_path: String, new_name: String) -> MutationResult {
-    if let Err(e) = validate_notes_path(&old_path, None) {
+fn notes_rename(
+    app_handle: tauri::AppHandle,
+    old_path: String,
+    new_name: String,
+    vault_path: Option<String>,
+) -> MutationResult {
+    let old = match validate_notes_path_for_app(&app_handle, &old_path, vault_path) {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
+    if let Err(e) = validate_note_name(&new_name) {
         return mutation_err(e);
     }
-    // Reject new names with path separators to prevent traversal
-    if new_name.contains('/') || new_name.contains('\\') || new_name.contains("..") {
-        return mutation_err("Invalid file name");
-    }
-    let old = PathBuf::from(&old_path);
     let Some(parent) = old.parent() else {
         return mutation_err("Invalid source path");
     };
@@ -1217,15 +1437,21 @@ fn notes_rename(old_path: String, new_name: String) -> MutationResult {
 }
 
 #[tauri::command]
-fn notes_move_file(source_path: String, destination_path: String) -> MutationResult {
-    if let Err(e) = validate_notes_path(&source_path, None) {
-        return mutation_err(e);
-    }
-    if let Err(e) = validate_notes_path(&destination_path, None) {
-        return mutation_err(e);
-    }
-    let source = PathBuf::from(&source_path);
-    let destination = PathBuf::from(&destination_path);
+fn notes_move_file(
+    app_handle: tauri::AppHandle,
+    source_path: String,
+    destination_path: String,
+    vault_path: Option<String>,
+) -> MutationResult {
+    let source = match validate_notes_path_for_app(&app_handle, &source_path, vault_path.clone()) {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
+    let destination = match validate_notes_path_for_app(&app_handle, &destination_path, vault_path)
+    {
+        Ok(path) => path,
+        Err(e) => return mutation_err(e),
+    };
     if destination.starts_with(&source) {
         return mutation_err("Cannot move a folder into itself");
     }
@@ -1264,12 +1490,17 @@ fn leetcode_read_csv(app: tauri::AppHandle) -> Option<String> {
         loop {
             let candidate = dir.join("leetcode_problems.csv");
             candidates.push(candidate);
-            if !dir.pop() { break; }
+            if !dir.pop() {
+                break;
+            }
         }
     }
 
     // Tauri resource path (production)
-    if let Ok(resource) = app.path().resolve("leetcode_problems.csv", tauri::path::BaseDirectory::Resource) {
+    if let Ok(resource) = app.path().resolve(
+        "leetcode_problems.csv",
+        tauri::path::BaseDirectory::Resource,
+    ) {
         candidates.push(resource);
     }
 
@@ -1315,7 +1546,6 @@ fn leetcode_save_csv(app: tauri::AppHandle, csv_content: String) -> Result<bool,
     Ok(true)
 }
 
-
 #[tauri::command]
 fn google_check_auth(app: tauri::AppHandle) -> bool {
     load_tokens(&app)
@@ -1328,7 +1558,8 @@ fn google_check_auth(app: tauri::AppHandle) -> bool {
 async fn google_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
     let (client_id, client_secret) = google_client_credentials(&app)?;
     let (redirect_uri, callback_bind_addr) = select_google_redirect_uri(&client_id).await?;
-    let redirect_url = Url::parse(&redirect_uri).map_err(|e| format!("Invalid redirect URI: {e}"))?;
+    let redirect_url =
+        Url::parse(&redirect_uri).map_err(|e| format!("Invalid redirect URI: {e}"))?;
     let host = redirect_url
         .host_str()
         .ok_or_else(|| "Redirect URI host is missing".to_string())?;
@@ -1375,7 +1606,13 @@ async fn google_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
     let parsed = Url::parse(&callback_url).map_err(|e| format!("Invalid callback URL: {e}"))?;
     let code = parsed
         .query_pairs()
-        .find_map(|(k, v)| if k == "code" { Some(v.to_string()) } else { None })
+        .find_map(|(k, v)| {
+            if k == "code" {
+                Some(v.to_string())
+            } else {
+                None
+            }
+        })
         .ok_or_else(|| "OAuth callback missing code".to_string())?;
 
     let response_body = "Authentication successful. You can return to Atheletia.";
@@ -1420,7 +1657,10 @@ async fn google_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
         .and_then(Value::as_str)
         .map(|s| s.to_string())
         .ok_or_else(|| "OAuth response missing refresh token".to_string())?;
-    let expires_in = payload.get("expires_in").and_then(Value::as_i64).unwrap_or(3600);
+    let expires_in = payload
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .unwrap_or(3600);
 
     let tokens = TokenStore {
         access_token: Some(access_token),
@@ -1456,9 +1696,7 @@ async fn google_api_get(app: &tauri::AppHandle, url: &str) -> Result<Value, Stri
     if !response.status().is_success() {
         let status = response.status();
         let details = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Google GET failed with status {status}: {details}"
-        ));
+        return Err(format!("Google GET failed with status {status}: {details}"));
     }
     response
         .json()
@@ -1485,9 +1723,7 @@ async fn google_api_with_body(
     if !response.status().is_success() {
         let status = response.status();
         let details = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Google API failed with status {status}: {details}"
-        ));
+        return Err(format!("Google API failed with status {status}: {details}"));
     }
     if response.status() == reqwest::StatusCode::NO_CONTENT {
         return Ok(json!({}));
@@ -1499,7 +1735,11 @@ async fn google_api_with_body(
 }
 
 #[tauri::command]
-async fn google_list_events(app: tauri::AppHandle, time_min: String, time_max: String) -> Result<Vec<CalendarEvent>, String> {
+async fn google_list_events(
+    app: tauri::AppHandle,
+    time_min: String,
+    time_max: String,
+) -> Result<Vec<CalendarEvent>, String> {
     let mut url = Url::parse("https://www.googleapis.com/calendar/v3/calendars/primary/events")
         .map_err(|e| format!("Invalid calendar URL: {e}"))?;
     url.query_pairs_mut()
@@ -1575,7 +1815,11 @@ async fn google_add_event(app: tauri::AppHandle, event: Value) -> Result<String,
 }
 
 #[tauri::command]
-async fn google_update_event(app: tauri::AppHandle, id: String, event: Value) -> Result<bool, String> {
+async fn google_update_event(
+    app: tauri::AppHandle,
+    id: String,
+    event: Value,
+) -> Result<bool, String> {
     let body = json!({
         "summary": event.get("title").and_then(Value::as_str).unwrap_or("No title"),
         "description": event.get("description").and_then(Value::as_str).unwrap_or(""),
@@ -1602,7 +1846,8 @@ async fn google_delete_event(app: tauri::AppHandle, id: String) -> Result<bool, 
 
 #[tauri::command]
 async fn google_tasks_get_lists(app: tauri::AppHandle) -> Result<Vec<Value>, String> {
-    let payload = google_api_get(&app, "https://www.googleapis.com/tasks/v1/users/@me/lists").await?;
+    let payload =
+        google_api_get(&app, "https://www.googleapis.com/tasks/v1/users/@me/lists").await?;
     let lists = payload
         .get("items")
         .and_then(Value::as_array)
@@ -1612,7 +1857,10 @@ async fn google_tasks_get_lists(app: tauri::AppHandle) -> Result<Vec<Value>, Str
 }
 
 #[tauri::command]
-async fn google_tasks_list(app: tauri::AppHandle, tasklist_id: Option<String>) -> Result<Vec<GoogleTask>, String> {
+async fn google_tasks_list(
+    app: tauri::AppHandle,
+    tasklist_id: Option<String>,
+) -> Result<Vec<GoogleTask>, String> {
     let list_id = tasklist_id.unwrap_or_else(|| "@default".to_string());
     let endpoint = format!(
         "https://www.googleapis.com/tasks/v1/lists/{}/tasks?showCompleted=true&showHidden=true",
@@ -1634,7 +1882,10 @@ async fn google_tasks_list(app: tauri::AppHandle, tasklist_id: Option<String>) -
                     .and_then(Value::as_str)
                     .unwrap_or("No Title")
                     .to_string(),
-                notes: task.get("notes").and_then(Value::as_str).map(str::to_string),
+                notes: task
+                    .get("notes")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 due: task.get("due").and_then(Value::as_str).map(str::to_string),
                 status: task
                     .get("status")
@@ -1652,18 +1903,28 @@ async fn google_tasks_list(app: tauri::AppHandle, tasklist_id: Option<String>) -
 }
 
 #[tauri::command]
-async fn google_tasks_add(app: tauri::AppHandle, tasklist_id: Option<String>, task_data: Value) -> Result<String, String> {
+async fn google_tasks_add(
+    app: tauri::AppHandle,
+    tasklist_id: Option<String>,
+    task_data: Value,
+) -> Result<String, String> {
     let list_id = tasklist_id.unwrap_or_else(|| "@default".to_string());
-    let due = task_data
-        .get("due")
-        .and_then(Value::as_str)
-        .map(|d| if d.contains('T') { d.to_string() } else { format!("{d}T00:00:00.000Z") });
+    let due = task_data.get("due").and_then(Value::as_str).map(|d| {
+        if d.contains('T') {
+            d.to_string()
+        } else {
+            format!("{d}T00:00:00.000Z")
+        }
+    });
     let body = json!({
         "title": task_data.get("title").and_then(Value::as_str).unwrap_or("Untitled"),
         "notes": task_data.get("notes").and_then(Value::as_str).unwrap_or(""),
         "due": due
     });
-    let endpoint = format!("https://www.googleapis.com/tasks/v1/lists/{}/tasks", list_id);
+    let endpoint = format!(
+        "https://www.googleapis.com/tasks/v1/lists/{}/tasks",
+        list_id
+    );
     let payload = google_api_with_body(&app, reqwest::Method::POST, &endpoint, Some(body)).await?;
     Ok(payload
         .get("id")
@@ -1680,10 +1941,13 @@ async fn google_tasks_update(
     task: Value,
 ) -> Result<bool, String> {
     let list_id = tasklist_id.unwrap_or_else(|| "@default".to_string());
-    let due = task
-        .get("due")
-        .and_then(Value::as_str)
-        .map(|d| if d.contains('T') { d.to_string() } else { format!("{d}T00:00:00.000Z") });
+    let due = task.get("due").and_then(Value::as_str).map(|d| {
+        if d.contains('T') {
+            d.to_string()
+        } else {
+            format!("{d}T00:00:00.000Z")
+        }
+    });
     let body = json!({
         "title": task.get("title").and_then(Value::as_str),
         "notes": task.get("notes").and_then(Value::as_str),
@@ -1699,7 +1963,11 @@ async fn google_tasks_update(
 }
 
 #[tauri::command]
-async fn google_tasks_delete(app: tauri::AppHandle, tasklist_id: Option<String>, task_id: String) -> Result<bool, String> {
+async fn google_tasks_delete(
+    app: tauri::AppHandle,
+    tasklist_id: Option<String>,
+    task_id: String,
+) -> Result<bool, String> {
     let list_id = tasklist_id.unwrap_or_else(|| "@default".to_string());
     let endpoint = format!(
         "https://www.googleapis.com/tasks/v1/lists/{}/tasks/{}",
@@ -1708,7 +1976,6 @@ async fn google_tasks_delete(app: tauri::AppHandle, tasklist_id: Option<String>,
     let _ = google_api_with_body(&app, reqwest::Method::DELETE, &endpoint, None).await?;
     Ok(true)
 }
-
 
 #[derive(Serialize, Deserialize, Clone)]
 struct MusicTrack {
@@ -1744,7 +2011,10 @@ async fn music_search(query: String) -> Result<Vec<MusicTrack>, String> {
     let response = Client::new()
         .post("https://www.youtube.com/youtubei/v1/search?prettyPrint=false")
         .header("Content-Type", "application/json")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        )
         .json(&body)
         .send()
         .await
@@ -1757,7 +2027,9 @@ async fn music_search(query: String) -> Result<Vec<MusicTrack>, String> {
 
     let mut tracks: Vec<MusicTrack> = Vec::new();
     let contents = json
-        .pointer("/contents/twoColumnSearchResultsRenderer/primaryContents/sectionListRenderer/contents")
+        .pointer(
+            "/contents/twoColumnSearchResultsRenderer/primaryContents/sectionListRenderer/contents",
+        )
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
@@ -1787,8 +2059,12 @@ async fn music_search(query: String) -> Result<Vec<MusicTrack>, String> {
                         }
                     }
                 }
-                
-                tracks.push(MusicTrack { id: video_id, title, thumbnail });
+
+                tracks.push(MusicTrack {
+                    id: video_id,
+                    title,
+                    thumbnail,
+                });
                 if tracks.len() >= 20 {
                     break 'outer;
                 }
@@ -1843,7 +2119,8 @@ fn music_get_library(app: tauri::AppHandle) -> Result<Value, String> {
     if !path.exists() {
         return Ok(json!({ "likedSongs": [], "recentlyPlayed": [] }));
     }
-    let data = fs::read_to_string(&path).map_err(|e| format!("Failed to read music library: {e}"))?;
+    let data =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read music library: {e}"))?;
     serde_json::from_str(&data).map_err(|e| format!("Failed to parse music library: {e}"))
 }
 
@@ -1856,9 +2133,20 @@ fn music_save_library(app: tauri::AppHandle, library: Value) -> Result<bool, Str
     Ok(true)
 }
 
+fn validate_browser_url(url: &str) -> Result<Url, String> {
+    let parsed = Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "Blocked unsafe URL scheme: {scheme}. Only http and https are allowed."
+        ));
+    }
+    Ok(parsed)
+}
+
 #[tauri::command]
 fn browser_open_in_app(app: tauri::AppHandle, url: String) -> Result<bool, String> {
-    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let parsed = validate_browser_url(&url)?;
     let label = format!("browser-{}", Utc::now().timestamp_millis());
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::External(parsed))
@@ -1881,7 +2169,7 @@ async fn browser_create_child(
     width: f64,
     height: f64,
 ) -> Result<bool, String> {
-    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    let parsed = validate_browser_url(&url)?;
 
     if let Some(webview) = app.get_webview("embedded-browser") {
         webview
@@ -1896,7 +2184,8 @@ async fn browser_create_child(
         return Ok(true);
     }
 
-    let webview_builder = tauri::WebviewBuilder::new("embedded-browser", WebviewUrl::External(parsed));
+    let webview_builder =
+        tauri::WebviewBuilder::new("embedded-browser", WebviewUrl::External(parsed));
 
     let webview = window
         .add_child(
@@ -1937,7 +2226,9 @@ async fn browser_update_child_bounds(
 #[tauri::command]
 async fn browser_close_child(app: tauri::AppHandle) -> Result<bool, String> {
     if let Some(webview) = app.get_webview("embedded-browser") {
-        webview.close().map_err(|e| format!("Failed to close child webview: {e}"))?;
+        webview
+            .close()
+            .map_err(|e| format!("Failed to close child webview: {e}"))?;
         Ok(true)
     } else {
         Ok(false)
@@ -1977,7 +2268,7 @@ pub fn run() {
             }
             // Run maintenance: data retention cleanup, storage limits, PRAGMA optimize
             intent::storage::run_startup_maintenance(app.handle());
-            
+
             let handle = app.handle().clone();
             intent::screen_capture::start_screen_capture(handle.clone());
             intent::activity_tracker::start_tracking(handle.clone());

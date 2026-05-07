@@ -1,8 +1,8 @@
+use chrono::Utc;
+use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::AppHandle;
-use chrono::Utc;
-use keyring::Entry;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DashboardTask {
@@ -43,7 +43,8 @@ fn read_snapshot_by_date(conn: &rusqlite::Connection, date_key: &str) -> Option<
         rusqlite::params![date_key],
         |row| row.get(0),
     );
-    json.ok().and_then(|s| serde_json::from_str::<DashboardOverview>(&s).ok())
+    json.ok()
+        .and_then(|s| serde_json::from_str::<DashboardOverview>(&s).ok())
 }
 
 fn save_snapshot(conn: &rusqlite::Connection, snapshot: &DashboardOverview) -> Result<(), String> {
@@ -78,14 +79,19 @@ pub async fn dashboard_upsert_deadline(
     let date_key = chrono::Local::now().format("%Y-%m-%d").to_string();
     tokio::task::spawn_blocking(move || -> Result<DashboardOverview, String> {
         let conn = crate::intent::db::open(&app_handle)?;
-        let mut snapshot = read_snapshot_by_date(&conn, &date_key).unwrap_or_else(|| empty_snapshot_for_date(&date_key));
+        let mut snapshot = read_snapshot_by_date(&conn, &date_key)
+            .unwrap_or_else(|| empty_snapshot_for_date(&date_key));
 
         let key = item.title.trim().to_lowercase();
         if key.is_empty() {
             return Err("Deadline title is required".to_string());
         }
 
-        if let Some(existing) = snapshot.deadlines.iter_mut().find(|d| d.title.trim().to_lowercase() == key) {
+        if let Some(existing) = snapshot
+            .deadlines
+            .iter_mut()
+            .find(|d| d.title.trim().to_lowercase() == key)
+        {
             *existing = item;
         } else {
             snapshot.deadlines.push(item);
@@ -100,7 +106,9 @@ pub async fn dashboard_upsert_deadline(
 
         save_snapshot(&conn, &snapshot)?;
         Ok(snapshot)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -111,13 +119,18 @@ pub async fn dashboard_delete_deadline(
     let date_key = chrono::Local::now().format("%Y-%m-%d").to_string();
     tokio::task::spawn_blocking(move || -> Result<DashboardOverview, String> {
         let conn = crate::intent::db::open(&app_handle)?;
-        let mut snapshot = read_snapshot_by_date(&conn, &date_key).unwrap_or_else(|| empty_snapshot_for_date(&date_key));
+        let mut snapshot = read_snapshot_by_date(&conn, &date_key)
+            .unwrap_or_else(|| empty_snapshot_for_date(&date_key));
         let key = title.trim().to_lowercase();
-        snapshot.deadlines.retain(|d| d.title.trim().to_lowercase() != key);
+        snapshot
+            .deadlines
+            .retain(|d| d.title.trim().to_lowercase() != key);
         snapshot.updated_at = Utc::now().timestamp();
         save_snapshot(&conn, &snapshot)?;
         Ok(snapshot)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -128,25 +141,34 @@ pub async fn dashboard_upsert_project(
     let date_key = chrono::Local::now().format("%Y-%m-%d").to_string();
     tokio::task::spawn_blocking(move || -> Result<DashboardOverview, String> {
         let conn = crate::intent::db::open(&app_handle)?;
-        let mut snapshot = read_snapshot_by_date(&conn, &date_key).unwrap_or_else(|| empty_snapshot_for_date(&date_key));
+        let mut snapshot = read_snapshot_by_date(&conn, &date_key)
+            .unwrap_or_else(|| empty_snapshot_for_date(&date_key));
 
         let key = project.name.trim().to_lowercase();
         if key.is_empty() {
             return Err("Project name is required".to_string());
         }
 
-        if let Some(existing) = snapshot.projects.iter_mut().find(|p| p.name.trim().to_lowercase() == key) {
+        if let Some(existing) = snapshot
+            .projects
+            .iter_mut()
+            .find(|p| p.name.trim().to_lowercase() == key)
+        {
             *existing = project;
         } else {
             snapshot.projects.push(project);
         }
-        snapshot.projects.sort_by(|a, b| b.files_changed.cmp(&a.files_changed));
+        snapshot
+            .projects
+            .sort_by(|a, b| b.files_changed.cmp(&a.files_changed));
         snapshot.projects.truncate(20);
         snapshot.updated_at = Utc::now().timestamp();
 
         save_snapshot(&conn, &snapshot)?;
         Ok(snapshot)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -157,13 +179,18 @@ pub async fn dashboard_delete_project(
     let date_key = chrono::Local::now().format("%Y-%m-%d").to_string();
     tokio::task::spawn_blocking(move || -> Result<DashboardOverview, String> {
         let conn = crate::intent::db::open(&app_handle)?;
-        let mut snapshot = read_snapshot_by_date(&conn, &date_key).unwrap_or_else(|| empty_snapshot_for_date(&date_key));
+        let mut snapshot = read_snapshot_by_date(&conn, &date_key)
+            .unwrap_or_else(|| empty_snapshot_for_date(&date_key));
         let key = name.trim().to_lowercase();
-        snapshot.projects.retain(|p| p.name.trim().to_lowercase() != key);
+        snapshot
+            .projects
+            .retain(|p| p.name.trim().to_lowercase() != key);
         snapshot.updated_at = Utc::now().timestamp();
         save_snapshot(&conn, &snapshot)?;
         Ok(snapshot)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -257,13 +284,18 @@ fn resolve_dashboard_ai_endpoint(provider: &str, user_model: Option<&str>) -> (S
         "gemini" => {
             let model = user_model.unwrap_or("gemini-2.0-flash");
             (
-                format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model),
+                format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                    model
+                ),
                 model.to_string(),
             )
-        },
+        }
         _ => (
             "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
-            user_model.unwrap_or("meta/llama-3.3-70b-instruct").to_string(),
+            user_model
+                .unwrap_or("meta/llama-3.3-70b-instruct")
+                .to_string(),
         ),
     }
 }
@@ -284,16 +316,20 @@ pub async fn dashboard_summarize_item(
         let item_name2 = item_name.clone();
         move || -> Result<(Option<String>, String, Option<String>, String), String> {
             let conn = crate::intent::db::open(&app)?;
-            let model = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'default_model'",
-                [], |row| row.get::<_, String>(0),
-            ).ok().filter(|s| !s.is_empty());
+            let model = conn
+                .query_row(
+                    "SELECT value FROM app_settings WHERE key = 'default_model'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok()
+                .filter(|s| !s.is_empty());
             let provider = model
                 .as_deref()
                 .map(infer_provider_from_model)
                 .unwrap_or_else(|| "nvidia".to_string());
             let key_name = provider_key_name(&provider);
-            
+
             let mut key = None;
             if let Ok(entry) = Entry::new("Atheletia", key_name) {
                 if let Ok(pwd) = entry.get_password() {
@@ -304,39 +340,56 @@ pub async fn dashboard_summarize_item(
             }
 
             if key.is_none() {
-                key = conn.query_row(
-                    "SELECT value FROM app_settings WHERE key = ?1",
-                    rusqlite::params![key_name], |row| row.get::<_, String>(0),
-                ).ok().filter(|s| !s.is_empty())
-                .or_else(|| {
-                    std::env::var(provider_env_name(&provider)).ok().filter(|s| !s.is_empty())
-                });
+                key = conn
+                    .query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        rusqlite::params![key_name],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        std::env::var(provider_env_name(&provider))
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                    });
             }
 
             let mut evidence_lines: Vec<String> = Vec::new();
             if item_type2 == "project" {
-                let mut stmt = conn.prepare(
-                    "SELECT path, change_type, COALESCE(content_preview,''), detected_at
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT path, change_type, COALESCE(content_preview,''), detected_at
                      FROM code_file_events
                      WHERE lower(project_root) LIKE '%' || lower(?1) || '%'
                         OR lower(path) LIKE '%' || lower(?1) || '%'
                      ORDER BY detected_at DESC
-                     LIMIT 80"
-                ).map_err(|e| e.to_string())?;
-                let rows = stmt.query_map(rusqlite::params![item_name2], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                }).map_err(|e| e.to_string())?;
+                     LIMIT 80",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(rusqlite::params![item_name2], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    })
+                    .map_err(|e| e.to_string())?;
                 for (path, change, preview, ts) in rows.filter_map(|r| r.ok()).take(30) {
-                    evidence_lines.push(format!("[{}] {} {} :: {}", ts, change, path, preview.chars().take(140).collect::<String>()));
+                    evidence_lines.push(format!(
+                        "[{}] {} {} :: {}",
+                        ts,
+                        change,
+                        path,
+                        preview.chars().take(140).collect::<String>()
+                    ));
                 }
             } else if item_type2 == "contact" {
-                let mut stmt = conn.prepare(
-                    "SELECT app_name, window_title, COALESCE(metadata,''), start_time
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT app_name, window_title, COALESCE(metadata,''), start_time
                      FROM activities
                      WHERE (
                         lower(app_name) LIKE '%whatsapp%'
@@ -351,46 +404,64 @@ pub async fn dashboard_summarize_item(
                         OR lower(COALESCE(metadata,'')) LIKE '%' || lower(?1) || '%'
                      )
                      ORDER BY start_time DESC
-                     LIMIT 100"
-                ).map_err(|e| e.to_string())?;
-                let rows = stmt.query_map(rusqlite::params![item_name2], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                }).map_err(|e| e.to_string())?;
+                     LIMIT 100",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(rusqlite::params![item_name2], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    })
+                    .map_err(|e| e.to_string())?;
                 for (app, title, metadata_raw, ts) in rows.filter_map(|r| r.ok()).take(30) {
                     let ocr = serde_json::from_str::<serde_json::Value>(&metadata_raw)
                         .ok()
-                        .and_then(|v| v.get("screen_text").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                        .and_then(|v| {
+                            v.get("screen_text")
+                                .and_then(|x| x.as_str())
+                                .map(|s| s.to_string())
+                        })
                         .unwrap_or_default();
                     let ocr_snip = ocr.chars().take(180).collect::<String>();
                     evidence_lines.push(format!("[{}] {} :: {} :: {}", ts, app, title, ocr_snip));
                 }
             } else {
-                let mut stmt = conn.prepare(
-                    "SELECT role, content, created_at FROM chat_messages
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT role, content, created_at FROM chat_messages
                      WHERE lower(content) LIKE '%' || lower(?1) || '%'
                      ORDER BY created_at DESC
-                     LIMIT 80"
-                ).map_err(|e| e.to_string())?;
-                let rows = stmt.query_map(rusqlite::params![item_name2], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                }).map_err(|e| e.to_string())?;
+                     LIMIT 80",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(rusqlite::params![item_name2], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    })
+                    .map_err(|e| e.to_string())?;
                 for (role, content, ts) in rows.filter_map(|r| r.ok()).take(30) {
-                    evidence_lines.push(format!("[{}] {}: {}", ts, role, content.chars().take(180).collect::<String>()));
+                    evidence_lines.push(format!(
+                        "[{}] {}: {}",
+                        ts,
+                        role,
+                        content.chars().take(180).collect::<String>()
+                    ));
                 }
             }
 
             Ok((key, provider, model, evidence_lines.join("\n")))
         }
-    }).await.map_err(|e| e.to_string())??;
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     let prompt = format!(
         "Create a concise but detailed summary for this dashboard item.\n\
@@ -408,14 +479,19 @@ Return plain text with:\n1) What was happening\n2) Key mentions / action items\n
         return Ok(format!(
             "No AI key configured.\n\n{}\n\nEvidence:\n{}",
             base_context,
-            if evidence.trim().is_empty() { "No additional evidence found.".to_string() } else { evidence }
+            if evidence.trim().is_empty() {
+                "No additional evidence found.".to_string()
+            } else {
+                evidence
+            }
         ));
     };
 
     let (endpoint, model_name) = resolve_dashboard_ai_endpoint(&provider, model.as_deref());
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|e| e.to_string())?;
+        .build()
+        .map_err(|e| e.to_string())?;
 
     let provider_norm = provider.to_lowercase();
     let system = "You are an assistant that summarizes activity evidence factually. Avoid hallucinations. Do not include romantic, intimate, or personal relationship labels (e.g. 'love interest', 'crush', 'girlfriend', 'boyfriend') or descriptions of personal habits or bad habits in your summaries. Focus only on observable communication patterns and activity evidence. Never output the full name 'Sneha Nair'.";
@@ -426,12 +502,18 @@ Return plain text with:\n1) What was happening\n2) Key mentions / action items\n
             "contents": [{ "parts": [{ "text": format!("{}\n\n{}", system, prompt) }] }],
             "generationConfig": { "temperature": 0.2, "maxOutputTokens": 600 }
         });
-        let value: serde_json::Value = client.post(&gemini_url)
+        let value: serde_json::Value = client
+            .post(&gemini_url)
             .header("Content-Type", "application/json")
             .json(&body)
-            .send().await.map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
-        return Ok(value.pointer("/candidates/0/content/parts/0/text")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(value
+            .pointer("/candidates/0/content/parts/0/text")
             .and_then(|v| v.as_str())
             .unwrap_or("No summary generated.")
             .to_string());
@@ -445,44 +527,91 @@ Return plain text with:\n1) What was happening\n2) Key mentions / action items\n
             "temperature": 0.2,
             "max_tokens": 600
         });
-        let value: serde_json::Value = client.post(&endpoint)
+        let value: serde_json::Value = client
+            .post(&endpoint)
             .header("x-api-key", &api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
             .json(&body)
-            .send().await.map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
-        return Ok(value.get("content")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(value
+            .get("content")
             .and_then(|v| v.as_array())
-            .map(|parts| parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""))
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "No summary generated.".to_string()));
     }
 
-    #[derive(Serialize)] struct Msg { role: String, content: String }
-    #[derive(Serialize)] struct Req { model: String, messages: Vec<Msg>, temperature: f32, max_tokens: u32 }
-    #[derive(Deserialize)] struct Resp { choices: Vec<Ch> }
-    #[derive(Deserialize)] struct Ch { message: Mc }
-    #[derive(Deserialize)] struct Mc { content: String }
+    #[derive(Serialize)]
+    struct Msg {
+        role: String,
+        content: String,
+    }
+    #[derive(Serialize)]
+    struct Req {
+        model: String,
+        messages: Vec<Msg>,
+        temperature: f32,
+        max_tokens: u32,
+    }
+    #[derive(Deserialize)]
+    struct Resp {
+        choices: Vec<Ch>,
+    }
+    #[derive(Deserialize)]
+    struct Ch {
+        message: Mc,
+    }
+    #[derive(Deserialize)]
+    struct Mc {
+        content: String,
+    }
 
     let req = Req {
         model: model_name,
         messages: vec![
-            Msg { role: "system".into(), content: system.into() },
-            Msg { role: "user".into(), content: prompt },
+            Msg {
+                role: "system".into(),
+                content: system.into(),
+            },
+            Msg {
+                role: "user".into(),
+                content: prompt,
+            },
         ],
         temperature: 0.2,
         max_tokens: 600,
     };
 
-    let request = client.post(&endpoint)
+    let request = client
+        .post(&endpoint)
         .json(&req)
         .header("Authorization", format!("Bearer {}", api_key));
     let res: Resp = request
-        .send().await.map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
 
-    Ok(res.choices.into_iter().next().map(|c| c.message.content).unwrap_or_else(|| "No summary generated.".to_string()))
+    Ok(res
+        .choices
+        .into_iter()
+        .next()
+        .map(|c| c.message.content)
+        .unwrap_or_else(|| "No summary generated.".to_string()))
 }
 
 // ─── Core Engine ─────────────────────────────────────────────────────────────
@@ -491,10 +620,15 @@ Return plain text with:\n1) What was happening\n2) Key mentions / action items\n
 async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOverview, String> {
     let now = chrono::Local::now();
     let date_key = now.format("%Y-%m-%d").to_string();
-    
-    use chrono::{TimeZone, Local};
+
+    use chrono::{Local, TimeZone};
     let day_start = Local
-        .from_local_datetime(&now.naive_local().date().and_hms_opt(0, 0, 0).ok_or("Invalid date time boundaries")?)
+        .from_local_datetime(
+            &now.naive_local()
+                .date()
+                .and_hms_opt(0, 0, 0)
+                .ok_or("Invalid date time boundaries")?,
+        )
         .single()
         .ok_or("Failed to convert to local datetime")?
         .timestamp();
@@ -508,46 +642,61 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
             let conn = crate::intent::db::open(&app)?;
             build_today_context(&conn, day_start, day_end, &date_key2)
         }
-    }).await.map_err(|e| e.to_string())??;
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
-    let (api_key, ai_provider, ai_model): (Option<String>, String, Option<String>) = tokio::task::spawn_blocking({
-        let app = app_handle.clone();
-        move || -> (Option<String>, String, Option<String>) {
-            let conn = match crate::intent::db::open(&app) {
-                Ok(c) => c,
-                Err(_) => return (None, "nvidia".to_string(), None),
-            };
-            let model = conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'default_model'",
-                [], |row| row.get::<_, String>(0),
-            ).ok().filter(|s| !s.is_empty());
-            let provider = model
-                .as_deref()
-                .map(infer_provider_from_model)
-                .unwrap_or_else(|| "nvidia".to_string());
-            let key_name = provider_key_name(&provider);
-            
-            let mut key = None;
-            if let Ok(entry) = Entry::new("Atheletia", key_name) {
-                if let Ok(pwd) = entry.get_password() {
-                    if !pwd.trim().is_empty() {
-                        key = Some(pwd);
+    let (api_key, ai_provider, ai_model): (Option<String>, String, Option<String>) =
+        tokio::task::spawn_blocking({
+            let app = app_handle.clone();
+            move || -> (Option<String>, String, Option<String>) {
+                let conn = match crate::intent::db::open(&app) {
+                    Ok(c) => c,
+                    Err(_) => return (None, "nvidia".to_string(), None),
+                };
+                let model = conn
+                    .query_row(
+                        "SELECT value FROM app_settings WHERE key = 'default_model'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                    .filter(|s| !s.is_empty());
+                let provider = model
+                    .as_deref()
+                    .map(infer_provider_from_model)
+                    .unwrap_or_else(|| "nvidia".to_string());
+                let key_name = provider_key_name(&provider);
+
+                let mut key = None;
+                if let Ok(entry) = Entry::new("Atheletia", key_name) {
+                    if let Ok(pwd) = entry.get_password() {
+                        if !pwd.trim().is_empty() {
+                            key = Some(pwd);
+                        }
                     }
                 }
-            }
 
-            if key.is_none() {
-                key = conn.query_row(
-                    "SELECT value FROM app_settings WHERE key = ?1",
-                    rusqlite::params![key_name], |row| row.get::<_, String>(0),
-                ).ok().filter(|s| !s.is_empty())
-                .or_else(|| {
-                    std::env::var(provider_env_name(&provider)).ok().filter(|s| !s.is_empty())
-                });
+                if key.is_none() {
+                    key = conn
+                        .query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            rusqlite::params![key_name],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            std::env::var(provider_env_name(&provider))
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                        });
+                }
+                (key, provider, model)
             }
-            (key, provider, model)
-        }
-    }).await.unwrap_or((None, "nvidia".to_string(), None));
+        })
+        .await
+        .unwrap_or((None, "nvidia".to_string(), None));
 
     // 3. AI Summary (or fallback)
     let overview = if let Some(key) = api_key.as_deref() {
@@ -563,7 +712,10 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
                     o.deadlines = derived_deadlines;
                 } else {
                     for d in derived_deadlines {
-                        let exists = o.deadlines.iter().any(|x| x.title.eq_ignore_ascii_case(&d.title));
+                        let exists = o
+                            .deadlines
+                            .iter()
+                            .any(|x| x.title.eq_ignore_ascii_case(&d.title));
                         if !exists {
                             o.deadlines.push(d);
                         }
@@ -576,12 +728,16 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
                     o.projects = derived_projects;
                 } else {
                     for p in derived_projects {
-                        let exists = o.projects.iter().any(|x| x.name.eq_ignore_ascii_case(&p.name));
+                        let exists = o
+                            .projects
+                            .iter()
+                            .any(|x| x.name.eq_ignore_ascii_case(&p.name));
                         if !exists {
                             o.projects.push(p);
                         }
                     }
-                    o.projects.sort_by(|a, b| b.files_changed.cmp(&a.files_changed));
+                    o.projects
+                        .sort_by(|a, b| b.files_changed.cmp(&a.files_changed));
                     o.projects.truncate(12);
                 }
 
@@ -590,7 +746,10 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
                     o.contacts = derived_contacts;
                 } else {
                     for c in derived_contacts {
-                        let exists = o.contacts.iter().any(|x| x.name.eq_ignore_ascii_case(&c.name));
+                        let exists = o
+                            .contacts
+                            .iter()
+                            .any(|x| x.name.eq_ignore_ascii_case(&c.name));
                         if !exists {
                             o.contacts.push(c);
                         }
@@ -622,12 +781,14 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
         let fresh = overview.clone();
         move || -> Result<DashboardOverview, String> {
             let conn = crate::intent::db::open(&app)?;
-            let mut stmt = conn.prepare(
-                "SELECT summary_json FROM dashboard_snapshots
+            let mut stmt = conn
+                .prepare(
+                    "SELECT summary_json FROM dashboard_snapshots
                  WHERE date_key != ?1
                  ORDER BY updated_at DESC
-                 LIMIT 10"
-            ).map_err(|e| e.to_string())?;
+                 LIMIT 10",
+                )
+                .map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map(rusqlite::params![dk], |row| row.get::<_, String>(0))
                 .map_err(|e| e.to_string())?;
@@ -643,7 +804,9 @@ async fn refresh_dashboard_snapshot(app_handle: AppHandle) -> Result<DashboardOv
             merged.contacts = sanitize_contacts(merged.contacts);
             Ok(merged)
         }
-    }).await.map_err(|e| e.to_string())??;
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     // 4. Save to DB
     let ts = chrono::Utc::now().timestamp();
@@ -681,31 +844,44 @@ struct TodayContext {
     carry_over_projects: Vec<ProjectOverview>,
 }
 
-fn build_today_context(conn: &rusqlite::Connection, day_start: i64, day_end: i64, date_key: &str) -> Result<TodayContext, String> {
+fn build_today_context(
+    conn: &rusqlite::Connection,
+    day_start: i64,
+    day_end: i64,
+    date_key: &str,
+) -> Result<TodayContext, String> {
     let mut ctx = TodayContext::default();
 
     // Top apps
-    let mut stmt = conn.prepare(
-        "SELECT app_name, SUM(duration_seconds) FROM activities 
-         WHERE start_time >= ?1 AND start_time < ?2 GROUP BY app_name ORDER BY 2 DESC LIMIT 10"
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(rusqlite::params![day_start, day_end], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    }).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT app_name, SUM(duration_seconds) FROM activities 
+         WHERE start_time >= ?1 AND start_time < ?2 GROUP BY app_name ORDER BY 2 DESC LIMIT 10",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![day_start, day_end], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
     for row in rows.filter_map(|r| r.ok()) {
         ctx.total_duration += row.1;
         ctx.top_apps.push(row);
     }
 
     // Chat
-    let mut stmt2 = conn.prepare(
-        "SELECT role, content FROM chat_messages 
-         WHERE created_at >= ?1 AND created_at < ?2 ORDER BY created_at ASC LIMIT 100"
-    ).map_err(|e| e.to_string())?;
-    let chat_rows = stmt2.query_map(rusqlite::params![day_start, day_end], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    }).map_err(|e| e.to_string())?;
-    
+    let mut stmt2 = conn
+        .prepare(
+            "SELECT role, content FROM chat_messages 
+         WHERE created_at >= ?1 AND created_at < ?2 ORDER BY created_at ASC LIMIT 100",
+        )
+        .map_err(|e| e.to_string())?;
+    let chat_rows = stmt2
+        .query_map(rusqlite::params![day_start, day_end], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+
     let mut pending_user = None;
     for row in chat_rows.filter_map(|r| r.ok()) {
         if row.0 == "user" {
@@ -717,34 +893,41 @@ fn build_today_context(conn: &rusqlite::Connection, day_start: i64, day_end: i64
         }
     }
 
-    let mut stmt3 = conn.prepare(
-        "SELECT path, project_root, change_type, COALESCE(content_preview, ''), detected_at
+    let mut stmt3 = conn
+        .prepare(
+            "SELECT path, project_root, change_type, COALESCE(content_preview, ''), detected_at
          FROM code_file_events
          WHERE detected_at >= ?1 AND detected_at < ?2
          ORDER BY detected_at DESC
-         LIMIT 400"
-    ).map_err(|e| e.to_string())?;
-    let file_rows = stmt3.query_map(rusqlite::params![day_start, day_end], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, i64>(4)?,
-        ))
-    }).map_err(|e| e.to_string())?;
+         LIMIT 400",
+        )
+        .map_err(|e| e.to_string())?;
+    let file_rows = stmt3
+        .query_map(rusqlite::params![day_start, day_end], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
     ctx.file_changes = file_rows.filter_map(|r| r.ok()).collect();
 
-    let mut stmt4 = conn.prepare(
-        "SELECT content FROM diary_entries WHERE date = ?1 ORDER BY created_at DESC LIMIT 80"
-    ).map_err(|e| e.to_string())?;
-    let diary_rows = stmt4.query_map(rusqlite::params![date_key], |row| {
-        row.get::<_, String>(0)
-    }).map_err(|e| e.to_string())?;
+    let mut stmt4 = conn
+        .prepare(
+            "SELECT content FROM diary_entries WHERE date = ?1 ORDER BY created_at DESC LIMIT 80",
+        )
+        .map_err(|e| e.to_string())?;
+    let diary_rows = stmt4
+        .query_map(rusqlite::params![date_key], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
     ctx.diary_entries = diary_rows.filter_map(|r| r.ok()).collect();
 
-        let mut stmt5 = conn.prepare(
-                "SELECT app_name, window_title, COALESCE(metadata, ''), start_time FROM activities
+    let mut stmt5 = conn
+        .prepare(
+            "SELECT app_name, window_title, COALESCE(metadata, ''), start_time FROM activities
          WHERE start_time >= ?1 AND start_time < ?2
            AND (
              lower(app_name) LIKE '%whatsapp%'
@@ -755,16 +938,19 @@ fn build_today_context(conn: &rusqlite::Connection, day_start: i64, day_end: i64
              OR lower(app_name) LIKE '%instagram%'
            )
          ORDER BY start_time DESC
-         LIMIT 300"
-    ).map_err(|e| e.to_string())?;
-    let comm_rows = stmt5.query_map(rusqlite::params![day_start, day_end], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, i64>(3)?,
-        ))
-    }).map_err(|e| e.to_string())?;
+         LIMIT 300",
+        )
+        .map_err(|e| e.to_string())?;
+    let comm_rows = stmt5
+        .query_map(rusqlite::params![day_start, day_end], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
     ctx.communication_events = comm_rows
         .filter_map(|r| r.ok())
         .map(|(app, title, metadata_raw, start)| {
@@ -773,20 +959,27 @@ fn build_today_context(conn: &rusqlite::Connection, day_start: i64, day_end: i64
             } else {
                 serde_json::from_str::<serde_json::Value>(&metadata_raw)
                     .ok()
-                    .and_then(|v| v.get("screen_text").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                    .and_then(|v| {
+                        v.get("screen_text")
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string())
+                    })
                     .unwrap_or_default()
             };
             (app, title, ocr, start)
         })
         .collect();
 
-    let mut stmt_prev = conn.prepare(
-        "SELECT summary_json FROM dashboard_snapshots
+    let mut stmt_prev = conn
+        .prepare(
+            "SELECT summary_json FROM dashboard_snapshots
          WHERE date_key != ?1
          ORDER BY updated_at DESC
-         LIMIT 14"
-    ).map_err(|e| e.to_string())?;
-    let prev_rows = stmt_prev.query_map(rusqlite::params![date_key], |row| row.get::<_, String>(0))
+         LIMIT 14",
+        )
+        .map_err(|e| e.to_string())?;
+    let prev_rows = stmt_prev
+        .query_map(rusqlite::params![date_key], |row| row.get::<_, String>(0))
         .map_err(|e| e.to_string())?;
 
     let mut seen_deadline = HashSet::new();
@@ -820,7 +1013,12 @@ fn build_today_context(conn: &rusqlite::Connection, day_start: i64, day_end: i64
     Ok(ctx)
 }
 
-async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&str>, ctx: &TodayContext) -> Result<DashboardOverview, String> {
+async fn call_nim_dashboard(
+    api_key: &str,
+    ai_provider: &str,
+    ai_model: Option<&str>,
+    ctx: &TodayContext,
+) -> Result<DashboardOverview, String> {
     let prompt = format!(
         "Build a personal dashboard overview from today's data.\n\
         Return STRICT JSON only matching this schema:\n\
@@ -841,17 +1039,36 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
                 ctx.carry_over_projects.iter().take(20).collect::<Vec<_>>()
     );
 
-    #[derive(Serialize)] struct Msg { role: String, content: String }
-    #[derive(Serialize)] struct Req { model: String, messages: Vec<Msg>, temperature: f32 }
-    #[derive(Deserialize)] struct Resp { choices: Vec<Ch> }
-    #[derive(Deserialize)] struct Ch { message: Mc }
-    #[derive(Deserialize)] struct Mc { content: String }
+    #[derive(Serialize)]
+    struct Msg {
+        role: String,
+        content: String,
+    }
+    #[derive(Serialize)]
+    struct Req {
+        model: String,
+        messages: Vec<Msg>,
+        temperature: f32,
+    }
+    #[derive(Deserialize)]
+    struct Resp {
+        choices: Vec<Ch>,
+    }
+    #[derive(Deserialize)]
+    struct Ch {
+        message: Mc,
+    }
+    #[derive(Deserialize)]
+    struct Mc {
+        content: String,
+    }
 
     let (endpoint, model_name) = resolve_dashboard_ai_endpoint(ai_provider, ai_model);
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|e| e.to_string())?;
+        .build()
+        .map_err(|e| e.to_string())?;
 
     let provider_norm = ai_provider.to_lowercase();
 
@@ -864,20 +1081,31 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
             "contents": [{ "parts": [{ "text": full_prompt }] }],
             "generationConfig": { "temperature": 0.2, "maxOutputTokens": 2048 }
         });
-        let resp = client.post(&gemini_url)
+        let resp = client
+            .post(&gemini_url)
             .header("Content-Type", "application/json")
-            .json(&body).send().await.map_err(|e| e.to_string())?;
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             return Err(format!("AI {} — {}", status, &text[..text.len().min(300)]));
         }
         let parsed: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        parsed.get("candidates").and_then(|v| v.as_array()).and_then(|a| a.first())
-            .and_then(|c| c.get("content")).and_then(|c| c.get("parts"))
-            .and_then(|p| p.as_array()).and_then(|parts| parts.first())
-            .and_then(|part| part.get("text")).and_then(|t| t.as_str())
-            .unwrap_or("{}").to_string()
+        parsed
+            .get("candidates")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("content"))
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array())
+            .and_then(|parts| parts.first())
+            .and_then(|part| part.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("{}")
+            .to_string()
     } else if provider_norm == "anthropic" {
         let body = serde_json::json!({
             "model": model_name,
@@ -886,20 +1114,31 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
             "temperature": 0.2,
             "max_tokens": 2048
         });
-        let resp = client.post(&endpoint)
+        let resp = client
+            .post(&endpoint)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&body).send().await.map_err(|e| e.to_string())?;
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             return Err(format!("AI {} - {}", status, &text[..text.len().min(300)]));
         }
         let value: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-        value.get("content")
+        value
+            .get("content")
             .and_then(|v| v.as_array())
-            .map(|parts| parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""))
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
             .unwrap_or_default()
     } else {
         let req = Req {
@@ -910,16 +1149,29 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
             ],
             temperature: 0.2,
         };
-        let res: Resp = client.post(&endpoint)
+        let res: Resp = client
+            .post(&endpoint)
             .json(&req)
             .header("Authorization", format!("Bearer {}", api_key))
-            .send().await.map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
-        res.choices.into_iter().next().map(|c| c.message.content).unwrap_or_default()
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        res.choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .unwrap_or_default()
     };
 
-    let clean = content.trim().trim_start_matches("```json").trim_end_matches("```").trim();
-    
+    let clean = content
+        .trim()
+        .trim_start_matches("```json")
+        .trim_end_matches("```")
+        .trim();
+
     // We parse loosely and fill defaults if NIM fails to return arrays
     #[derive(Deserialize, Default)]
     struct Partial {
@@ -929,12 +1181,14 @@ async fn call_nim_dashboard(api_key: &str, ai_provider: &str, ai_model: Option<&
         projects: Option<Vec<ProjectOverview>>,
         contacts: Option<Vec<ContactOverview>>,
     }
-    
+
     let parsed: Partial = serde_json::from_str(clean).map_err(|e| e.to_string())?;
 
     Ok(DashboardOverview {
         date_key: String::new(),
-        summary: parsed.summary.unwrap_or_else(|| "No summary available.".into()),
+        summary: parsed
+            .summary
+            .unwrap_or_else(|| "No summary available.".into()),
         focus_points: parsed.focus_points.unwrap_or_default(),
         deadlines: parsed.deadlines.unwrap_or_default(),
         projects: parsed.projects.unwrap_or_default(),
@@ -947,7 +1201,13 @@ fn fallback_overview(ctx: &TodayContext) -> DashboardOverview {
     let summary = if ctx.top_apps.is_empty() {
         "No tracked activity yet today.".to_string()
     } else {
-        let apps = ctx.top_apps.iter().take(3).map(|(n, d)| format!("{} ({}m)", n, d / 60)).collect::<Vec<_>>().join(", ");
+        let apps = ctx
+            .top_apps
+            .iter()
+            .take(3)
+            .map(|(n, d)| format!("{} ({}m)", n, d / 60))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!("Today you mostly worked in {}.", apps)
     };
 
@@ -968,9 +1228,15 @@ fn fallback_overview(ctx: &TodayContext) -> DashboardOverview {
         date_key: String::new(),
         summary,
         focus_points: vec![
-            format!("{} communication windows detected", ctx.communication_events.len()),
+            format!(
+                "{} communication windows detected",
+                ctx.communication_events.len()
+            ),
             format!("{} file changes tracked", ctx.file_changes.len()),
-            format!("{} diary notes scanned for deadlines", ctx.diary_entries.len()),
+            format!(
+                "{} diary notes scanned for deadlines",
+                ctx.diary_entries.len()
+            ),
         ],
         deadlines,
         projects,
@@ -1135,12 +1401,29 @@ fn summarize_projects_from_file_changes(ctx: &TodayContext, limit: usize) -> Vec
     let mut projects: Vec<ProjectOverview> = by_project
         .into_iter()
         .map(|(root, stat)| {
-            let short_name = root.replace('\\', "/").rsplit('/').next().unwrap_or(root.as_str()).to_string();
-            let areas = stat.touched_areas.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let short_name = root
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                .unwrap_or(root.as_str())
+                .to_string();
+            let areas = stat
+                .touched_areas
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
             let update = if areas.is_empty() {
-                format!("{} modified, {} created, {} deleted", stat.modified, stat.created, stat.deleted)
+                format!(
+                    "{} modified, {} created, {} deleted",
+                    stat.modified, stat.created, stat.deleted
+                )
             } else {
-                format!("{} modified, {} created, {} deleted • touched {}", stat.modified, stat.created, stat.deleted, areas)
+                format!(
+                    "{} modified, {} created, {} deleted • touched {}",
+                    stat.modified, stat.created, stat.deleted, areas
+                )
             };
             ProjectOverview {
                 name: short_name,
@@ -1322,13 +1605,19 @@ fn sanitize_contacts(items: Vec<ContactOverview>) -> Vec<ContactOverview> {
             continue;
         }
         if seen.insert(key) {
-            out.push(ContactOverview { name: normalized, ..item });
+            out.push(ContactOverview {
+                name: normalized,
+                ..item
+            });
         }
     }
     out
 }
 
-fn merge_dashboard_overview(previous: DashboardOverview, mut fresh: DashboardOverview) -> DashboardOverview {
+fn merge_dashboard_overview(
+    previous: DashboardOverview,
+    mut fresh: DashboardOverview,
+) -> DashboardOverview {
     if fresh.summary.trim().is_empty() {
         fresh.summary = previous.summary;
     }
@@ -1345,7 +1634,10 @@ fn merge_dashboard_overview(previous: DashboardOverview, mut fresh: DashboardOve
     let mut merged_deadlines = fresh.deadlines;
     for item in previous.deadlines {
         let key = item.title.to_lowercase();
-        if let Some(existing) = merged_deadlines.iter_mut().find(|d| d.title.to_lowercase() == key) {
+        if let Some(existing) = merged_deadlines
+            .iter_mut()
+            .find(|d| d.title.to_lowercase() == key)
+        {
             if existing.status.trim().is_empty() {
                 existing.status = item.status.clone();
             }
@@ -1365,7 +1657,10 @@ fn merge_dashboard_overview(previous: DashboardOverview, mut fresh: DashboardOve
     let mut merged_projects = fresh.projects;
     for item in previous.projects {
         let key = item.name.to_lowercase();
-        if let Some(existing) = merged_projects.iter_mut().find(|p| p.name.to_lowercase() == key) {
+        if let Some(existing) = merged_projects
+            .iter_mut()
+            .find(|p| p.name.to_lowercase() == key)
+        {
             existing.files_changed = existing.files_changed.max(item.files_changed);
             if existing.update.trim().is_empty() {
                 existing.update = item.update.clone();
@@ -1381,7 +1676,10 @@ fn merge_dashboard_overview(previous: DashboardOverview, mut fresh: DashboardOve
     let mut merged_contacts = fresh.contacts;
     for item in previous.contacts {
         let key = item.name.to_lowercase();
-        if let Some(existing) = merged_contacts.iter_mut().find(|c| c.name.to_lowercase() == key) {
+        if let Some(existing) = merged_contacts
+            .iter_mut()
+            .find(|c| c.name.to_lowercase() == key)
+        {
             existing.last_seen = existing.last_seen.max(item.last_seen);
             if existing.context.trim().is_empty() {
                 existing.context = item.context.clone();

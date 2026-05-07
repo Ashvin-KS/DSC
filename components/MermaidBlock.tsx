@@ -77,7 +77,7 @@ const MermaidBlockInner: React.FC<MermaidBlockProps> = ({ chart }) => {
   return (
     <div
       className="my-3 overflow-x-auto rounded-lg border border-[#333] bg-[#111] p-2 [&>svg]:h-auto [&>svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['foreignObject'] }) }}
+      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, FORBID_TAGS: ['foreignObject'] }) }}
     />
   );
 };

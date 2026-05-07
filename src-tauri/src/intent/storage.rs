@@ -1,7 +1,51 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs;
+use std::path::PathBuf;
 use tauri::AppHandle;
+
+/// Validate that an export/import path is safe: absolute, canonical, and not inside
+/// system directories that could cause damage (Windows, Program Files, System32, etc.).
+fn validate_safe_path(file_path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(file_path);
+    if !path.is_absolute() {
+        return Err("Path must be absolute".into());
+    }
+    let target = std::fs::canonicalize(&path)
+        .or_else(|_| {
+            // If file doesn't exist yet, canonicalize the parent
+            if let Some(parent) = path.parent() {
+                std::fs::canonicalize(parent).map(|cp| cp.join(path.file_name().unwrap_or_default()))
+            } else {
+                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "invalid path"))
+            }
+        })
+        .map_err(|e| format!("Invalid path: {e}"))?;
+
+    let path_str = target.to_string_lossy().to_lowercase();
+    let blocked = [
+        "\\windows",
+        "\\system32",
+        "\\program files",
+        "\\program files (x86)",
+        "\\programdata",
+        "\\inetpub",
+        "\\boot",
+        "\\efi",
+        "\\recovery",
+    ];
+    for bad in &blocked {
+        if path_str.contains(bad) {
+            return Err(format!(
+                "Access denied: path is inside a protected system directory ({bad})"
+            ));
+        }
+    }
+    if path_str.contains("..") {
+        return Err("Access denied: path traversal detected".into());
+    }
+    Ok(target)
+}
 
 #[derive(Debug, Serialize)]
 pub struct StorageStats {
@@ -28,15 +72,25 @@ fn db_size_bytes(app: &AppHandle) -> Result<i64, String> {
 
 fn get_valid_table_name(table: &str) -> Option<&str> {
     match table {
-        "activities" | "chat_messages" | "chat_sessions" | "diary_entries" | "code_file_events" | "dashboard_snapshots" | "app_settings" | "retrieval_chunks" => Some(table),
+        "activities"
+        | "chat_messages"
+        | "chat_sessions"
+        | "diary_entries"
+        | "code_file_events"
+        | "dashboard_snapshots"
+        | "app_settings"
+        | "retrieval_chunks" => Some(table),
         _ => None,
     }
 }
 
 fn count(conn: &rusqlite::Connection, table: &str) -> i64 {
-    let Some(valid_table) = get_valid_table_name(table) else { return 0; };
+    let Some(valid_table) = get_valid_table_name(table) else {
+        return 0;
+    };
     let sql = format!("SELECT COUNT(*) FROM {}", valid_table);
-    conn.query_row(&sql, [], |row| row.get::<_, i64>(0)).unwrap_or(0)
+    conn.query_row(&sql, [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0)
 }
 
 #[tauri::command]
@@ -80,10 +134,7 @@ pub async fn storage_clear_all(app_handle: AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn storage_export_data(app_handle: AppHandle, file_path: String) -> Result<bool, String> {
-    let p = std::path::PathBuf::from(&file_path);
-    if !p.is_absolute() {
-        return Err("Export path must be absolute".into());
-    }
+    let safe_path = validate_safe_path(&file_path)?;
     let conn = crate::intent::db::open(&app_handle)?;
     let export = json!({
         "version": 1,
@@ -99,7 +150,7 @@ pub async fn storage_export_data(app_handle: AppHandle, file_path: String) -> Re
     });
 
     let payload = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())?;
-    fs::write(file_path, payload).map_err(|e| e.to_string())?;
+    fs::write(safe_path, payload).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -109,12 +160,9 @@ pub async fn storage_import_data(
     file_path: String,
     replace_existing: Option<bool>,
 ) -> Result<bool, String> {
-    let p = std::path::PathBuf::from(&file_path);
-    if !p.is_absolute() {
-        return Err("Import path must be absolute".into());
-    }
+    let safe_path = validate_safe_path(&file_path)?;
 
-    let content = fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+    let content = fs::read_to_string(safe_path).map_err(|e| e.to_string())?;
     let parsed: Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     let replace = replace_existing.unwrap_or(true);
     let mut conn = crate::intent::db::open(&app_handle)?;
@@ -142,7 +190,10 @@ pub async fn storage_import_data(
     import_chat_messages(&tx, parsed.get("chatMessages").and_then(Value::as_array))?;
     import_diary_entries(&tx, parsed.get("diaryEntries").and_then(Value::as_array))?;
     import_code_events(&tx, parsed.get("codeEvents").and_then(Value::as_array))?;
-    import_dashboard_snapshots(&tx, parsed.get("dashboardSnapshots").and_then(Value::as_array))?;
+    import_dashboard_snapshots(
+        &tx,
+        parsed.get("dashboardSnapshots").and_then(Value::as_array),
+    )?;
     import_settings(&tx, parsed.get("appSettings").and_then(Value::as_array))?;
     import_retrieval_chunks(&tx, parsed.get("retrievalChunks").and_then(Value::as_array))?;
 
@@ -178,7 +229,11 @@ pub fn enforce_max_storage_mb(app_handle: &AppHandle, max_storage_mb: i64) -> Re
             rows.filter_map(|row| row.ok()).collect()
         };
         for id in &activity_ids {
-            crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "activity", &id.to_string())?;
+            crate::intent::retrieval::delete_retrieval_chunks_for_entity(
+                &conn,
+                "activity",
+                &id.to_string(),
+            )?;
         }
 
         let file_event_ids: Vec<i64> = {
@@ -191,7 +246,11 @@ pub fn enforce_max_storage_mb(app_handle: &AppHandle, max_storage_mb: i64) -> Re
             rows.filter_map(|row| row.ok()).collect()
         };
         for id in &file_event_ids {
-            crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "file_event", &id.to_string())?;
+            crate::intent::retrieval::delete_retrieval_chunks_for_entity(
+                &conn,
+                "file_event",
+                &id.to_string(),
+            )?;
         }
 
         let chat_message_ids: Vec<i64> = {
@@ -204,7 +263,11 @@ pub fn enforce_max_storage_mb(app_handle: &AppHandle, max_storage_mb: i64) -> Re
             rows.filter_map(|row| row.ok()).collect()
         };
         for id in &chat_message_ids {
-            crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "chat_message", &id.to_string())?;
+            crate::intent::retrieval::delete_retrieval_chunks_for_entity(
+                &conn,
+                "chat_message",
+                &id.to_string(),
+            )?;
         }
 
         let diary_entry_ids: Vec<String> = {
@@ -252,7 +315,10 @@ pub fn enforce_max_storage_mb(app_handle: &AppHandle, max_storage_mb: i64) -> Re
             return Ok(true);
         }
 
-        if count(&conn, "activities") == 0 && count(&conn, "code_file_events") == 0 && count(&conn, "chat_messages") == 0 {
+        if count(&conn, "activities") == 0
+            && count(&conn, "code_file_events") == 0
+            && count(&conn, "chat_messages") == 0
+        {
             break;
         }
     }
@@ -269,20 +335,34 @@ pub fn run_startup_maintenance(app_handle: &AppHandle) {
     };
 
     // 1. Read settings for retention and cleanup config
-    let retention_days: i64 = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'data_retention_days'",
-        [], |row| row.get::<_, String>(0),
-    ).ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+    let retention_days: i64 = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'data_retention_days'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
 
-    let auto_cleanup: bool = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'auto_cleanup'",
-        [], |row| row.get::<_, String>(0),
-    ).map(|v| v == "true").unwrap_or(true);
+    let auto_cleanup: bool = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'auto_cleanup'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|v| v == "true")
+        .unwrap_or(true);
 
-    let max_storage_mb: i64 = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'max_storage_mb'",
-        [], |row| row.get::<_, String>(0),
-    ).ok().and_then(|v| v.parse().ok()).unwrap_or(512);
+    let max_storage_mb: i64 = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'max_storage_mb'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(512);
 
     // 2. Data retention: delete records older than retention_days
     if retention_days > 0 {
@@ -330,8 +410,12 @@ fn dump_table(conn: &rusqlite::Connection, table: &str) -> Result<Vec<Value>, St
                     rusqlite::types::ValueRef::Null => Value::Null,
                     rusqlite::types::ValueRef::Integer(i) => json!(i),
                     rusqlite::types::ValueRef::Real(f) => json!(f),
-                    rusqlite::types::ValueRef::Text(t) => Value::String(String::from_utf8_lossy(t).to_string()),
-                    rusqlite::types::ValueRef::Blob(b) => Value::Array(b.iter().map(|v| json!(v)).collect()),
+                    rusqlite::types::ValueRef::Text(t) => {
+                        Value::String(String::from_utf8_lossy(t).to_string())
+                    }
+                    rusqlite::types::ValueRef::Blob(b) => {
+                        Value::Array(b.iter().map(|v| json!(v)).collect())
+                    }
                 };
                 obj.insert(name.clone(), val);
             }
@@ -350,8 +434,13 @@ fn as_string(v: Option<&Value>) -> String {
     v.and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
-fn import_activities(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_activities(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO activities (id, app_name, app_hash, window_title, window_title_hash, category_id, start_time, end_time, duration_seconds, metadata)
@@ -374,8 +463,13 @@ fn import_activities(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) ->
     Ok(())
 }
 
-fn import_chat_sessions(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_chat_sessions(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO chat_sessions (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
@@ -391,8 +485,13 @@ fn import_chat_sessions(conn: &rusqlite::Connection, items: Option<&Vec<Value>>)
     Ok(())
 }
 
-fn import_chat_messages(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_chat_messages(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO chat_messages (id, session_id, role, content, created_at, agent_steps, activities, metadata)
@@ -413,8 +512,13 @@ fn import_chat_messages(conn: &rusqlite::Connection, items: Option<&Vec<Value>>)
     Ok(())
 }
 
-fn import_diary_entries(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_diary_entries(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO diary_entries (id, date, content, is_ai_generated, created_at, updated_at)
@@ -433,8 +537,13 @@ fn import_diary_entries(conn: &rusqlite::Connection, items: Option<&Vec<Value>>)
     Ok(())
 }
 
-fn import_code_events(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_code_events(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO code_file_events (id, path, project_root, entity_type, change_type, content_preview, detected_at)
@@ -454,8 +563,13 @@ fn import_code_events(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -
     Ok(())
 }
 
-fn import_dashboard_snapshots(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_dashboard_snapshots(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO dashboard_snapshots (date_key, summary_json, updated_at) VALUES (?1, ?2, ?3)",
@@ -471,7 +585,9 @@ fn import_dashboard_snapshots(conn: &rusqlite::Connection, items: Option<&Vec<Va
 }
 
 fn import_settings(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
@@ -486,8 +602,13 @@ fn import_settings(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> R
     Ok(())
 }
 
-fn import_retrieval_chunks(conn: &rusqlite::Connection, items: Option<&Vec<Value>>) -> Result<(), String> {
-    let Some(items) = items else { return Ok(()); };
+fn import_retrieval_chunks(
+    conn: &rusqlite::Connection,
+    items: Option<&Vec<Value>>,
+) -> Result<(), String> {
+    let Some(items) = items else {
+        return Ok(());
+    };
     for item in items {
         conn.execute(
             "INSERT OR REPLACE INTO retrieval_chunks (entity_type, entity_id, source_type, chunk_text, chunk_summary, project_root, source_ts, created_at, updated_at)

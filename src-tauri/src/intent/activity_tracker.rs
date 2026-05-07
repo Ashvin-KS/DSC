@@ -61,7 +61,9 @@ pub fn start_tracking(app_handle: AppHandle) {
                             }
                         } else {
                             let finished = active.clone();
-                            if let Err(e) = finalize_and_store_activity(&app_handle, finished, now_ms) {
+                            if let Err(e) =
+                                finalize_and_store_activity(&app_handle, finished, now_ms)
+                            {
                                 println!("Failed to store activity on focus change: {}", e);
                             }
                             session = Some(ActivitySession {
@@ -160,13 +162,16 @@ async fn capture_metadata() -> ActivityMetadata {
     }
 
     if TRACK_MEDIA_ENABLED.load(Ordering::Relaxed) {
-        metadata.media_info = match tokio::task::spawn_blocking(|| crate::intent::windows_utils::get_media_info()).await {
-            Ok(info) => info,
-            Err(e) => {
-                println!("[Tracker] SMTC spawn_blocking failed: {:?}", e);
-                None
-            }
-        };
+        metadata.media_info =
+            match tokio::task::spawn_blocking(|| crate::intent::windows_utils::get_media_info())
+                .await
+            {
+                Ok(info) => info,
+                Err(e) => {
+                    println!("[Tracker] SMTC spawn_blocking failed: {:?}", e);
+                    None
+                }
+            };
     }
 
     metadata
@@ -230,10 +235,10 @@ fn get_active_window() -> Result<Option<ActiveWindow>, String> {
             if !TRACK_BROWSER_ENABLED.load(Ordering::Relaxed) && is_browser_app(&app_name) {
                 title = "Browser (metadata hidden)".to_string();
             }
-            
+
             // Categorize the window
             let category_id = categorize_window(&app_name, &title);
-            
+
             Ok(Some(ActiveWindow {
                 app_name,
                 title,
@@ -247,133 +252,141 @@ fn get_active_window() -> Result<Option<ActiveWindow>, String> {
 /// Sanitize app name by removing control characters and normalizing known apps
 fn sanitize_app_name(name: &str) -> String {
     // Remove control characters (ASCII 0-31) and other non-printable chars
-    let cleaned: String = name.chars()
+    let cleaned: String = name
+        .chars()
         .filter(|c| c.is_ascii() && (*c as u8) >= 32 || !c.is_ascii())
         .collect();
-    
+
     // Normalize known app names
     let cleaned_lower = cleaned.to_lowercase();
-    
+
     // Spotify can appear as "Spotify8FileV" or similar with embedded chars
     if cleaned_lower.starts_with("spotify") || cleaned.contains("Spotify") {
         return "Spotify".to_string();
     }
-    
+
     cleaned
 }
 
 fn categorize_window(app_name: &str, title: &str) -> i32 {
     let app_lower = app_name.to_lowercase();
     let title_lower = title.to_lowercase();
-    
+
     // Development (category 1)
-    if app_lower.contains("code") || 
-       app_lower.contains("vscode") ||
-       app_lower.contains("antigravity") ||
-       app_lower.contains("cursor") ||
-       app_lower.contains("idea") ||
-       app_lower.contains("pycharm") ||
-       app_lower.contains("webstorm") ||
-       app_lower.contains("phpstorm") ||
-       app_lower.contains("rider") ||
-       app_lower.contains("clion") ||
-       app_lower.contains("goland") ||
-       app_lower.contains("android studio") ||
-       app_lower.contains("eclipse") ||
-       app_lower.contains("sublime") ||
-       app_lower.contains("atom") ||
-       app_lower.contains("vim") ||
-       app_lower.contains("neovim") ||
-       app_lower.contains("emacs") ||
-       app_lower.contains("git") ||
-       app_lower.contains("terminal") ||
-       app_lower.contains("powershell") ||
-       app_lower.contains("cmd") ||
-       app_lower.contains("windowsterminal") ||
-       app_lower.contains("wt") ||
-       app_lower.contains("postman") ||
-       app_lower.contains("insomnia") ||
-       app_lower.contains("docker") ||
-       title_lower.contains("visual studio") ||
-       title_lower.contains("- antigravity") {
+    if app_lower.contains("code")
+        || app_lower.contains("vscode")
+        || app_lower.contains("antigravity")
+        || app_lower.contains("cursor")
+        || app_lower.contains("idea")
+        || app_lower.contains("pycharm")
+        || app_lower.contains("webstorm")
+        || app_lower.contains("phpstorm")
+        || app_lower.contains("rider")
+        || app_lower.contains("clion")
+        || app_lower.contains("goland")
+        || app_lower.contains("android studio")
+        || app_lower.contains("eclipse")
+        || app_lower.contains("sublime")
+        || app_lower.contains("atom")
+        || app_lower.contains("vim")
+        || app_lower.contains("neovim")
+        || app_lower.contains("emacs")
+        || app_lower.contains("git")
+        || app_lower.contains("terminal")
+        || app_lower.contains("powershell")
+        || app_lower.contains("cmd")
+        || app_lower.contains("windowsterminal")
+        || app_lower.contains("wt")
+        || app_lower.contains("postman")
+        || app_lower.contains("insomnia")
+        || app_lower.contains("docker")
+        || title_lower.contains("visual studio")
+        || title_lower.contains("- antigravity")
+    {
         return 1;
     }
-    
+
     // Check title for code file extensions → Development
-    let code_extensions = [".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go", 
-                           ".java", ".cpp", ".c", ".cs", ".rb", ".php", ".vue",
-                           ".svelte", ".html", ".css", ".scss", ".json", ".toml",
-                           ".yaml", ".yml", ".md", ".sql"];
+    let code_extensions = [
+        ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go", ".java", ".cpp", ".c", ".cs", ".rb",
+        ".php", ".vue", ".svelte", ".html", ".css", ".scss", ".json", ".toml", ".yaml", ".yml",
+        ".md", ".sql",
+    ];
     for ext in code_extensions {
         if title_lower.contains(ext) {
             return 1;
         }
     }
-    
+
     // Entertainment (category 4) — check TITLE first (before browser) so
     // Spotify/YouTube playing inside a browser gets tagged as Entertainment
     // Note: Spotify web shows playing tracks as "Song • Artist - Browser"
-    if app_lower.contains("spotify") || 
-       app_lower.contains("netflix") ||
-       app_lower.contains("youtube") ||
-       app_lower.contains("vlc") ||
-       app_lower.contains("media player") ||
-       title_lower.contains("spotify") ||
-       title_lower.contains("youtube") ||
-       title_lower.contains("netflix") ||
-       title_lower.contains("twitch") ||
-       title_lower.contains("soundcloud") ||
-       title_lower.contains("apple music") ||
-       title_lower.contains("liked songs") ||
-       title_lower.contains("\u{2022}") {  // "•" bullet — Spotify uses "Song • Artist" format
+    if app_lower.contains("spotify")
+        || app_lower.contains("netflix")
+        || app_lower.contains("youtube")
+        || app_lower.contains("vlc")
+        || app_lower.contains("media player")
+        || title_lower.contains("spotify")
+        || title_lower.contains("youtube")
+        || title_lower.contains("netflix")
+        || title_lower.contains("twitch")
+        || title_lower.contains("soundcloud")
+        || title_lower.contains("apple music")
+        || title_lower.contains("liked songs")
+        || title_lower.contains("\u{2022}")
+    {
+        // "•" bullet — Spotify uses "Song • Artist" format
         return 4;
     }
-    
+
     // Browser (category 2) — only if title didn't match entertainment above
     if is_browser_app(&app_lower) {
         return 2;
     }
-    
+
     // Communication (category 3)
-    if app_lower.contains("slack") || 
-       app_lower.contains("discord") ||
-       app_lower.contains("teams") ||
-       app_lower.contains("zoom") ||
-       app_lower.contains("telegram") ||
-       app_lower.contains("whatsapp") ||
-       app_lower.contains("signal") ||
-       app_lower.contains("skype") ||
-       app_lower.contains("outlook") ||
-       app_lower.contains("thunderbird") ||
-       app_lower.contains("gmail") {
+    if app_lower.contains("slack")
+        || app_lower.contains("discord")
+        || app_lower.contains("teams")
+        || app_lower.contains("zoom")
+        || app_lower.contains("telegram")
+        || app_lower.contains("whatsapp")
+        || app_lower.contains("signal")
+        || app_lower.contains("skype")
+        || app_lower.contains("outlook")
+        || app_lower.contains("thunderbird")
+        || app_lower.contains("gmail")
+    {
         return 3;
     }
-    
+
     // Productivity (category 5)
-    if app_lower.contains("notion") || 
-       app_lower.contains("obsidian") ||
-       app_lower.contains("todo") ||
-       app_lower.contains("word") ||
-       app_lower.contains("excel") ||
-       app_lower.contains("powerpoint") ||
-       app_lower.contains("onenote") ||
-       app_lower.contains("notepad") ||
-       app_lower.contains("figma") ||
-       title_lower.contains("notion") ||
-       title_lower.contains("google docs") ||
-       title_lower.contains("google sheets") {
+    if app_lower.contains("notion")
+        || app_lower.contains("obsidian")
+        || app_lower.contains("todo")
+        || app_lower.contains("word")
+        || app_lower.contains("excel")
+        || app_lower.contains("powerpoint")
+        || app_lower.contains("onenote")
+        || app_lower.contains("notepad")
+        || app_lower.contains("figma")
+        || title_lower.contains("notion")
+        || title_lower.contains("google docs")
+        || title_lower.contains("google sheets")
+    {
         return 5;
     }
-    
+
     // System (category 6)
-    if app_lower.contains("explorer") || 
-       app_lower.contains("settings") ||
-       app_lower.contains("task manager") ||
-       app_lower.contains("control panel") ||
-       app_lower.contains("systemsettings") {
+    if app_lower.contains("explorer")
+        || app_lower.contains("settings")
+        || app_lower.contains("task manager")
+        || app_lower.contains("control panel")
+        || app_lower.contains("systemsettings")
+    {
         return 6;
     }
-    
+
     // Other (category 7)
     7
 }
@@ -381,9 +394,9 @@ fn categorize_window(app_name: &str, title: &str) -> i32 {
 fn store_activity(app_handle: &AppHandle, activity: &ActivityEvent) -> Result<(), String> {
     // Use db::open() to get a connection with all performance PRAGMAs applied
     let conn = crate::intent::db::open(app_handle)?;
-    
+
     let metadata_blob = serde_json::to_vec(&activity.metadata).map_err(|e| e.to_string())?;
-    
+
     conn.execute(
         "INSERT INTO activities 
          (app_name, app_hash, window_title, window_title_hash, category_id, 
@@ -400,17 +413,19 @@ fn store_activity(app_handle: &AppHandle, activity: &ActivityEvent) -> Result<()
             activity.duration_seconds,
             &metadata_blob,
         ],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     let activity_id = conn.last_insert_rowid();
-    let evidences = crate::intent::retrieval::extract_activity_evidence(&activity.metadata, activity.start_time);
+    let evidences = crate::intent::retrieval::extract_activity_evidence(
+        &activity.metadata,
+        activity.start_time,
+    );
     crate::intent::retrieval::replace_activity_evidence(&conn, activity_id, &evidences)?;
 
     let base_summary = format!(
         "{} | {} | {}s",
-        activity.app_name,
-        activity.window_title,
-        activity.duration_seconds
+        activity.app_name, activity.window_title, activity.duration_seconds
     );
     let _ = crate::intent::retrieval::upsert_retrieval_chunk(
         &conn,
@@ -469,7 +484,9 @@ pub fn set_excluded_apps(apps: Vec<String>) {
 fn is_app_excluded(app_name: &str) -> bool {
     let app = app_name.to_lowercase();
     if let Ok(list) = EXCLUDED_APPS.lock() {
-        return list.iter().any(|pattern| app == *pattern || app.contains(pattern));
+        return list
+            .iter()
+            .any(|pattern| app == *pattern || app.contains(pattern));
     }
     false
 }
@@ -486,4 +503,3 @@ fn is_browser_app(app_name: &str) -> bool {
         || lower.contains("webview2")
         || lower.contains("msedgewebview")
 }
-

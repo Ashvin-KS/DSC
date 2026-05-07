@@ -8,7 +8,10 @@ pub fn load_dotenv() {
 }
 
 pub fn api_key_from_env() -> Option<String> {
-    std::env::var(ENV_API_KEY).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    std::env::var(ENV_API_KEY)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn resolve_api_key(explicit_key: &str) -> String {

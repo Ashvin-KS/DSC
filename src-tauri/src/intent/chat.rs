@@ -1,14 +1,14 @@
 use chrono::Utc;
+use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use uuid::Uuid;
-use keyring::Entry;
 
+use crate::models::{AISettings, Settings};
 use crate::services::query_engine::{
-    run_agentic_search_with_steps_and_history_and_scope, AgentResult, AgentStep, ChatMessage as QEMessage,
-    cancel_chat_stream, reset_chat_cancel,
+    cancel_chat_stream, reset_chat_cancel, run_agentic_search_with_steps_and_history_and_scope,
+    AgentResult, AgentStep, ChatMessage as QEMessage,
 };
-use crate::models::{Settings, AISettings};
 
 #[tauri::command]
 pub fn cancel_chat() -> Result<bool, String> {
@@ -38,64 +38,98 @@ pub struct ChatMessageResponse {
 
 // AgentStep is imported from query_engine module
 
-
-
 // ─── blocking DB helpers (no async, conn safe) ────────────────────────────────
 
 fn db_create_session(conn: &rusqlite::Connection) -> Result<ChatSession, String> {
     let s = ChatSession {
-        id:         Uuid::new_v4().to_string(),
-        title:      "New Chat".to_string(),
+        id: Uuid::new_v4().to_string(),
+        title: "New Chat".to_string(),
         created_at: Utc::now().timestamp(),
         updated_at: Utc::now().timestamp(),
     };
     conn.execute(
         "INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![s.id, s.title, s.created_at, s.updated_at],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(s)
 }
 
 fn db_get_sessions(conn: &rusqlite::Connection) -> Result<Vec<ChatSession>, String> {
-    let mut stmt = conn.prepare(
-        "SELECT s.id, s.title, s.created_at, s.updated_at
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.title, s.created_at, s.updated_at
          FROM chat_sessions s
          WHERE EXISTS (SELECT 1 FROM chat_messages m WHERE m.session_id = s.id)
          ORDER BY s.updated_at DESC
          LIMIT 200",
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |row| Ok(ChatSession {
-        id:         row.get(0)?,
-        title:      row.get(1)?,
-        created_at: row.get(2)?,
-        updated_at: row.get(3)?,
-    })).map_err(|e| e.to_string())?;
-    Ok(rows.filter_map(|r| r.map_err(|e| eprintln!("[db] chat session row error: {e}")).ok()).collect())
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ChatSession {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                created_at: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .filter_map(|r| {
+            r.map_err(|e| eprintln!("[db] chat session row error: {e}"))
+                .ok()
+        })
+        .collect())
 }
 
-fn db_get_messages(conn: &rusqlite::Connection, session_id: &str) -> Result<Vec<ChatMessageResponse>, String> {
-    let mut stmt = conn.prepare(
-        "SELECT id, session_id, role, content, created_at, agent_steps, activities, metadata
+fn db_get_messages(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Vec<ChatMessageResponse>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, role, content, created_at, agent_steps, activities, metadata
          FROM chat_messages WHERE session_id = ?1 ORDER BY created_at ASC",
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([session_id], |row| Ok(ChatMessageResponse {
-        id:         row.get(0)?,
-        session_id: row.get(1)?,
-        role:       row.get(2)?,
-        content:    row.get(3)?,
-        created_at: row.get(4)?,
-        tool_calls: row.get::<_, Option<String>>(5)?.and_then(|s| serde_json::from_str::<Vec<AgentStep>>(&s).ok()),
-        activities: row.get::<_, Option<String>>(6)?.and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok()),
-        metadata:   row.get(7)?,
-    })).map_err(|e| e.to_string())?;
-    Ok(rows.filter_map(|r| r.map_err(|e| eprintln!("[db] chat message row error: {e}")).ok()).collect())
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([session_id], |row| {
+            Ok(ChatMessageResponse {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                role: row.get(2)?,
+                content: row.get(3)?,
+                created_at: row.get(4)?,
+                tool_calls: row
+                    .get::<_, Option<String>>(5)?
+                    .and_then(|s| serde_json::from_str::<Vec<AgentStep>>(&s).ok()),
+                activities: row
+                    .get::<_, Option<String>>(6)?
+                    .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok()),
+                metadata: row.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .filter_map(|r| {
+            r.map_err(|e| eprintln!("[db] chat message row error: {e}"))
+                .ok()
+        })
+        .collect())
 }
 
-fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &str, now: i64) -> Result<i64, String> {
+fn db_store_user_msg(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    message: &str,
+    now: i64,
+) -> Result<i64, String> {
     conn.execute(
         "INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![session_id, "user", message, now],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     let msg_id = conn.last_insert_rowid();
 
     let summary = format!("User chat message in session {}", session_id);
@@ -112,16 +146,25 @@ fn db_store_user_msg(conn: &rusqlite::Connection, session_id: &str, message: &st
         },
     );
 
-    let msg_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
-        [session_id], |row| row.get(0),
-    ).unwrap_or(0);
+    let msg_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
 
     if msg_count <= 1 {
         let title = if message.len() > 50 {
-            let end = message.char_indices().nth(50).map(|(i, _)| i).unwrap_or(message.len());
+            let end = message
+                .char_indices()
+                .nth(50)
+                .map(|(i, _)| i)
+                .unwrap_or(message.len());
             format!("{}…", &message[..end])
-        } else { message.to_string() };
+        } else {
+            message.to_string()
+        };
         let _ = conn.execute(
             "UPDATE chat_sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![title, now, session_id],
@@ -145,7 +188,10 @@ fn infer_provider_from_model(model: &str) -> String {
         "openai".to_string()
     } else if lower.starts_with("claude") {
         "anthropic".to_string()
-    } else if lower.contains("groq") || lower.starts_with("llama-3.3") || lower.starts_with("mixtral") {
+    } else if lower.contains("groq")
+        || lower.starts_with("llama-3.3")
+        || lower.starts_with("mixtral")
+    {
         "groq".to_string()
     } else {
         "nvidia".to_string()
@@ -153,10 +199,13 @@ fn infer_provider_from_model(model: &str) -> String {
 }
 
 fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
-    let model = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'default_model'",
-        [], |row| row.get::<_, String>(0),
-    ).unwrap_or_default();
+    let model = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'default_model'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default();
     let provider = infer_provider_from_model(&model);
 
     let key_name = match provider.to_lowercase().as_str() {
@@ -179,8 +228,11 @@ fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
     // Fallback: SQLite (legacy path, before keyring migration)
     conn.query_row(
         "SELECT value FROM app_settings WHERE key = ?1",
-        [key_name], |row| row.get::<_, String>(0),
-    ).ok().filter(|s| !s.is_empty())
+        [key_name],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .filter(|s| !s.is_empty())
     .or_else(|| {
         // Last resort: environment variables
         let env_key = match provider.to_lowercase().as_str() {
@@ -239,24 +291,41 @@ pub async fn get_chat_sessions(app_handle: AppHandle) -> Result<Vec<ChatSession>
 }
 
 #[tauri::command]
-pub async fn delete_chat_session(app_handle: AppHandle, session_id: String) -> Result<bool, String> {
+pub async fn delete_chat_session(
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<bool, String> {
     let conn = crate::intent::db::open(&app_handle)?;
-    let mut stmt = conn.prepare("SELECT id FROM chat_messages WHERE session_id = ?1").map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id FROM chat_messages WHERE session_id = ?1")
+        .map_err(|e| e.to_string())?;
     let message_ids: Vec<i64> = stmt
         .query_map([&session_id], |row| row.get::<_, i64>(0))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
     for message_id in message_ids {
-        crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "chat_message", &message_id.to_string())?;
+        crate::intent::retrieval::delete_retrieval_chunks_for_entity(
+            &conn,
+            "chat_message",
+            &message_id.to_string(),
+        )?;
     }
-    conn.execute("DELETE FROM chat_messages WHERE session_id = ?1", [&session_id]).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM chat_sessions WHERE id = ?1", [&session_id]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM chat_messages WHERE session_id = ?1",
+        [&session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM chat_sessions WHERE id = ?1", [&session_id])
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
 #[tauri::command]
-pub async fn get_chat_messages(app_handle: AppHandle, session_id: String) -> Result<Vec<ChatMessageResponse>, String> {
+pub async fn get_chat_messages(
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<Vec<ChatMessageResponse>, String> {
     let conn = crate::intent::db::open(&app_handle)?;
     db_get_messages(&conn, &session_id)
 }
@@ -275,19 +344,25 @@ pub async fn send_chat_message(
 ) -> Result<ChatMessageResponse, String> {
     reset_chat_cancel();
     let now = Utc::now().timestamp();
-    let effective_sources = if sources.is_some() { sources } else { selected_sources };
+    let effective_sources = if sources.is_some() {
+        sources
+    } else {
+        selected_sources
+    };
 
     // Store user message in database
     tokio::task::spawn_blocking({
         let app2 = app_handle.clone();
-        let sid   = session_id.clone();
-        let msg   = message.clone();
+        let sid = session_id.clone();
+        let msg = message.clone();
         move || {
             if let Ok(conn) = crate::intent::db::open(&app2) {
                 let _ = db_store_user_msg(&conn, &sid, &msg, now);
             }
         }
-    }).await.map_err(|e| e.to_string())?;
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     // Use passed api_key if provided, otherwise fetch from database
     let effective_api_key = if api_key.as_ref().filter(|k| !k.is_empty()).is_some() {
@@ -301,20 +376,24 @@ pub async fn send_chat_message(
                 };
                 db_get_api_keys(&conn)
             }
-        }).await.map_err(|e| e.to_string())?
+        })
+        .await
+        .map_err(|e| e.to_string())?
     };
 
     // Fetch prior messages
     let prior_messages: Vec<ChatMessageResponse> = tokio::task::spawn_blocking({
         let app2 = app_handle.clone();
-        let sid   = session_id.clone();
+        let sid = session_id.clone();
         move || -> Vec<ChatMessageResponse> {
             let Ok(conn) = crate::intent::db::open(&app2) else {
                 return Vec::new();
             };
             db_get_messages(&conn, &sid).unwrap_or_default()
         }
-    }).await.map_err(|e| e.to_string())?;
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     // Convert prior messages to query engine format (exclude the one we just added)
     // Truncate to last 20 messages to avoid unbounded context growth
@@ -363,12 +442,13 @@ pub async fn send_chat_message(
         &prior_qe_messages,
         time_range.as_deref(),
         effective_sources.as_deref(),
-    ).await?;
+    )
+    .await?;
 
     // Use agent_result directly (same as intent-flow-main)
     let steps_json = serde_json::to_string(&agent_result.steps).ok();
     let activities_json = serde_json::to_string(&agent_result.activities_referenced).ok();
-    
+
     // metadata_json is not currently generated from agent_result - set to None
     let metadata_json: Option<String> = None;
 
@@ -382,9 +462,9 @@ pub async fn send_chat_message(
     // Phase 3: sync store assistant reply
     let metadata_json_for_closure = metadata_json.clone();
     let (msg_id, response_time) = tokio::task::spawn_blocking({
-        let app2   = app_handle.clone();
-        let sid    = session_id.clone();
-        let reply  = answer.clone();
+        let app2 = app_handle.clone();
+        let sid = session_id.clone();
+        let reply = answer.clone();
         let tool_calls = steps_json.clone();
         let activities = activities_json.clone();
         let metadata = metadata_json_for_closure;
@@ -402,16 +482,18 @@ pub async fn send_chat_message(
             )?;
             Ok((id, rt))
         }
-    }).await.map_err(|e| e.to_string())??;
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     Ok(ChatMessageResponse {
-        id:         msg_id,
+        id: msg_id,
         session_id,
-        role:       "assistant".to_string(),
-        content:    answer,
+        role: "assistant".to_string(),
+        content: answer,
         tool_calls: Some(agent_result.steps),
         activities: Some(agent_result.activities_referenced),
         created_at: response_time,
-        metadata:   metadata_json,
+        metadata: metadata_json,
     })
 }

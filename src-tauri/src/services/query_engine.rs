@@ -1,11 +1,11 @@
+use crate::models::{ActivityMetadata, Settings};
+use chrono::{Datelike, Duration, Local, TimeZone};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::models::{Settings, ActivityMetadata};
-use tauri::Emitter;
-use chrono::{Datelike, Duration, Local, TimeZone};
-use std::time::Duration as StdDuration;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration as StdDuration;
+use tauri::Emitter;
 
 static CHAT_STREAM_CANCELLED: AtomicBool = AtomicBool::new(false);
 
@@ -292,7 +292,9 @@ impl ChatSourceScope {
 
     fn missing_sources_for_tool(&self, tool: &str) -> Vec<String> {
         match tool {
-            "get_recent_activities" | "get_usage_stats" | "query_activities" if !self.apps => vec!["apps".to_string()],
+            "get_recent_activities" | "get_usage_stats" | "query_activities" if !self.apps => {
+                vec!["apps".to_string()]
+            }
             "search_ocr" | "get_recent_ocr" if !self.screen => vec!["screen".to_string()],
             "get_music_history" if !self.media => vec!["media".to_string()],
             "get_recent_file_changes" if !self.files => vec!["files".to_string()],
@@ -301,11 +303,18 @@ impl ChatSourceScope {
     }
 }
 
-fn missing_sources_for_query(source_scope: &ChatSourceScope, query: &str, intent: &QueryIntent) -> Vec<String> {
+fn missing_sources_for_query(
+    source_scope: &ChatSourceScope,
+    query: &str,
+    intent: &QueryIntent,
+) -> Vec<String> {
     let q = query.to_lowercase();
     let mut required_sources: Vec<&str> = Vec::new();
     let mut push_required = |source_id: &'static str| {
-        if !required_sources.iter().any(|existing| existing == &source_id) {
+        if !required_sources
+            .iter()
+            .any(|existing| existing == &source_id)
+        {
             required_sources.push(source_id);
         }
     };
@@ -356,7 +365,8 @@ pub async fn run_agentic_search(
     settings: &Settings,
 ) -> Result<String, String> {
     // Delegate to the step-tracking version, just return the answer
-    let result = run_agentic_search_with_steps_and_scope(app_handle, user_query, settings, None).await?;
+    let result =
+        run_agentic_search_with_steps_and_scope(app_handle, user_query, settings, None).await?;
     Ok(result.answer)
 }
 
@@ -401,7 +411,8 @@ pub async fn run_agentic_search_with_steps_and_scope(
         &[],
         time_scope,
         None,
-    ).await
+    )
+    .await
 }
 
 #[allow(dead_code)]
@@ -418,7 +429,8 @@ pub async fn run_agentic_search_with_steps_and_history(
         prior_messages,
         None,
         None,
-    ).await
+    )
+    .await
 }
 
 pub async fn run_agentic_search_with_steps_and_history_and_scope(
@@ -442,7 +454,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     }
 
     let db_path = crate::intent::db::db_path(app_handle)?;
-    
+
     let mut steps: Vec<AgentStep> = Vec::new();
     let mut all_activities: Vec<Value> = Vec::new();
     let resolved_scope = resolve_time_scope(time_scope);
@@ -474,7 +486,8 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
             turn: 1,
             tool_name: "resolve_query_scope".to_string(),
             tool_args,
-            tool_result: "Blocked before retrieval because the required Chat sources are disabled.".to_string(),
+            tool_result: "Blocked before retrieval because the required Chat sources are disabled."
+                .to_string(),
             reasoning: "Requesting source confirmation before searching.".to_string(),
         });
 
@@ -487,7 +500,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
             activities_referenced: Vec::new(),
         });
     }
-    
+
     // Initial messages
     let mut messages = vec![ChatMessage {
         role: "system".to_string(),
@@ -511,7 +524,12 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     }
 
     let needs_broad_scope = requires_broad_scope(user_query);
-    let scope_warning = if needs_broad_scope && (resolved_scope.id == "today" || resolved_scope.id == "yesterday" || resolved_scope.id == "last_3_days" || resolved_scope.id == "last_7_days") {
+    let scope_warning = if needs_broad_scope
+        && (resolved_scope.id == "today"
+            || resolved_scope.id == "yesterday"
+            || resolved_scope.id == "last_3_days"
+            || resolved_scope.id == "last_7_days")
+    {
         "\nCRITICAL: Your current search scope is narrow, but the user's query requires historical data, aggregation, or general knowledge about their habits/relationships. You MUST call `resolve_query_scope` immediately to widen the scope to 'last_30_days' or 'all_time' before doing anything else."
     } else {
         ""
@@ -546,10 +564,21 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         let end_ts = resolved_scope.end_ts;
         let selected_sources = enabled_source_ids.clone();
         move || {
-            let filter = crate::intent::retrieval::build_chat_retrieval_filter(Some(selected_sources.as_slice()));
-            crate::intent::retrieval::build_hybrid_context(&app, &query, start_ts, end_ts, 15, Some(&filter))
+            let filter = crate::intent::retrieval::build_chat_retrieval_filter(Some(
+                selected_sources.as_slice(),
+            ));
+            crate::intent::retrieval::build_hybrid_context(
+                &app,
+                &query,
+                start_ts,
+                end_ts,
+                15,
+                Some(&filter),
+            )
         }
-    }).await {
+    })
+    .await
+    {
         if !hybrid_context.hits.is_empty() {
             steps.push(AgentStep {
                 turn: 0,
@@ -593,12 +622,20 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         }
     }
 
-    let use_long_range_pipeline = should_use_long_range_pipeline(user_query, &resolved_scope, &intent);
+    let use_long_range_pipeline =
+        should_use_long_range_pipeline(user_query, &resolved_scope, &intent);
     if use_long_range_pipeline {
-        let _ = app_handle.emit("chat://status", "Building long-range evidence (multi-step)...");
-        if let Ok((pipeline_steps, pipeline_activities, digest)) =
-            run_long_range_summary_pipeline(&db_path, &resolved_scope, &intent, &active_sources, user_query)
-        {
+        let _ = app_handle.emit(
+            "chat://status",
+            "Building long-range evidence (multi-step)...",
+        );
+        if let Ok((pipeline_steps, pipeline_activities, digest)) = run_long_range_summary_pipeline(
+            &db_path,
+            &resolved_scope,
+            &intent,
+            &active_sources,
+            user_query,
+        ) {
             let start_turn = steps.len();
             for (idx, mut step) in pipeline_steps.into_iter().enumerate() {
                 step.turn = start_turn + idx + 1;
@@ -621,9 +658,13 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         }
     } else if intent.broad_summary {
         let prefetch_args = build_prefetch_parallel_args(&resolved_scope, &intent, &active_sources);
-        if let Ok((prefetch_output, prefetch_activities)) =
-            execute_parallel_search(&db_path, &prefetch_args, Some(&resolved_scope), Some(&active_sources), user_query)
-        {
+        if let Ok((prefetch_output, prefetch_activities)) = execute_parallel_search(
+            &db_path,
+            &prefetch_args,
+            Some(&resolved_scope),
+            Some(&active_sources),
+            user_query,
+        ) {
             if !prefetch_activities.is_empty() {
                 all_activities.extend(prefetch_activities);
             }
@@ -657,7 +698,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                 activities_referenced: all_activities,
             });
         }
-        let _ = app_handle.emit("chat://status", format!("Thinking (step {}/{})", turn + 1, MAX_TURNS));
+        let _ = app_handle.emit(
+            "chat://status",
+            format!("Thinking (step {}/{})", turn + 1, MAX_TURNS),
+        );
         // 1. Call LLM with streaming callback
         // We accumulate the full content here, while also streaming it to the frontend
         let mut full_response = String::new();
@@ -689,7 +733,17 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
             }
         };
 
-        call_llm_stream_with_provider(&provider, model, &api_key, use_local_llm, lmstudio_url, &messages, &mut full_response, on_token).await?;
+        call_llm_stream_with_provider(
+            &provider,
+            model,
+            &api_key,
+            use_local_llm,
+            lmstudio_url,
+            &messages,
+            &mut full_response,
+            on_token,
+        )
+        .await?;
 
         if check_chat_cancelled() {
             let _ = app_handle.emit("chat://done", "cancelled");
@@ -711,9 +765,15 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     .replace("<think>", "")
                     .replace("</think>", "");
                 let normalized = normalize_final_answer_hardened(&cleaned_answer);
-                let normalized = scrub_unsupported_communication_claims(&normalized, user_query, &steps);
+                let normalized =
+                    scrub_unsupported_communication_claims(&normalized, user_query, &steps);
                 if must_validate_with_tools && steps.is_empty() && forced_parallel_runs < 2 {
-                    let forced_args = build_forced_validation_parallel_args(&resolved_scope, &intent, &active_sources, user_query);
+                    let forced_args = build_forced_validation_parallel_args(
+                        &resolved_scope,
+                        &intent,
+                        &active_sources,
+                        user_query,
+                    );
                     let (out, activities) = execute_parallel_search(
                         &db_path,
                         &forced_args,
@@ -758,8 +818,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     });
                     continue;
                 }
-                
-                let is_complex_query = user_query.to_lowercase().contains("who") || user_query.to_lowercase().contains("crush") || user_query.to_lowercase().contains("relationship");
+
+                let is_complex_query = user_query.to_lowercase().contains("who")
+                    || user_query.to_lowercase().contains("crush")
+                    || user_query.to_lowercase().contains("relationship");
                 if is_complex_query && steps.len() < 5 && turn + 1 < MAX_TURNS {
                     messages.push(ChatMessage {
                         role: "assistant".to_string(),
@@ -774,8 +836,16 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
 
                 if !has_minimum_evidence_for_query(user_query, &steps) {
                     final_without_evidence_attempts += 1;
-                    if must_validate_with_tools && final_without_evidence_attempts >= 2 && forced_parallel_runs < 2 {
-                        let forced_args = build_forced_validation_parallel_args(&resolved_scope, &intent, &active_sources, user_query);
+                    if must_validate_with_tools
+                        && final_without_evidence_attempts >= 2
+                        && forced_parallel_runs < 2
+                    {
+                        let forced_args = build_forced_validation_parallel_args(
+                            &resolved_scope,
+                            &intent,
+                            &active_sources,
+                            user_query,
+                        );
                         let (out, activities) = execute_parallel_search(
                             &db_path,
                             &forced_args,
@@ -794,7 +864,8 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                             tool_name: "parallel_search".to_string(),
                             tool_args: forced_args,
                             tool_result: truncated.clone(),
-                            reasoning: "Forced cross-tool evidence after weak finalization attempt".to_string(),
+                            reasoning: "Forced cross-tool evidence after weak finalization attempt"
+                                .to_string(),
                         });
                         messages.push(ChatMessage {
                             role: "assistant".to_string(),
@@ -821,7 +892,8 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                         continue;
                     }
                     let _ = app_handle.emit("chat://done", "final_answer");
-                    let action_marker = build_insufficient_evidence_action_marker(user_query, &resolved_scope);
+                    let action_marker =
+                        build_insufficient_evidence_action_marker(user_query, &resolved_scope);
                     return Ok(AgentResult {
                         answer: format!(
                             "I don't have enough cross-checked evidence to answer confidently. Try widening the time range (Last 7 Days or All Time) and enabling Browser History / Files & Documents, then ask me to retry.{}",
@@ -839,21 +911,35 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     activities_referenced: all_activities,
                 });
             }
-            AgentResponse::ToolCall { tool, args, reasoning } => {
+            AgentResponse::ToolCall {
+                tool,
+                args,
+                reasoning,
+            } => {
                 // Handle resolve_query_scope as a special case — it returns a user-facing action prompt
                 if tool == "resolve_query_scope" {
                     let suggested_scope = args["suggested_scope"].as_str().unwrap_or("last_7_days");
-                    let reason = args["reason"].as_str().unwrap_or("Your query requires a wider search range.");
-                    let enable_sources: Vec<String> = args.get("enable_sources")
+                    let reason = args["reason"]
+                        .as_str()
+                        .unwrap_or("Your query requires a wider search range.");
+                    let enable_sources: Vec<String> = args
+                        .get("enable_sources")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
                         .unwrap_or_default();
 
                     steps.push(AgentStep {
                         turn: turn + 1,
                         tool_name: "resolve_query_scope".to_string(),
                         tool_args: args.clone(),
-                        tool_result: format!("Requesting scope change to {} with sources {:?}", suggested_scope, enable_sources),
+                        tool_result: format!(
+                            "Requesting scope change to {} with sources {:?}",
+                            suggested_scope, enable_sources
+                        ),
                         reasoning: reasoning.as_deref().unwrap_or("").to_string(),
                     });
 
@@ -909,12 +995,18 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     });
                 }
 
-                let enforced_args = enforce_tool_args_with_scope(&tool, &args, &resolved_scope, user_query);
-                println!("[Agent] Turn {}: Calling {} ({:?})", turn + 1, tool, enforced_args);
+                let enforced_args =
+                    enforce_tool_args_with_scope(&tool, &args, &resolved_scope, user_query);
+                println!(
+                    "[Agent] Turn {}: Calling {} ({:?})",
+                    turn + 1,
+                    tool,
+                    enforced_args
+                );
                 let _ = app_handle.emit("chat://status", format!("Running {}", tool));
                 // Notify frontend of agent step (tool call) start?
                 // For now, frontend just sees tokens.
-                
+
                 // Add assistant message to history
                 messages.push(ChatMessage {
                     role: "assistant".to_string(),
@@ -953,9 +1045,13 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                 }
                 let _ = app_handle.emit(
                     "chat://status",
-                    format!("{} completed ({} referenced items)", tool, tool_activities.len())
+                    format!(
+                        "{} completed ({} referenced items)",
+                        tool,
+                        tool_activities.len()
+                    ),
                 );
-                
+
                 // Truncate output if too long to save tokens
                 let with_retry_note = if attempts_used > 1 {
                     format!(
@@ -967,7 +1063,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     tool_output
                 };
                 let truncated_output = truncate_for_token_limit(&with_retry_note, 25000);
-                
+
                 // Record step
                 steps.push(AgentStep {
                     turn: turn + 1,
@@ -995,7 +1091,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         }
     }
 
-    let _ = app_handle.emit("chat://status", "Finalizing answer from gathered evidence...");
+    let _ = app_handle.emit(
+        "chat://status",
+        "Finalizing answer from gathered evidence...",
+    );
     let answer = synthesize_answer_from_evidence(
         app_handle,
         &provider,
@@ -1008,13 +1107,21 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         &steps,
         &all_activities,
     ).await.unwrap_or_else(|_| "I checked your activity and found partial evidence, but not enough for a fully confident answer. Ask with a specific date/app and I will give exact details.".to_string());
-    Ok(AgentResult { answer, steps, activities_referenced: all_activities })
+    Ok(AgentResult {
+        answer,
+        steps,
+        activities_referenced: all_activities,
+    })
 }
 
 // ─── Tool Execution ───
 
 include!("query_engine_execution_helpers.incl.rs");
-fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, Vec<Value>), String> {
+fn execute_tool(
+    conn: &Connection,
+    tool: &str,
+    args: &Value,
+) -> Result<(String, Vec<Value>), String> {
     match tool {
         // Dedicated music history tool - finds songs from Spotify, YouTube, etc.
         "get_music_history" => {
@@ -1022,8 +1129,10 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             let hours = args["hours"].as_u64().unwrap_or(24) as i64;
             let scan_limit = std::cmp::max(limit.saturating_mul(20), 500);
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
-            let scope_label = args["scope_label"].as_str().unwrap_or("the selected time range");
-            
+            let scope_label = args["scope_label"]
+                .as_str()
+                .unwrap_or("the selected time range");
+
             // Query a broad slice of recent activity and filter by media_info in Rust.
             // Music can be present while the active app is not an entertainment app.
             let mut stmt = conn.prepare(
@@ -1033,69 +1142,78 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                  ORDER BY start_time DESC 
                  LIMIT ?3"
             ).map_err(|e| format!("SQL Error: {}", e))?;
-            
-            let rows = stmt.query_map(rusqlite::params![start_ts, end_ts, scan_limit], |row| {
-                let app_name: String = row.get(0)?;
-                let window_title: String = row.get(1)?;
-                let start_time: i64 = row.get(2)?;
-                let duration_seconds: i32 = row.get(3)?;
-                let metadata_blob: Option<Vec<u8>> = row.get(4)?;
-                let category_id: i32 = row.get(5)?;
-                
-                // Parse metadata to extract media_info
-                let media_info = if let Some(blob) = &metadata_blob {
-                    if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(blob) {
-                        meta.media_info
+
+            let rows = stmt
+                .query_map(rusqlite::params![start_ts, end_ts, scan_limit], |row| {
+                    let app_name: String = row.get(0)?;
+                    let window_title: String = row.get(1)?;
+                    let start_time: i64 = row.get(2)?;
+                    let duration_seconds: i32 = row.get(3)?;
+                    let metadata_blob: Option<Vec<u8>> = row.get(4)?;
+                    let category_id: i32 = row.get(5)?;
+
+                    // Parse metadata to extract media_info
+                    let media_info = if let Some(blob) = &metadata_blob {
+                        if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(blob) {
+                            meta.media_info
+                        } else {
+                            None
+                        }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
-                
-                Ok(serde_json::json!({
-                    "app_name": app_name,
-                    "window_title": window_title,
-                    "start_time": start_time,
-                    "duration_seconds": duration_seconds,
-                    "media_info": media_info,
-                    "category_id": category_id
-                }))
-            }).map_err(|e| e.to_string())?;
-            
+                    };
+
+                    Ok(serde_json::json!({
+                        "app_name": app_name,
+                        "window_title": window_title,
+                        "start_time": start_time,
+                        "duration_seconds": duration_seconds,
+                        "media_info": media_info,
+                        "category_id": category_id
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
+
             let mut results: Vec<Value> = Vec::new();
-            let mut seen_songs: std::collections::HashSet<String> = std::collections::HashSet::new();
-            
+            let mut seen_songs: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
             for r in rows {
                 if let Ok(val) = r {
                     let app_name = val.get("app_name").and_then(|a| a.as_str()).unwrap_or("");
-                    
+
                     // Check if it's Spotify by checking raw bytes (handles encoding issues)
                     // Spotify app name can be "Spotify\u00008\u0016\u0001FileV" with embedded nulls
-                    let is_spotify = app_name.as_bytes().windows(7).any(|w| w == b"Spotify") ||
-                                     app_name.starts_with("Spotify");
-                    
+                    let is_spotify = app_name.as_bytes().windows(7).any(|w| w == b"Spotify")
+                        || app_name.starts_with("Spotify");
+
                     // Get media info to check if it's actual music
                     let media = val.get("media_info").and_then(|m| m.as_object());
-                    let title = media.as_ref().and_then(|m| m.get("title"))
-                        .and_then(|t| t.as_str()).unwrap_or("");
-                    let artist = media.as_ref().and_then(|m| m.get("artist"))
-                        .and_then(|a| a.as_str()).unwrap_or("");
-                    
+                    let title = media
+                        .as_ref()
+                        .and_then(|m| m.get("title"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    let artist = media
+                        .as_ref()
+                        .and_then(|m| m.get("artist"))
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("");
+
                     // Structurally validate: valid music must have both title AND artist.
                     // This replaces the previous hardcoded video keyword list.
                     let is_song = !title.is_empty() && !artist.is_empty();
-                    
+
                     // Create a unique key for deduplication
                     let song_key = format!("{}-{}", title, artist);
-                    
+
                     // Include if:
                     // 1. It's Spotify with media info, OR
                     // 2. It has media info that looks structurally like a song
                     // And we haven't seen this song before (dedupe)
-                    let should_include = (is_spotify && media.is_some()) || 
-                                         (media.is_some() && is_song);
-                    
+                    let should_include =
+                        (is_spotify && media.is_some()) || (media.is_some() && is_song);
+
                     if should_include && !seen_songs.contains(&song_key) {
                         seen_songs.insert(song_key);
                         results.push(val);
@@ -1105,7 +1223,7 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                     }
                 }
             }
-            
+
             // Create activity references for frontend (transform to expected format)
             let activity_refs: Vec<Value> = results.iter().map(|track| {
                 let media = track.get("media_info").and_then(|m| m.as_object());
@@ -1130,17 +1248,21 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                     "media": media.cloned()
                 })
             }).collect();
-            
-                                    // Format for chat display in plain text (no markdown markers)
+
+            // Format for chat display in plain text (no markdown markers)
             let formatted = if results.is_empty() {
                 "No music activity found in the specified time range.".to_string()
             } else {
-                let mut f = format!("Here are the songs you've listened to in {}:\n\n", scope_label);
+                let mut f = format!(
+                    "Here are the songs you've listened to in {}:\n\n",
+                    scope_label
+                );
                 for (i, track) in results.iter().enumerate() {
                     let media = track.get("media_info").and_then(|m| m.as_object());
                     let app_raw = track.get("app_name").and_then(|a| a.as_str()).unwrap_or("");
                     // Normalize Spotify app name (handle encoding issues)
-                    let is_spotify = app_raw.as_bytes().windows(7).any(|w| w == b"Spotify") || app_raw.starts_with("Spotify");
+                    let is_spotify = app_raw.as_bytes().windows(7).any(|w| w == b"Spotify")
+                        || app_raw.starts_with("Spotify");
                     let app = if is_spotify {
                         "Spotify"
                     } else if app_raw.to_lowercase().contains("youtube") {
@@ -1148,15 +1270,25 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                     } else {
                         app_raw
                     };
-                    let time = track.get("start_time").and_then(|t| t.as_i64()).unwrap_or(0);
+                    let time = track
+                        .get("start_time")
+                        .and_then(|t| t.as_i64())
+                        .unwrap_or(0);
                     // Convert Unix timestamp to local time
                     let dt = chrono::DateTime::from_timestamp(time, 0)
-                        .map(|dt| dt.with_timezone(&chrono::Local).format("%I:%M %p").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&chrono::Local)
+                                .format("%I:%M %p")
+                                .to_string()
+                        })
                         .unwrap_or_default();
 
                     if let Some(m) = media {
                         let title = m.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown");
-                        let artist = m.get("artist").and_then(|a| a.as_str()).unwrap_or("Unknown");
+                        let artist = m
+                            .get("artist")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("Unknown");
                         let status = m.get("status").and_then(|s| s.as_str()).unwrap_or("");
                         f.push_str(&format!(
                             "{}. {} - {}\n   {} | {} | {}\n",
@@ -1180,16 +1312,20 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             };
 
             Ok((formatted, activity_refs))
-        },
+        }
         "get_recent_activities" => {
             let limit = args["limit"].as_u64().unwrap_or(100) as i32;
             let hours = args["hours"].as_u64().unwrap_or(24) as i64;
             let category_filter = args["category_id"].as_i64();
             let exclude_media_noise = args["exclude_media_noise"].as_bool().unwrap_or(false);
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
-            let scope_label = args["scope_label"].as_str().unwrap_or("the selected time range");
+            let scope_label = args["scope_label"]
+                .as_str()
+                .unwrap_or("the selected time range");
 
-            let (sql, params): (&str, Vec<rusqlite::types::Value>) = if let Some(cat) = category_filter {
+            let (sql, params): (&str, Vec<rusqlite::types::Value>) = if let Some(cat) =
+                category_filter
+            {
                 (
                     "SELECT app_name, window_title, start_time, duration_seconds, category_id, metadata
                      FROM activities
@@ -1219,22 +1355,24 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             };
 
             let mut stmt = conn.prepare(sql).map_err(|e| format!("SQL Error: {}", e))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
-                let metadata_blob: Option<Vec<u8>> = row.get(5)?;
-                let media_info = metadata_blob
-                    .as_ref()
-                    .and_then(|blob| serde_json::from_slice::<ActivityMetadata>(blob).ok())
-                    .and_then(|m| m.media_info);
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                    let metadata_blob: Option<Vec<u8>> = row.get(5)?;
+                    let media_info = metadata_blob
+                        .as_ref()
+                        .and_then(|blob| serde_json::from_slice::<ActivityMetadata>(blob).ok())
+                        .and_then(|m| m.media_info);
 
-                Ok(serde_json::json!({
-                    "app_name": row.get::<_, String>(0)?,
-                    "window_title": row.get::<_, String>(1)?,
-                    "start_time": row.get::<_, i64>(2)?,
-                    "duration_seconds": row.get::<_, i32>(3)?,
-                    "category_id": row.get::<_, i32>(4)?,
-                    "media_info": media_info
-                }))
-            }).map_err(|e| e.to_string())?;
+                    Ok(serde_json::json!({
+                        "app_name": row.get::<_, String>(0)?,
+                        "window_title": row.get::<_, String>(1)?,
+                        "start_time": row.get::<_, i64>(2)?,
+                        "duration_seconds": row.get::<_, i32>(3)?,
+                        "category_id": row.get::<_, i32>(4)?,
+                        "media_info": media_info
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
 
             let mut events: Vec<Value> = rows.filter_map(|r| r.ok()).collect();
             if exclude_media_noise {
@@ -1244,10 +1382,22 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                 .iter()
                 .map(|event| {
                     let app = event.get("app_name").and_then(|v| v.as_str()).unwrap_or("");
-                    let title = event.get("window_title").and_then(|v| v.as_str()).unwrap_or("");
-                    let time = event.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let duration = event.get("duration_seconds").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let category_id = event.get("category_id").and_then(|v| v.as_i64()).unwrap_or(7);
+                    let title = event
+                        .get("window_title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let time = event
+                        .get("start_time")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let duration = event
+                        .get("duration_seconds")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let category_id = event
+                        .get("category_id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(7);
                     let media = event.get("media_info").cloned();
                     serde_json::json!({
                         "app": app,
@@ -1268,13 +1418,32 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                     scope_label
                 );
                 for (i, event) in events.iter().enumerate() {
-                    let app = event.get("app_name").and_then(|v| v.as_str()).unwrap_or("Unknown");
-                    let title = event.get("window_title").and_then(|v| v.as_str()).unwrap_or("");
-                    let start_time = event.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let duration = event.get("duration_seconds").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let category_id = event.get("category_id").and_then(|v| v.as_i64()).unwrap_or(7);
+                    let app = event
+                        .get("app_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
+                    let title = event
+                        .get("window_title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let start_time = event
+                        .get("start_time")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let duration = event
+                        .get("duration_seconds")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let category_id = event
+                        .get("category_id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(7);
                     let dt = chrono::DateTime::from_timestamp(start_time, 0)
-                        .map(|dt| dt.with_timezone(&chrono::Local).format("%I:%M %p").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&chrono::Local)
+                                .format("%I:%M %p")
+                                .to_string()
+                        })
                         .unwrap_or_else(|| "Unknown time".to_string());
                     out.push_str(&format!(
                         "{}. {} | {} | {} | {}\n   {}\n",
@@ -1283,20 +1452,26 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                         category_name_from_id(category_id),
                         dt,
                         format_duration(duration),
-                        if title.is_empty() { "(No window title)".to_string() } else { title.to_string() }
+                        if title.is_empty() {
+                            "(No window title)".to_string()
+                        } else {
+                            title.to_string()
+                        }
                     ));
                 }
                 out
             };
 
             Ok((formatted, activity_refs))
-        },
+        }
         "get_recent_file_changes" => {
             let limit = args["limit"].as_u64().unwrap_or(40) as i64;
             let hours = args["hours"].as_u64().unwrap_or(24) as i64;
             let change_type = args["change_type"].as_str();
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
-            let scope_label = args["scope_label"].as_str().unwrap_or("the selected time range");
+            let scope_label = args["scope_label"]
+                .as_str()
+                .unwrap_or("the selected time range");
             println!(
                 "[Timeline][FileChanges] Query start: start_ts={}, end_ts={}, limit={}, change_type={}",
                 start_ts,
@@ -1305,7 +1480,8 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                 change_type.unwrap_or("any")
             );
 
-            let (sql, params): (&str, Vec<rusqlite::types::Value>) = if let Some(kind) = change_type {
+            let (sql, params): (&str, Vec<rusqlite::types::Value>) = if let Some(kind) = change_type
+            {
                 (
                     "SELECT path, project_root, entity_type, change_type, content_preview, detected_at
                      FROM code_file_events
@@ -1357,12 +1533,25 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             );
             for item in &changes {
                 let path = item.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                let change = item.get("change_type").and_then(|v| v.as_str()).unwrap_or("");
-                let entity_type = item.get("entity_type").and_then(|v| v.as_str()).unwrap_or("file");
+                let change = item
+                    .get("change_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let entity_type = item
+                    .get("entity_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("file");
                 let preview = item.get("content_preview").and_then(|v| v.as_str());
-                let detected = item.get("detected_at").and_then(|v| v.as_i64()).unwrap_or(0);
+                let detected = item
+                    .get("detected_at")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
                 let dt = chrono::DateTime::from_timestamp(detected, 0)
-                    .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %I:%M:%S %p").to_string())
+                    .map(|dt| {
+                        dt.with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %I:%M:%S %p")
+                            .to_string()
+                    })
                     .unwrap_or_else(|| "Unknown time".to_string());
                 println!(
                     "[Timeline][FileChanges] {} | {} {} | {}{}",
@@ -1370,7 +1559,9 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                     entity_type,
                     change,
                     path,
-                    preview.map(|p| format!(" | {}", p.replace('\n', " "))).unwrap_or_default()
+                    preview
+                        .map(|p| format!(" | {}", p.replace('\n', " ")))
+                        .unwrap_or_default()
                 );
             }
             let formatted = if changes.is_empty() {
@@ -1379,13 +1570,32 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                 let mut out = format!("Recent file changes ({}):\n\n", scope_label);
                 for (idx, item) in changes.iter().enumerate() {
                     let path = item.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                    let project_root = item.get("project_root").and_then(|v| v.as_str()).unwrap_or("");
-                    let entity_type = item.get("entity_type").and_then(|v| v.as_str()).unwrap_or("file");
-                    let change = item.get("change_type").and_then(|v| v.as_str()).unwrap_or("");
-                    let preview = item.get("content_preview").and_then(|v| v.as_str()).unwrap_or("");
-                    let detected = item.get("detected_at").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let project_root = item
+                        .get("project_root")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let entity_type = item
+                        .get("entity_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("file");
+                    let change = item
+                        .get("change_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let preview = item
+                        .get("content_preview")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let detected = item
+                        .get("detected_at")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     let dt = chrono::DateTime::from_timestamp(detected, 0)
-                        .map(|dt| dt.with_timezone(&chrono::Local).format("%I:%M %p").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&chrono::Local)
+                                .format("%I:%M %p")
+                                .to_string()
+                        })
                         .unwrap_or_else(|| "Unknown time".to_string());
                     out.push_str(&format!(
                         "{}. [{} {}] {} ({})\n   {}\n",
@@ -1409,10 +1619,17 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             // This tool lets the LLM request a wider time scope or additional sources.
             // It returns a confirmation action marker that the frontend will show to the user.
             let suggested_scope = args["suggested_scope"].as_str().unwrap_or("last_7_days");
-            let reason = args["reason"].as_str().unwrap_or("Your query requires a wider search range.");
-            let enable_sources: Vec<String> = args.get("enable_sources")
+            let reason = args["reason"]
+                .as_str()
+                .unwrap_or("Your query requires a wider search range.");
+            let enable_sources: Vec<String> = args
+                .get("enable_sources")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let payload = serde_json::json!({
@@ -1433,19 +1650,26 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             Ok((output, vec![payload]))
         }
         "query_activities" => {
-            let sql = args["query"].as_str().or_else(|| args["sql"].as_str())
+            let sql = args["query"]
+                .as_str()
+                .or_else(|| args["sql"].as_str())
                 .ok_or("Missing 'query' argument")?;
-            
+
             // Hardened allowlist: only SELECT or WITH (CTEs) are permitted.
             let upper = sql.trim().to_uppercase();
             if !upper.starts_with("SELECT") && !upper.starts_with("WITH") {
-                return Err("Security Violation: Only SELECT or WITH queries are permitted.".to_string());
+                return Err(
+                    "Security Violation: Only SELECT or WITH queries are permitted.".to_string(),
+                );
             }
 
             // Denylist: block access to sensitive tables even via SELECT
             const FORBIDDEN_TABLES: &[&str] = &[
-                "APP_SETTINGS", "CHAT_SESSIONS", "CHAT_MESSAGES",
-                "DIARY_ENTRIES", "RETRIEVAL_CHUNKS",
+                "APP_SETTINGS",
+                "CHAT_SESSIONS",
+                "CHAT_MESSAGES",
+                "DIARY_ENTRIES",
+                "RETRIEVAL_CHUNKS",
             ];
             for table in FORBIDDEN_TABLES {
                 if upper.contains(table) {
@@ -1457,42 +1681,55 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             }
 
             let mut stmt = conn.prepare(sql).map_err(|e| format!("SQL Error: {}", e))?;
-            
+
             // Map columns to JSON
             let col_count = stmt.column_count();
-            let col_names: Vec<String> = stmt.column_names().into_iter().map(|s| s.to_string()).collect();
-            
-            let rows = stmt.query_map([], |row| {
-                let mut map = serde_json::Map::new();
-                for i in 0..col_count {
-                    let val = match row.get_ref(i)? {
-                        rusqlite::types::ValueRef::Null => Value::Null,
-                        rusqlite::types::ValueRef::Integer(n) => Value::Number(n.into()),
-                        rusqlite::types::ValueRef::Real(n) => serde_json::Number::from_f64(n).map(Value::Number).unwrap_or(Value::Null),
-                        rusqlite::types::ValueRef::Text(s) => Value::String(String::from_utf8_lossy(s).to_string()),
-                        rusqlite::types::ValueRef::Blob(b) => {
-                            // Try to parse metadata blob as JSON
-                             if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(b) {
-                                serde_json::json!(meta)
-                             } else {
-                                Value::String(format!("<blob {} bytes>", b.len()))
-                             }
-                        }
-                    };
-                    map.insert(col_names[i].clone(), val);
-                }
-                Ok(Value::Object(map))
-            }).map_err(|e| e.to_string())?;
+            let col_names: Vec<String> = stmt
+                .column_names()
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+
+            let rows = stmt
+                .query_map([], |row| {
+                    let mut map = serde_json::Map::new();
+                    for i in 0..col_count {
+                        let val = match row.get_ref(i)? {
+                            rusqlite::types::ValueRef::Null => Value::Null,
+                            rusqlite::types::ValueRef::Integer(n) => Value::Number(n.into()),
+                            rusqlite::types::ValueRef::Real(n) => serde_json::Number::from_f64(n)
+                                .map(Value::Number)
+                                .unwrap_or(Value::Null),
+                            rusqlite::types::ValueRef::Text(s) => {
+                                Value::String(String::from_utf8_lossy(s).to_string())
+                            }
+                            rusqlite::types::ValueRef::Blob(b) => {
+                                // Try to parse metadata blob as JSON
+                                if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(b) {
+                                    serde_json::json!(meta)
+                                } else {
+                                    Value::String(format!("<blob {} bytes>", b.len()))
+                                }
+                            }
+                        };
+                        map.insert(col_names[i].clone(), val);
+                    }
+                    Ok(Value::Object(map))
+                })
+                .map_err(|e| e.to_string())?;
 
             let results: Vec<Value> = rows.filter_map(|r| r.ok()).collect();
-            Ok((serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string()), results))
-        },
+            Ok((
+                serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string()),
+                results,
+            ))
+        }
         "search_ocr" => {
             let keyword = args["keyword"].as_str().ok_or("Missing keyword")?;
             let limit = parse_json_u64(args.get("limit"), 100) as usize;
             let hours = parse_json_u64(args.get("hours"), 24) as i64;
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
-            
+
             // Use json_extract to search only the screen_text field, avoiding
             // false positives from matching JSON key names in the full metadata blob.
             let mut stmt = conn.prepare(
@@ -1501,28 +1738,38 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                  AND LOWER(json_extract(CAST(metadata AS TEXT), '$.screen_text')) LIKE ?3
                  ORDER BY start_time DESC LIMIT 20000"
             ).map_err(|e| e.to_string())?;
-            
+
             let mut matches: Vec<Value> = Vec::new();
             let mut seen_snippets = std::collections::HashSet::new();
             let kw_param = format!("%{}%", keyword.to_lowercase());
-            
-            let rows = stmt.query_map(rusqlite::params![start_ts, end_ts, kw_param], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i32>(3)?,
-                    row.get::<_, i32>(4)?,
-                    row.get::<_, Option<Vec<u8>>>(5)?
-                ))
-            }).map_err(|e| e.to_string())?;
-            
+
+            let rows = stmt
+                .query_map(rusqlite::params![start_ts, end_ts, kw_param], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i32>(3)?,
+                        row.get::<_, i32>(4)?,
+                        row.get::<_, Option<Vec<u8>>>(5)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+
             for r in rows {
-                if let Ok((start_time, app_name, window_title, duration_seconds, category_id, meta_blob)) = r {
-                     if app_name.to_lowercase().contains("intentflow") {
-                         continue;
-                     }
-                     if let Some(blob) = meta_blob {
+                if let Ok((
+                    start_time,
+                    app_name,
+                    window_title,
+                    duration_seconds,
+                    category_id,
+                    meta_blob,
+                )) = r
+                {
+                    if app_name.to_lowercase().contains("intentflow") {
+                        continue;
+                    }
+                    if let Some(blob) = meta_blob {
                         if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(&blob) {
                             if let Some(text) = meta.screen_text {
                                 let cleaned = sanitize_ocr_for_query(&text);
@@ -1530,8 +1777,11 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                                     continue;
                                 }
                                 if cleaned.to_lowercase().contains(&keyword.to_lowercase()) {
-                                    let snippet = truncate_snippet(&cleaned, &keyword.to_lowercase());
-                                    let short = normalize_whitespace(&snippet.chars().take(3000).collect::<String>());
+                                    let snippet =
+                                        truncate_snippet(&cleaned, &keyword.to_lowercase());
+                                    let short = normalize_whitespace(
+                                        &snippet.chars().take(3000).collect::<String>(),
+                                    );
                                     if !seen_snippets.insert(short.clone()) {
                                         continue;
                                     }
@@ -1546,11 +1796,13 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                                             "ocr_snippet": snippet
                                         }
                                     }));
-                                    if matches.len() >= limit { break; }
+                                    if matches.len() >= limit {
+                                        break;
+                                    }
                                 }
                             }
                         }
-                     }
+                    }
                 }
             }
             let formatted = if matches.is_empty() {
@@ -1558,10 +1810,17 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             } else {
                 let mut out = format!("Found {} OCR matches for '{}':\n\n", matches.len(), keyword);
                 for (i, item) in matches.iter().enumerate() {
-                    let app = item.get("app_name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    let app = item
+                        .get("app_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
                     let start_time = item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
                     let dt = chrono::DateTime::from_timestamp(start_time, 0)
-                        .map(|dt| dt.with_timezone(&chrono::Local).format("%I:%M %p").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&chrono::Local)
+                                .format("%I:%M %p")
+                                .to_string()
+                        })
                         .unwrap_or_else(|| "Unknown time".to_string());
                     let snippet = item
                         .get("metadata")
@@ -1573,14 +1832,16 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                 out
             };
             Ok((formatted, matches))
-        },
+        }
         "get_recent_ocr" => {
             let limit = args["limit"].as_u64().unwrap_or(100) as usize;
             let hours = args["hours"].as_u64().unwrap_or(24) as i64;
             let app_filter = args["app"].as_str().map(|s| s.to_lowercase());
             let keyword = args["keyword"].as_str().map(|s| s.to_lowercase());
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
-            let scope_label = args["scope_label"].as_str().unwrap_or("the selected time range");
+            let scope_label = args["scope_label"]
+                .as_str()
+                .unwrap_or("the selected time range");
             let scan_limit = std::cmp::max((limit as i64) * 50, 10000);
 
             let mut stmt = conn.prepare(
@@ -1596,21 +1857,34 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             let app_param = app_filter.as_ref().map(|a| format!("%{}%", a));
             let kw_param = keyword.as_ref().map(|k| format!("%{}%", k));
 
-            let rows = stmt.query_map(rusqlite::params![start_ts, end_ts, scan_limit, app_param, kw_param], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i32>(3)?,
-                    row.get::<_, i32>(4)?,
-                    row.get::<_, Option<Vec<u8>>>(5)?
-                ))
-            }).map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(
+                    rusqlite::params![start_ts, end_ts, scan_limit, app_param, kw_param],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i32>(3)?,
+                            row.get::<_, i32>(4)?,
+                            row.get::<_, Option<Vec<u8>>>(5)?,
+                        ))
+                    },
+                )
+                .map_err(|e| e.to_string())?;
 
             let mut seen_snippets = std::collections::HashSet::new();
             let mut results: Vec<Value> = Vec::new();
             for row in rows {
-                if let Ok((start_time, app_name, window_title, duration_seconds, category_id, metadata_blob)) = row {
+                if let Ok((
+                    start_time,
+                    app_name,
+                    window_title,
+                    duration_seconds,
+                    category_id,
+                    metadata_blob,
+                )) = row
+                {
                     if app_name.to_lowercase().contains("intentflow") {
                         continue;
                     }
@@ -1633,7 +1907,9 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                                     }
                                 }
 
-                                let short = normalize_whitespace(&normalized_text.chars().take(3000).collect::<String>());
+                                let short = normalize_whitespace(
+                                    &normalized_text.chars().take(3000).collect::<String>(),
+                                );
                                 if !seen_snippets.insert(short.clone()) {
                                     continue;
                                 }
@@ -1659,31 +1935,50 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                 }
             }
 
-            let activity_refs: Vec<Value> = results.iter().map(|item| {
-                let app = item.get("app_name").and_then(|v| v.as_str()).unwrap_or("");
-                let title = item.get("window_title").and_then(|v| v.as_str()).unwrap_or("");
-                let time = item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
-                let duration = item.get("duration_seconds").and_then(|v| v.as_i64()).unwrap_or(0);
-                let category_id = item.get("category_id").and_then(|v| v.as_i64()).unwrap_or(7);
-                serde_json::json!({
-                    "app": app,
-                    "title": title,
-                    "time": time,
-                    "duration_seconds": duration,
-                    "category": category_name_from_id(category_id),
-                    "media": Value::Null
+            let activity_refs: Vec<Value> = results
+                .iter()
+                .map(|item| {
+                    let app = item.get("app_name").and_then(|v| v.as_str()).unwrap_or("");
+                    let title = item
+                        .get("window_title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let time = item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let duration = item
+                        .get("duration_seconds")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let category_id = item
+                        .get("category_id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(7);
+                    serde_json::json!({
+                        "app": app,
+                        "title": title,
+                        "time": time,
+                        "duration_seconds": duration,
+                        "category": category_name_from_id(category_id),
+                        "media": Value::Null
+                    })
                 })
-            }).collect();
+                .collect();
 
             let formatted = if results.is_empty() {
                 "No OCR snippets found in the selected time range.".to_string()
             } else {
                 let mut out = format!("Recent OCR snippets ({}):\n\n", scope_label);
                 for (i, item) in results.iter().enumerate() {
-                    let app = item.get("app_name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    let app = item
+                        .get("app_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
                     let start_time = item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
                     let dt = chrono::DateTime::from_timestamp(start_time, 0)
-                        .map(|dt| dt.with_timezone(&chrono::Local).format("%I:%M %p").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&chrono::Local)
+                                .format("%I:%M %p")
+                                .to_string()
+                        })
                         .unwrap_or_else(|| "Unknown time".to_string());
                     let snippet = item
                         .get("metadata")
@@ -1696,42 +1991,53 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             };
 
             Ok((formatted, activity_refs))
-        },
+        }
         "get_usage_stats" => {
-             let start = args["start_time_iso"].as_str().unwrap_or("");
+            let start = args["start_time_iso"].as_str().unwrap_or("");
             let end = args["end_time_iso"].as_str().unwrap_or("");
-            
+
             let s_ts = parse_iso_to_unix(start).unwrap_or(0);
             let e_ts = parse_iso_to_unix(end).unwrap_or(chrono::Utc::now().timestamp());
-            
-            let mut stmt = conn.prepare(
-                "SELECT app_name, SUM(duration_seconds) as total_dur, COUNT(*) as cnt
+
+            let mut stmt = conn
+                .prepare(
+                    "SELECT app_name, SUM(duration_seconds) as total_dur, COUNT(*) as cnt
                  FROM activities 
                  WHERE start_time >= ?1 AND start_time <= ?2 
                  GROUP BY app_name
-                 ORDER BY total_dur DESC LIMIT 20"
-            ).map_err(|e| e.to_string())?;
-            
-            let rows = stmt.query_map(rusqlite::params![s_ts, e_ts], |row: &rusqlite::Row| {
-                Ok(serde_json::json!({
-                    "app": row.get::<_, String>(0)?,
-                    "total_seconds": row.get::<_, i64>(1)?,
-                    "count": row.get::<_, i32>(2)?
-                }))
-            }).map_err(|e| e.to_string())?;
-            
-            let results: Vec<Value> = rows.filter_map(|r: Result<Value, rusqlite::Error>| r.ok()).collect();
-            Ok((serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string()), results))
-        },
+                 ORDER BY total_dur DESC LIMIT 20",
+                )
+                .map_err(|e| e.to_string())?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![s_ts, e_ts], |row: &rusqlite::Row| {
+                    Ok(serde_json::json!({
+                        "app": row.get::<_, String>(0)?,
+                        "total_seconds": row.get::<_, i64>(1)?,
+                        "count": row.get::<_, i32>(2)?
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
+
+            let results: Vec<Value> = rows
+                .filter_map(|r: Result<Value, rusqlite::Error>| r.ok())
+                .collect();
+            Ok((
+                serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string()),
+                results,
+            ))
+        }
         "query_history" => {
-             // Alias for old query_activities call?
-              Err("Use query_activities instead".to_string()) 
-        },
+            // Alias for old query_activities call?
+            Err("Use query_activities instead".to_string())
+        }
         "get_browser_history" => {
             let limit = parse_json_u64(args.get("limit"), 50) as i64;
             let hours = parse_json_u64(args.get("hours"), 24) as i64;
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
-            let scope_label = args["scope_label"].as_str().unwrap_or("the selected time range");
+            let scope_label = args["scope_label"]
+                .as_str()
+                .unwrap_or("the selected time range");
 
             let mut stmt = conn.prepare(
                 "SELECT app_name, window_title, json_extract(CAST(metadata AS TEXT), '$.url') as url, start_time 
@@ -1741,28 +2047,33 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                  ORDER BY start_time DESC LIMIT ?3"
             ).map_err(|e| e.to_string())?;
 
-            let rows = stmt.query_map(rusqlite::params![start_ts, end_ts, limit], |row| {
-                Ok(serde_json::json!({
-                    "app_name": row.get::<_, String>(0)?,
-                    "window_title": row.get::<_, String>(1)?,
-                    "url": row.get::<_, Option<String>>(2)?,
-                    "start_time": row.get::<_, i64>(3)?,
-                }))
-            }).map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(rusqlite::params![start_ts, end_ts, limit], |row| {
+                    Ok(serde_json::json!({
+                        "app_name": row.get::<_, String>(0)?,
+                        "window_title": row.get::<_, String>(1)?,
+                        "url": row.get::<_, Option<String>>(2)?,
+                        "start_time": row.get::<_, i64>(3)?,
+                    }))
+                })
+                .map_err(|e| e.to_string())?;
 
             let results: Vec<Value> = rows.filter_map(|r| r.ok()).collect();
-            let activity_refs: Vec<Value> = results.iter().map(|item| {
-                serde_json::json!({
-                    "app": item.get("app_name").and_then(|v| v.as_str()).unwrap_or(""),
-                    "title": item.get("url").and_then(|v| v.as_str()).unwrap_or(
-                        item.get("window_title").and_then(|v| v.as_str()).unwrap_or("")
-                    ),
-                    "time": item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0),
-                    "duration_seconds": 0,
-                    "category": "Browser",
-                    "media": Value::Null
+            let activity_refs: Vec<Value> = results
+                .iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "app": item.get("app_name").and_then(|v| v.as_str()).unwrap_or(""),
+                        "title": item.get("url").and_then(|v| v.as_str()).unwrap_or(
+                            item.get("window_title").and_then(|v| v.as_str()).unwrap_or("")
+                        ),
+                        "time": item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0),
+                        "duration_seconds": 0,
+                        "category": "Browser",
+                        "media": Value::Null
+                    })
                 })
-            }).collect();
+                .collect();
 
             let formatted = if results.is_empty() {
                 format!("No browser history found in {}.", scope_label)
@@ -1770,10 +2081,17 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
                 let mut out = format!("Browser history ({}):\n\n", scope_label);
                 for (i, item) in results.iter().enumerate() {
                     let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                    let app = item.get("app_name").and_then(|v| v.as_str()).unwrap_or("Browser");
+                    let app = item
+                        .get("app_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Browser");
                     let ts = item.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
                     let dt = chrono::DateTime::from_timestamp(ts, 0)
-                        .map(|dt| dt.with_timezone(&chrono::Local).format("%I:%M %p").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&chrono::Local)
+                                .format("%I:%M %p")
+                                .to_string()
+                        })
                         .unwrap_or_default();
                     out.push_str(&format!("{}. {} | {} | {}\n", i + 1, app, dt, url));
                 }
@@ -1781,8 +2099,8 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
             };
 
             Ok((formatted, activity_refs))
-        },
-        _ => Err(format!("Unknown tool: {}", tool))
+        }
+        _ => Err(format!("Unknown tool: {}", tool)),
     }
 }
 
@@ -1790,8 +2108,10 @@ fn execute_tool(conn: &Connection, tool: &str, args: &Value) -> Result<(String, 
 /// This handles the common LLM bug of sending `"limit": "100"` instead of `"limit": 100`.
 fn parse_json_u64(val: Option<&Value>, default: u64) -> u64 {
     val.and_then(|v| {
-        v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    }).unwrap_or(default)
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    })
+    .unwrap_or(default)
 }
 
 // ─── Helpers ───

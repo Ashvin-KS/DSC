@@ -1,9 +1,9 @@
 use chrono::Utc;
+use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tauri::AppHandle;
 use uuid::Uuid;
-use keyring::Entry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiaryEntry {
@@ -20,36 +20,55 @@ pub struct DiaryEntry {
 
 // ─── sync helpers ─────────────────────────────────────────────────────────────
 
-fn db_get_entries(conn: &rusqlite::Connection, date: Option<&str>) -> Result<Vec<DiaryEntry>, String> {
+fn db_get_entries(
+    conn: &rusqlite::Connection,
+    date: Option<&str>,
+) -> Result<Vec<DiaryEntry>, String> {
     if let Some(d) = date {
-        let mut stmt = conn.prepare(
-            "SELECT id, date, content, is_ai_generated, created_at, updated_at
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, date, content, is_ai_generated, created_at, updated_at
              FROM diary_entries WHERE date = ?1 ORDER BY created_at DESC",
-        ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(rusqlite::params![d], |row| Ok(DiaryEntry {
-            id:              row.get(0)?,
-            date:            row.get(1)?,
-            content:         row.get(2)?,
-            is_ai_generated: row.get::<_, i64>(3)? != 0,
-            created_at:      row.get(4)?,
-            updated_at:      row.get(5)?,
-        })).map_err(|e| e.to_string())?;
-        Ok(rows.filter_map(|r| r.map_err(|e| eprintln!("[db] diary row error: {e}")).ok()).collect())
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![d], |row| {
+                Ok(DiaryEntry {
+                    id: row.get(0)?,
+                    date: row.get(1)?,
+                    content: row.get(2)?,
+                    is_ai_generated: row.get::<_, i64>(3)? != 0,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .filter_map(|r| r.map_err(|e| eprintln!("[db] diary row error: {e}")).ok())
+            .collect())
     } else {
-        let mut stmt = conn.prepare(
-            "SELECT id, date, content, is_ai_generated, created_at, updated_at
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, date, content, is_ai_generated, created_at, updated_at
              FROM diary_entries ORDER BY date DESC, created_at DESC
              LIMIT 200",
-        ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| Ok(DiaryEntry {
-            id:              row.get(0)?,
-            date:            row.get(1)?,
-            content:         row.get(2)?,
-            is_ai_generated: row.get::<_, i64>(3)? != 0,
-            created_at:      row.get(4)?,
-            updated_at:      row.get(5)?,
-        })).map_err(|e| e.to_string())?;
-        Ok(rows.filter_map(|r| r.map_err(|e| eprintln!("[db] diary row error: {e}")).ok()).collect())
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(DiaryEntry {
+                    id: row.get(0)?,
+                    date: row.get(1)?,
+                    content: row.get(2)?,
+                    is_ai_generated: row.get::<_, i64>(3)? != 0,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .filter_map(|r| r.map_err(|e| eprintln!("[db] diary row error: {e}")).ok())
+            .collect())
     }
 }
 
@@ -88,8 +107,17 @@ fn is_communication_signal(app_name: &str, window_title: &str) -> bool {
     let app = app_name.to_lowercase();
     let title = window_title.to_lowercase();
     let keys = [
-        "discord", "whatsapp", "telegram", "teams", "slack", "messenger", "signal", "skype",
-        "chat", "dm", "voice call",
+        "discord",
+        "whatsapp",
+        "telegram",
+        "teams",
+        "slack",
+        "messenger",
+        "signal",
+        "skype",
+        "chat",
+        "dm",
+        "voice call",
     ];
     keys.iter().any(|k| app.contains(k) || title.contains(k))
 }
@@ -111,7 +139,10 @@ fn infer_provider_from_model(model: &str) -> String {
         "openai".to_string()
     } else if lower.starts_with("claude") {
         "anthropic".to_string()
-    } else if lower.contains("groq") || lower.starts_with("llama-3.3") || lower.starts_with("mixtral") {
+    } else if lower.contains("groq")
+        || lower.starts_with("llama-3.3")
+        || lower.starts_with("mixtral")
+    {
         "groq".to_string()
     } else {
         "nvidia".to_string()
@@ -145,22 +176,30 @@ fn db_gather_generate_context(
     use chrono::NaiveDate;
     let d = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|_| "Invalid date format (expected YYYY-MM-DD)".to_string())?;
-    let start_ts = d.and_hms_opt(0, 0, 0).ok_or("Invalid date boundaries")?.and_utc().timestamp();
-    let end_ts   = start_ts + 86400;
+    let start_ts = d
+        .and_hms_opt(0, 0, 0)
+        .ok_or("Invalid date boundaries")?
+        .and_utc()
+        .timestamp();
+    let end_ts = start_ts + 86400;
 
-    let mut apps_stmt = conn.prepare(
-        "SELECT app_name, SUM(duration_seconds)
+    let mut apps_stmt = conn
+        .prepare(
+            "SELECT app_name, SUM(duration_seconds)
          FROM activities WHERE start_time >= ?1 AND start_time < ?2
          GROUP BY app_name ORDER BY 2 DESC LIMIT 15",
-    ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
-    let apps: Vec<String> = apps_stmt.query_map(rusqlite::params![start_ts, end_ts], |row| {
-        let app: String = row.get(0)?;
-        let secs: i64   = row.get(1)?;
-        Ok(format!("- {} ({})", app, duration_label(secs)))
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+    let apps: Vec<String> = apps_stmt
+        .query_map(rusqlite::params![start_ts, end_ts], |row| {
+            let app: String = row.get(0)?;
+            let secs: i64 = row.get(1)?;
+            Ok(format!("- {} ({})", app, duration_label(secs)))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     let mut windows_stmt = conn.prepare(
         "SELECT app_name, window_title, SUM(duration_seconds) AS total_secs, COUNT(*) AS switches
@@ -243,13 +282,15 @@ fn db_gather_generate_context(
     let mut seen_ocr = HashSet::new();
     let mut seen_url = HashSet::new();
 
-    let mut meta_stmt = conn.prepare(
-        "SELECT metadata
+    let mut meta_stmt = conn
+        .prepare(
+            "SELECT metadata
          FROM activities
          WHERE start_time >= ?1 AND start_time < ?2 AND metadata IS NOT NULL
          ORDER BY start_time DESC
          LIMIT 180",
-    ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
     let meta_rows = meta_stmt
         .query_map(rusqlite::params![start_ts, end_ts], |row| {
@@ -258,7 +299,9 @@ fn db_gather_generate_context(
         .map_err(|e| e.to_string())?;
 
     for blob_opt in meta_rows.filter_map(|r| r.ok()) {
-        let Some(blob) = blob_opt else { continue; };
+        let Some(blob) = blob_opt else {
+            continue;
+        };
         let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&blob) else {
             continue;
         };
@@ -296,16 +339,25 @@ fn db_gather_generate_context(
         ));
     }
     if !browser_titles.is_empty() {
-        context_sections.push(format!("Browser page/title history:\n{}", browser_titles.join("\n")));
+        context_sections.push(format!(
+            "Browser page/title history:\n{}",
+            browser_titles.join("\n")
+        ));
     }
     if !url_snippets.is_empty() {
         context_sections.push(format!("Captured URLs:\n{}", url_snippets.join("\n")));
     }
     if !ocr_snippets.is_empty() {
-        context_sections.push(format!("OCR snippets from on-screen content:\n{}", ocr_snippets.join("\n")));
+        context_sections.push(format!(
+            "OCR snippets from on-screen content:\n{}",
+            ocr_snippets.join("\n")
+        ));
     }
     if !notable_windows.is_empty() {
-        context_sections.push(format!("Other notable windows:\n{}", notable_windows.join("\n")));
+        context_sections.push(format!(
+            "Other notable windows:\n{}",
+            notable_windows.join("\n")
+        ));
     }
     if system_noise_secs > 0 {
         context_sections.push(format!(
@@ -320,10 +372,13 @@ fn db_gather_generate_context(
         context_sections.join("\n\n")
     };
 
-    let ai_model = conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'default_model'",
-        [], |row| row.get::<_, String>(0),
-    ).unwrap_or_default();
+    let ai_model = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'default_model'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_default();
 
     let ai_provider = infer_provider_from_model(&ai_model);
     let env_key_name = provider_key_name(&ai_provider);
@@ -336,13 +391,21 @@ fn db_gather_generate_context(
             }
         }
     }
-    
+
     if api_key.is_none() {
-        api_key = conn.query_row(
-            "SELECT value FROM app_settings WHERE key = ?1",
-            rusqlite::params![env_key_name], |row| row.get::<_, String>(0),
-        ).ok().filter(|s| !s.is_empty())
-        .or_else(|| std::env::var(provider_env_name(&ai_provider)).ok().filter(|s| !s.is_empty()));
+        api_key = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                rusqlite::params![env_key_name],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                std::env::var(provider_env_name(&ai_provider))
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            });
     }
 
     Ok((context_summary, api_key, ai_model, ai_provider))
@@ -365,13 +428,18 @@ fn resolve_diary_ai_endpoint(provider: &str, user_model: Option<&str>) -> (Strin
         "gemini" => {
             let model = user_model.unwrap_or("gemini-2.0-flash");
             (
-                format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model),
+                format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                    model
+                ),
                 model.to_string(),
             )
-        },
+        }
         _ => (
             "https://integrate.api.nvidia.com/v1/chat/completions".to_string(),
-            user_model.unwrap_or("meta/llama-3.3-70b-instruct").to_string(),
+            user_model
+                .unwrap_or("meta/llama-3.3-70b-instruct")
+                .to_string(),
         ),
     }
 }
@@ -379,31 +447,51 @@ fn resolve_diary_ai_endpoint(provider: &str, user_model: Option<&str>) -> (Strin
 // ─── Tauri commands ────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn diary_get_entries(app_handle: AppHandle, date: Option<String>) -> Result<Vec<DiaryEntry>, String> {
+pub async fn diary_get_entries(
+    app_handle: AppHandle,
+    date: Option<String>,
+) -> Result<Vec<DiaryEntry>, String> {
     let conn = crate::intent::db::open(&app_handle)?;
     db_get_entries(&conn, date.as_deref())
 }
 
 #[tauri::command]
-pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Result<DiaryEntry, String> {
+pub async fn diary_save_entry(
+    app_handle: AppHandle,
+    entry: DiaryEntry,
+) -> Result<DiaryEntry, String> {
     let conn = crate::intent::db::open(&app_handle)?;
-    let now  = Utc::now().timestamp();
+    let now = Utc::now().timestamp();
 
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM diary_entries WHERE id = ?1)",
-        [&entry.id], |row| row.get(0),
-    ).unwrap_or(false);
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM diary_entries WHERE id = ?1)",
+            [&entry.id],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
 
     if exists {
-        crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "diary_entry", &entry.id)?;
+        crate::intent::retrieval::delete_retrieval_chunks_for_entity(
+            &conn,
+            "diary_entry",
+            &entry.id,
+        )?;
         conn.execute(
             "UPDATE diary_entries SET date=?1,content=?2,is_ai_generated=?3,updated_at=?4 WHERE id=?5",
             rusqlite::params![entry.date, entry.content, entry.is_ai_generated as i64, now, entry.id],
         ).map_err(|e| e.to_string())?;
-        let saved = DiaryEntry { updated_at: now, ..entry };
+        let saved = DiaryEntry {
+            updated_at: now,
+            ..entry
+        };
         let summary = format!(
             "{} diary entry for {}",
-            if saved.is_ai_generated { "AI-generated" } else { "User-written" },
+            if saved.is_ai_generated {
+                "AI-generated"
+            } else {
+                "User-written"
+            },
             saved.date
         );
         let _ = crate::intent::retrieval::upsert_retrieval_chunk(
@@ -420,15 +508,28 @@ pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Resul
         );
         Ok(saved)
     } else {
-        let id = if entry.id.is_empty() { Uuid::new_v4().to_string() } else { entry.id.clone() };
+        let id = if entry.id.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            entry.id.clone()
+        };
         conn.execute(
             "INSERT INTO diary_entries (id,date,content,is_ai_generated,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
             rusqlite::params![id, entry.date, entry.content, entry.is_ai_generated as i64, now],
         ).map_err(|e| e.to_string())?;
-        let saved = DiaryEntry { id, created_at: now, updated_at: now, ..entry };
+        let saved = DiaryEntry {
+            id,
+            created_at: now,
+            updated_at: now,
+            ..entry
+        };
         let summary = format!(
             "{} diary entry for {}",
-            if saved.is_ai_generated { "AI-generated" } else { "User-written" },
+            if saved.is_ai_generated {
+                "AI-generated"
+            } else {
+                "User-written"
+            },
             saved.date
         );
         let _ = crate::intent::retrieval::upsert_retrieval_chunk(
@@ -451,7 +552,8 @@ pub async fn diary_save_entry(app_handle: AppHandle, entry: DiaryEntry) -> Resul
 pub async fn diary_delete_entry(app_handle: AppHandle, id: String) -> Result<bool, String> {
     let conn = crate::intent::db::open(&app_handle)?;
     crate::intent::retrieval::delete_retrieval_chunks_for_entity(&conn, "diary_entry", &id)?;
-    conn.execute("DELETE FROM diary_entries WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM diary_entries WHERE id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -465,19 +567,22 @@ pub async fn diary_generate_entry(
     provider: Option<String>,
 ) -> Result<String, String> {
     // Phase 1: sync DB — collect all data into owned Strings, then conn is dropped
-    let (mut activity_context, db_api_key, db_model, db_ai_provider) = tokio::task::spawn_blocking({
-        let app2 = app_handle.clone();
-        let date2 = date.clone();
-        move || -> Result<(String, Option<String>, String, String), String> {
-            let conn = crate::intent::db::open(&app2)?;
-            db_gather_generate_context(&conn, &date2)
-        }
-    }).await.map_err(|e| e.to_string())??;
-    
+    let (mut activity_context, db_api_key, db_model, db_ai_provider) =
+        tokio::task::spawn_blocking({
+            let app2 = app_handle.clone();
+            let date2 = date.clone();
+            move || -> Result<(String, Option<String>, String, String), String> {
+                let conn = crate::intent::db::open(&app2)?;
+                db_gather_generate_context(&conn, &date2)
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+
     if let Some(extra) = extra_context {
         if !extra.trim().is_empty() {
-             activity_context.push_str("\n\nExtra Context (LeetCode/Music/Etc):\n");
-             activity_context.push_str(&extra);
+            activity_context.push_str("\n\nExtra Context (LeetCode/Music/Etc):\n");
+            activity_context.push_str(&extra);
         }
     }
 
@@ -489,17 +594,21 @@ pub async fn diary_generate_entry(
     };
 
     // Use explicit provider > db provider
-    let ai_provider = provider.as_deref()
+    let ai_provider = provider
+        .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or(&db_ai_provider)
         .to_string();
 
     // Phase 2: async API call (no Connection held)
     // Use explicit model > db model > provider default
-    let user_model = model.as_deref()
-        .filter(|s| !s.is_empty())
-        .or_else(|| if db_model.is_empty() { None } else { Some(db_model.as_str()) })
-    ;
+    let user_model = model.as_deref().filter(|s| !s.is_empty()).or_else(|| {
+        if db_model.is_empty() {
+            None
+        } else {
+            Some(db_model.as_str())
+        }
+    });
 
     let (endpoint, model_id) = resolve_diary_ai_endpoint(&ai_provider, user_model);
 
@@ -532,11 +641,17 @@ pub async fn diary_generate_entry(
     let provider_norm = ai_provider.to_lowercase();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .build().map_err(|e| e.to_string())?;
+        .build()
+        .map_err(|e| e.to_string())?;
 
     if provider_norm == "anthropic" {
-        #[derive(Serialize)] struct Msg { role: &'static str, content: String }
-        #[derive(Serialize)] struct Req {
+        #[derive(Serialize)]
+        struct Msg {
+            role: &'static str,
+            content: String,
+        }
+        #[derive(Serialize)]
+        struct Req {
             model: String,
             messages: Vec<Msg>,
             max_tokens: u32,
@@ -549,7 +664,10 @@ pub async fn diary_generate_entry(
             .header("anthropic-version", "2023-06-01")
             .json(&Req {
                 model: model_id,
-                messages: vec![Msg { role: "user", content: prompt }],
+                messages: vec![Msg {
+                    role: "user",
+                    content: prompt,
+                }],
                 max_tokens: 512,
                 temperature: 0.65,
             })
@@ -567,9 +685,10 @@ pub async fn diary_generate_entry(
         let content = parsed
             .get("content")
             .and_then(|v| v.as_array())
-            .and_then(|arr| arr.iter().find_map(|item| {
-                item.get("text").and_then(|t| t.as_str())
-            }))
+            .and_then(|arr| {
+                arr.iter()
+                    .find_map(|item| item.get("text").and_then(|t| t.as_str()))
+            })
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .ok_or_else(|| "Empty diary generation response".to_string())?;
@@ -620,8 +739,13 @@ pub async fn diary_generate_entry(
 
         Ok(content)
     } else {
-        #[derive(Serialize)] struct Msg { role: &'static str, content: String }
-        #[derive(Serialize)] struct Req {
+        #[derive(Serialize)]
+        struct Msg {
+            role: &'static str,
+            content: String,
+        }
+        #[derive(Serialize)]
+        struct Req {
             model: String,
             messages: Vec<Msg>,
             max_tokens: u32,
@@ -633,7 +757,10 @@ pub async fn diary_generate_entry(
             .header("Authorization", format!("Bearer {}", key))
             .json(&Req {
                 model: model_id,
-                messages: vec![Msg { role: "user", content: prompt }],
+                messages: vec![Msg {
+                    role: "user",
+                    content: prompt,
+                }],
                 max_tokens: 512,
                 temperature: 0.65,
             })

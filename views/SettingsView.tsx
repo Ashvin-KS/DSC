@@ -278,8 +278,6 @@ export const SettingsView: React.FC = () => {
               <SecretInput label="Anthropic API Key" value={local.anthropicApiKey || ''} onChange={set('anthropicApiKey')} helpText="From console.anthropic.com" />
               <SecretInput label="Groq API Key" value={local.groqApiKey || ''} onChange={set('groqApiKey')} helpText="From console.groq.com" />
               <SecretInput label="Google Gemini API Key" value={(local as any).geminiApiKey || ''} onChange={(v) => setLocal((p) => ({ ...p, geminiApiKey: v }))} helpText="aistudio.google.com/app/apikey" />
-              <SecretInput label="Google Client ID" value={local.googleClientId} onChange={set('googleClientId')} helpText="For Google Calendar / Tasks OAuth" />
-              <SecretInput label="Google Client Secret" value={local.googleClientSecret} onChange={set('googleClientSecret')} />
 
             </div>
           )}

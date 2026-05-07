@@ -73,21 +73,21 @@ export function initAtheletiaApi() {
       searchVault: (vaultPath: string, query: string, maxHits?: number) =>
         invoke<VaultSearchResult>('notes_search_vault', { vaultPath, query, maxHits }),
       readFile: (filePath: string) =>
-        invoke<string | null>('notes_read_file', { filePath }),
+        invoke<string | null>('notes_read_file', { filePath, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       writeFile: (filePath: string, content: string) =>
-        invoke<boolean>('notes_write_file', { filePath, content }),
+        invoke<boolean>('notes_write_file', { filePath, content, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       createFile: (dirPath: string, fileName: string) =>
-        invoke<MutationResult>('notes_create_file', { dirPath, fileName }),
+        invoke<MutationResult>('notes_create_file', { dirPath, fileName, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       createFolder: (dirPath: string, folderName: string) =>
-        invoke<MutationResult>('notes_create_folder', { dirPath, folderName }),
+        invoke<MutationResult>('notes_create_folder', { dirPath, folderName, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       delete: (itemPath: string) =>
-        invoke<MutationResult>('notes_delete', { itemPath }),
+        invoke<MutationResult>('notes_delete', { itemPath, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       rename: (oldPath: string, newName: string) =>
-        invoke<MutationResult>('notes_rename', { oldPath, newName }),
+        invoke<MutationResult>('notes_rename', { oldPath, newName, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       moveFile: (sourcePath: string, destinationPath: string) =>
-        invoke<MutationResult>('notes_move_file', { sourcePath, destinationPath }),
+        invoke<MutationResult>('notes_move_file', { sourcePath, destinationPath, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
       ensureDir: (dirPath: string) =>
-        invoke<MutationResult>('notes_ensure_dir', { dirPath }),
+        invoke<MutationResult>('notes_ensure_dir', { dirPath, vaultPath: localStorage.getItem('brain_vaultPath') || undefined }),
     },
     leetcode: {
       readCsv: () => invoke<string | null>('leetcode_read_csv'),

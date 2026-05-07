@@ -136,7 +136,9 @@ impl RetrievalScopeFilter {
             return false;
         }
         match &self.allowed_source_types {
-            Some(allowed) => allowed.iter().any(|source_type| source_type == &candidate.source_type),
+            Some(allowed) => allowed
+                .iter()
+                .any(|source_type| source_type == &candidate.source_type),
             None => true,
         }
     }
@@ -144,13 +146,23 @@ impl RetrievalScopeFilter {
 
 pub fn build_chat_retrieval_filter(selected_sources: Option<&[String]>) -> RetrievalScopeFilter {
     let enabled_sources: Vec<String> = match selected_sources {
-        Some(sources) if !sources.is_empty() => sources.iter().map(|value| value.trim().to_lowercase()).collect(),
-        _ => vec!["apps".to_string(), "screen".to_string(), "media".to_string()],
+        Some(sources) if !sources.is_empty() => sources
+            .iter()
+            .map(|value| value.trim().to_lowercase())
+            .collect(),
+        _ => vec![
+            "apps".to_string(),
+            "screen".to_string(),
+            "media".to_string(),
+        ],
     };
 
     let mut allowed_source_types: Vec<String> = Vec::new();
     let mut push_allowed = |value: &str| {
-        if !allowed_source_types.iter().any(|existing| existing == value) {
+        if !allowed_source_types
+            .iter()
+            .any(|existing| existing == value)
+        {
             allowed_source_types.push(value.to_string());
         }
     };
@@ -208,7 +220,26 @@ fn tokenize_query_terms(input: &str) -> Vec<String> {
         .split(|c: char| !c.is_alphanumeric())
         .map(|part| part.trim().to_lowercase())
         .filter(|part| part.len() >= 3)
-        .filter(|part| !matches!(part.as_str(), "what" | "when" | "where" | "which" | "with" | "from" | "that" | "this" | "have" | "about" | "your" | "mine" | "into" | "there" | "their"))
+        .filter(|part| {
+            !matches!(
+                part.as_str(),
+                "what"
+                    | "when"
+                    | "where"
+                    | "which"
+                    | "with"
+                    | "from"
+                    | "that"
+                    | "this"
+                    | "have"
+                    | "about"
+                    | "your"
+                    | "mine"
+                    | "into"
+                    | "there"
+                    | "their"
+            )
+        })
         .collect()
 }
 
@@ -236,17 +267,44 @@ fn make_fts_query(query: &str) -> Option<String> {
 fn detect_retrieval_route(query: &str) -> &'static str {
     let lower = query.to_lowercase();
     let semantic_markers = [
-        "similar", "like this", "felt", "reminds", "pattern", "theme", "state", "vibe",
-        "related", "about myself", "what was going on", "connected",
+        "similar",
+        "like this",
+        "felt",
+        "reminds",
+        "pattern",
+        "theme",
+        "state",
+        "vibe",
+        "related",
+        "about myself",
+        "what was going on",
+        "connected",
     ];
     let structured_markers = [
-        "how many", "how often", "total", "top", "most", "least", "when", "timeline",
-        "today", "yesterday", "last", "week", "month", "year", "hours", "minutes",
+        "how many",
+        "how often",
+        "total",
+        "top",
+        "most",
+        "least",
+        "when",
+        "timeline",
+        "today",
+        "yesterday",
+        "last",
+        "week",
+        "month",
+        "year",
+        "hours",
+        "minutes",
     ];
 
     if semantic_markers.iter().any(|marker| lower.contains(marker)) {
         "semantic"
-    } else if structured_markers.iter().any(|marker| lower.contains(marker)) {
+    } else if structured_markers
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
         "structured"
     } else if tokenize_query_terms(query).len() >= 3 {
         "hybrid"
@@ -351,7 +409,8 @@ fn local_day_start_ts(days_ago: i64) -> Option<i64> {
 }
 
 fn date_key_from_ts(ts: i64) -> Option<String> {
-    chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d").to_string())
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d").to_string())
 }
 
 fn week_key_from_ts(ts: i64) -> Option<String> {
@@ -473,25 +532,28 @@ fn fetch_semantic_candidates(
 
     let candidate_limit = if route == "semantic" { 900 } else { 500 };
     let rows = stmt
-        .query_map(params![start_ts, end_ts, DEFAULT_EMBED_MODEL, candidate_limit], |row| {
-            let vector_json: String = row.get(8)?;
-            Ok((
-                RetrievalCandidate {
-                    chunk_id: row.get(0)?,
-                    entity_type: row.get(1)?,
-                    entity_id: row.get(2)?,
-                    source_type: row.get(3)?,
-                    chunk_summary: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                    chunk_text: row.get(5)?,
-                    project_root: row.get(6)?,
-                    source_ts: row.get(7)?,
-                    lexical_score: 0.0,
-                    semantic_score: 0.0,
-                    structured_score: 0.0,
-                },
-                vector_json,
-            ))
-        })
+        .query_map(
+            params![start_ts, end_ts, DEFAULT_EMBED_MODEL, candidate_limit],
+            |row| {
+                let vector_json: String = row.get(8)?;
+                Ok((
+                    RetrievalCandidate {
+                        chunk_id: row.get(0)?,
+                        entity_type: row.get(1)?,
+                        entity_id: row.get(2)?,
+                        source_type: row.get(3)?,
+                        chunk_summary: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                        chunk_text: row.get(5)?,
+                        project_root: row.get(6)?,
+                        source_ts: row.get(7)?,
+                        lexical_score: 0.0,
+                        semantic_score: 0.0,
+                        structured_score: 0.0,
+                    },
+                    vector_json,
+                ))
+            },
+        )
         .map_err(|e| e.to_string())?;
 
     let mut candidates = Vec::new();
@@ -509,7 +571,11 @@ fn fetch_semantic_candidates(
         }
     }
 
-    candidates.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        b.semantic_score
+            .partial_cmp(&a.semantic_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     candidates.truncate(if route == "semantic" { 14 } else { 8 });
     Ok(candidates)
 }
@@ -520,7 +586,10 @@ fn build_prompt_context(route: &str, hits: &[RetrievalHit]) -> String {
     }
 
     let mut lines = Vec::new();
-    lines.push(format!("HYBRID RETRIEVAL EVIDENCE [{}]", route.to_uppercase()));
+    lines.push(format!(
+        "HYBRID RETRIEVAL EVIDENCE [{}]",
+        route.to_uppercase()
+    ));
     for (idx, hit) in hits.iter().enumerate() {
         let header = format!(
             "{}. [{}] {} | {}",
@@ -531,7 +600,11 @@ fn build_prompt_context(route: &str, hits: &[RetrievalHit]) -> String {
         );
         lines.push(header);
         lines.push(format!("   {}", hit.snippet));
-        if let Some(project_root) = hit.project_root.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(project_root) = hit
+            .project_root
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             lines.push(format!("   project: {}", project_root));
         }
     }
@@ -539,7 +612,11 @@ fn build_prompt_context(route: &str, hits: &[RetrievalHit]) -> String {
     lines.join("\n")
 }
 
-fn split_markdown_chunks(content: &str, lines_per_chunk: usize, overlap: usize) -> Vec<(usize, usize, String)> {
+fn split_markdown_chunks(
+    content: &str,
+    lines_per_chunk: usize,
+    overlap: usize,
+) -> Vec<(usize, usize, String)> {
     let lines = content.lines().collect::<Vec<_>>();
     if lines.is_empty() {
         return Vec::new();
@@ -595,7 +672,11 @@ fn delete_vault_chunks_for_root(conn: &Connection, vault_root: &str) -> Result<(
     Ok(())
 }
 
-fn delete_vault_chunks_for_note(conn: &Connection, vault_root: &str, entity_id: &str) -> Result<(), String> {
+fn delete_vault_chunks_for_note(
+    conn: &Connection,
+    vault_root: &str,
+    entity_id: &str,
+) -> Result<(), String> {
     conn.execute(
         "DELETE FROM retrieval_chunks
          WHERE entity_type = 'vault_note' AND project_root = ?1 AND entity_id = ?2",
@@ -624,7 +705,10 @@ fn index_single_vault_note(
     let modified_ts = file_modified_ts(canonical_path);
     let outline_text = format!(
         "Path: {relative_path}\nFile: {}\n\nHEADINGS:\n{heading_text}",
-        canonical_path.file_name().and_then(|name| name.to_str()).unwrap_or(relative_path),
+        canonical_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(relative_path),
     );
 
     upsert_retrieval_chunk(
@@ -654,7 +738,9 @@ fn index_single_vault_note(
                 entity_type: "vault_note",
                 entity_id: &full_path,
                 source_type: "vault_note_chunk",
-                chunk_text: &format!("Path: {relative_path}\nLines: {start_line}-{end_line}\n\n{chunk_text}"),
+                chunk_text: &format!(
+                    "Path: {relative_path}\nLines: {start_line}-{end_line}\n\n{chunk_text}"
+                ),
                 chunk_summary: Some(summary),
                 project_root: Some(vault_root),
                 source_ts: modified_ts,
@@ -667,8 +753,7 @@ fn index_single_vault_note(
 }
 
 fn is_markdown_file(path: &Path) -> bool {
-    path
-        .extension()
+    path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("md"))
         .unwrap_or(false)
@@ -743,13 +828,16 @@ pub fn upsert_markdown_note(
         return Ok(0);
     }
 
-    let canonical_vault = fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
-    let canonical_note = fs::canonicalize(note_path).map_err(|e| format!("Invalid note path: {e}"))?;
+    let canonical_vault =
+        fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
+    let canonical_note =
+        fs::canonicalize(note_path).map_err(|e| format!("Invalid note path: {e}"))?;
     if !path_is_within(&canonical_note, &canonical_vault) {
         return Ok(0);
     }
 
-    let content = fs::read_to_string(&canonical_note).map_err(|e| format!("Failed to read note content: {e}"))?;
+    let content = fs::read_to_string(&canonical_note)
+        .map_err(|e| format!("Failed to read note content: {e}"))?;
     let vault_root = canonical_vault.to_string_lossy().to_string();
     let relative_path = canonical_note
         .strip_prefix(&canonical_vault)
@@ -764,7 +852,13 @@ pub fn upsert_markdown_note(
         });
 
     let conn = crate::intent::db::open(app)?;
-    index_single_vault_note(&conn, &vault_root, &canonical_note, &relative_path, &content)
+    index_single_vault_note(
+        &conn,
+        &vault_root,
+        &canonical_note,
+        &relative_path,
+        &content,
+    )
 }
 
 #[allow(dead_code)]
@@ -777,7 +871,8 @@ pub fn delete_markdown_note(
         return Ok(());
     }
 
-    let canonical_vault = fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
+    let canonical_vault =
+        fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
     if !path_is_within(note_path, &canonical_vault) {
         return Ok(());
     }
@@ -793,7 +888,8 @@ pub fn delete_markdown_subtree(
     vault_path: &str,
     subtree_path: &Path,
 ) -> Result<usize, String> {
-    let canonical_vault = fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
+    let canonical_vault =
+        fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
     if !path_is_within(subtree_path, &canonical_vault) {
         return Ok(0);
     }
@@ -808,8 +904,10 @@ pub fn reindex_markdown_subtree(
     vault_path: &str,
     subtree_path: &Path,
 ) -> Result<VaultIndexStats, String> {
-    let canonical_vault = fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
-    let canonical_subtree = fs::canonicalize(subtree_path).map_err(|e| format!("Invalid subtree path: {e}"))?;
+    let canonical_vault =
+        fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
+    let canonical_subtree =
+        fs::canonicalize(subtree_path).map_err(|e| format!("Invalid subtree path: {e}"))?;
     if !path_is_within(&canonical_subtree, &canonical_vault) {
         return Ok(VaultIndexStats {
             indexed_files: 0,
@@ -832,7 +930,8 @@ pub fn reindex_markdown_subtree(
             });
         }
 
-        let content = fs::read_to_string(&canonical_subtree).map_err(|e| format!("Failed to read note content: {e}"))?;
+        let content = fs::read_to_string(&canonical_subtree)
+            .map_err(|e| format!("Failed to read note content: {e}"))?;
         let relative_path = canonical_subtree
             .strip_prefix(&canonical_vault)
             .ok()
@@ -881,8 +980,14 @@ pub fn reindex_markdown_subtree(
             .strip_prefix(&canonical_vault)
             .ok()
             .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|| path.file_name().and_then(|name| name.to_str()).unwrap_or("unknown.md").to_string());
-        indexed_chunks += index_single_vault_note(&conn, &vault_root, &path, &relative_path, &content)?;
+            .unwrap_or_else(|| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("unknown.md")
+                    .to_string()
+            });
+        indexed_chunks +=
+            index_single_vault_note(&conn, &vault_root, &path, &relative_path, &content)?;
         indexed_files += 1;
     }
 
@@ -915,7 +1020,9 @@ where
 {
     let cache_dir = embedding_cache_dir(app)?;
     let holder = EMBEDDER.get_or_init(|| Mutex::new(None));
-    let mut guard = holder.lock().map_err(|_| "Embedding model lock poisoned".to_string())?;
+    let mut guard = holder
+        .lock()
+        .map_err(|_| "Embedding model lock poisoned".to_string())?;
 
     let needs_init = guard
         .as_ref()
@@ -990,15 +1097,18 @@ fn claim_embedding_jobs(conn: &Connection, batch_size: usize) -> Result<Vec<Embe
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![model_name, EMBEDDING_MAX_ATTEMPTS, batch_size as i64], |row| {
-            Ok(EmbeddingJob {
-                id: row.get(0)?,
-                chunk_id: row.get(1)?,
-                model_name: row.get(2)?,
-                attempts: row.get(3)?,
-                chunk_text: row.get(4)?,
-            })
-        })
+        .query_map(
+            params![model_name, EMBEDDING_MAX_ATTEMPTS, batch_size as i64],
+            |row| {
+                Ok(EmbeddingJob {
+                    id: row.get(0)?,
+                    chunk_id: row.get(1)?,
+                    model_name: row.get(2)?,
+                    attempts: row.get(3)?,
+                    chunk_text: row.get(4)?,
+                })
+            },
+        )
         .map_err(|e| e.to_string())?;
 
     let jobs: Vec<EmbeddingJob> = rows.filter_map(|row| row.ok()).collect();
@@ -1018,7 +1128,11 @@ fn claim_embedding_jobs(conn: &Connection, batch_size: usize) -> Result<Vec<Embe
     Ok(jobs)
 }
 
-fn mark_embedding_jobs_failed(conn: &Connection, jobs: &[EmbeddingJob], error: &str) -> Result<(), String> {
+fn mark_embedding_jobs_failed(
+    conn: &Connection,
+    jobs: &[EmbeddingJob],
+    error: &str,
+) -> Result<(), String> {
     let now = Utc::now().timestamp();
     for job in jobs {
         conn.execute(
@@ -1088,7 +1202,12 @@ fn process_embedding_job_batch(app: &AppHandle) -> Result<usize, String> {
 
     let documents = jobs
         .iter()
-        .map(|job| format!("passage: {}", truncate_chars(&job.chunk_text, MAX_CHUNK_CHARS)))
+        .map(|job| {
+            format!(
+                "passage: {}",
+                truncate_chars(&job.chunk_text, MAX_CHUNK_CHARS)
+            )
+        })
         .collect::<Vec<_>>();
     let model_name = jobs[0].model_name.clone();
 
@@ -1136,7 +1255,12 @@ pub fn start_embedding_worker(app_handle: AppHandle) {
 }
 
 fn normalize_whitespace(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
+    input
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {
@@ -1158,7 +1282,9 @@ pub fn upsert_retrieval_chunk(conn: &Connection, chunk: ChunkInput<'_>) -> Resul
     if chunk_text.is_empty() {
         return Err("chunk_text cannot be empty".to_string());
     }
-    let chunk_summary = chunk.chunk_summary.unwrap_or_else(|| make_summary(&chunk_text));
+    let chunk_summary = chunk
+        .chunk_summary
+        .unwrap_or_else(|| make_summary(&chunk_text));
 
     conn.execute(
         "INSERT INTO retrieval_chunks
@@ -1187,7 +1313,12 @@ pub fn upsert_retrieval_chunk(conn: &Connection, chunk: ChunkInput<'_>) -> Resul
         .query_row(
             "SELECT id FROM retrieval_chunks
              WHERE entity_type = ?1 AND entity_id = ?2 AND source_type = ?3 AND chunk_text = ?4",
-            params![chunk.entity_type, chunk.entity_id, chunk.source_type, chunk_text],
+            params![
+                chunk.entity_type,
+                chunk.entity_id,
+                chunk.source_type,
+                chunk_text
+            ],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
@@ -1229,7 +1360,11 @@ pub fn delete_retrieval_chunks_for_entity(
     Ok(())
 }
 
-pub fn enqueue_embedding_job(conn: &Connection, chunk_id: i64, model_name: &str) -> Result<(), String> {
+pub fn enqueue_embedding_job(
+    conn: &Connection,
+    chunk_id: i64,
+    model_name: &str,
+) -> Result<(), String> {
     let now = Utc::now().timestamp();
     conn.execute(
         "INSERT INTO embedding_jobs (chunk_id, model_name, status, attempts, created_at, updated_at)
@@ -1250,8 +1385,11 @@ pub fn replace_activity_evidence(
     evidences: &[EvidenceInput],
 ) -> Result<(), String> {
     // activity_evidence_fts is contentless FTS5; avoid direct DELETE from FTS table.
-    conn.execute("DELETE FROM activity_evidence WHERE activity_id = ?1", params![activity_id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM activity_evidence WHERE activity_id = ?1",
+        params![activity_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     let now = Utc::now().timestamp();
     for evidence in evidences {
@@ -1269,14 +1407,23 @@ pub fn replace_activity_evidence(
         conn.execute(
             "INSERT INTO activity_evidence_fts (rowid, text, evidence_type, activity_id, source_ts)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![evidence_id, text, evidence.evidence_type, activity_id, evidence.source_ts],
+            params![
+                evidence_id,
+                text,
+                evidence.evidence_type,
+                activity_id,
+                evidence.source_ts
+            ],
         )
         .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-pub fn extract_activity_evidence(metadata: &ActivityMetadata, source_ts: i64) -> Vec<EvidenceInput> {
+pub fn extract_activity_evidence(
+    metadata: &ActivityMetadata,
+    source_ts: i64,
+) -> Vec<EvidenceInput> {
     let mut evidences = Vec::new();
 
     if let Some(url) = metadata.url.as_deref() {
@@ -1302,12 +1449,16 @@ pub fn extract_activity_evidence(metadata: &ActivityMetadata, source_ts: i64) ->
     }
 
     if let Some(media) = metadata.media_info.as_ref() {
-        let combined = [media.title.as_str(), media.artist.as_str(), media.status.as_str()]
-            .iter()
-            .filter(|s| !s.trim().is_empty())
-            .copied()
-            .collect::<Vec<_>>()
-            .join(" | ");
+        let combined = [
+            media.title.as_str(),
+            media.artist.as_str(),
+            media.status.as_str(),
+        ]
+        .iter()
+        .filter(|s| !s.trim().is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" | ");
         let text = truncate_chars(&combined, MAX_EVIDENCE_CHARS);
         if !text.is_empty() {
             evidences.push(EvidenceInput {
@@ -1365,7 +1516,8 @@ pub fn build_hybrid_context(
                 .next()
                 .ok_or_else(|| "Embedding model returned no query vector".to_string())
         })?;
-        semantic = fetch_semantic_candidates(&conn, &query_embedding, start_ts, end_ts, &route, filter)?;
+        semantic =
+            fetch_semantic_candidates(&conn, &query_embedding, start_ts, end_ts, &route, filter)?;
         candidates.extend(semantic.iter().cloned());
     }
 
@@ -1375,19 +1527,23 @@ pub fn build_hybrid_context(
             lexical_hits: lexical.len(),
             semantic_hits: semantic.len(),
             structured_hits: structured.len(),
-            prompt_context: "No grounded retrieval evidence found in the selected scope.".to_string(),
+            prompt_context: "No grounded retrieval evidence found in the selected scope."
+                .to_string(),
             hits: Vec::new(),
         });
     }
 
-    let mut deduped: std::collections::HashMap<i64, RetrievalCandidate> = std::collections::HashMap::new();
+    let mut deduped: std::collections::HashMap<i64, RetrievalCandidate> =
+        std::collections::HashMap::new();
     for mut candidate in candidates {
         let overlap = lexical_overlap_score(
             &query_terms,
             &format!("{} {}", candidate.chunk_summary, candidate.chunk_text),
         );
         candidate.lexical_score = candidate.lexical_score.max(overlap);
-        let entry = deduped.entry(candidate.chunk_id).or_insert_with(|| candidate.clone());
+        let entry = deduped
+            .entry(candidate.chunk_id)
+            .or_insert_with(|| candidate.clone());
         entry.lexical_score = entry.lexical_score.max(candidate.lexical_score);
         entry.semantic_score = entry.semantic_score.max(candidate.semantic_score);
         entry.structured_score = entry.structured_score.max(candidate.structured_score);
@@ -1406,12 +1562,30 @@ pub fn build_hybrid_context(
         .into_values()
         .map(|candidate| {
             let route_multiplier = match route.as_str() {
-                "semantic" => 0.55 * candidate.semantic_score + 0.25 * candidate.lexical_score + 0.20 * candidate.structured_score,
-                "structured" => 0.55 * candidate.structured_score + 0.30 * candidate.lexical_score + 0.15 * candidate.semantic_score,
-                "keyword" => 0.65 * candidate.lexical_score + 0.20 * candidate.structured_score + 0.15 * candidate.semantic_score,
-                _ => 0.40 * candidate.semantic_score + 0.35 * candidate.lexical_score + 0.25 * candidate.structured_score,
+                "semantic" => {
+                    0.55 * candidate.semantic_score
+                        + 0.25 * candidate.lexical_score
+                        + 0.20 * candidate.structured_score
+                }
+                "structured" => {
+                    0.55 * candidate.structured_score
+                        + 0.30 * candidate.lexical_score
+                        + 0.15 * candidate.semantic_score
+                }
+                "keyword" => {
+                    0.65 * candidate.lexical_score
+                        + 0.20 * candidate.structured_score
+                        + 0.15 * candidate.semantic_score
+                }
+                _ => {
+                    0.40 * candidate.semantic_score
+                        + 0.35 * candidate.lexical_score
+                        + 0.25 * candidate.structured_score
+                }
             };
-            let score = route_multiplier * source_weight(&candidate.source_type) * recency_weight(candidate.source_ts, end_ts);
+            let score = route_multiplier
+                * source_weight(&candidate.source_type)
+                * recency_weight(candidate.source_ts, end_ts);
             RetrievalHit {
                 chunk_id: candidate.chunk_id,
                 entity_type: candidate.entity_type,
@@ -1430,8 +1604,16 @@ pub fn build_hybrid_context(
         })
         .collect::<Vec<_>>();
 
-    scored_hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    scored_hits.truncate(max_hits.min(recent_candidate_limit(start_ts, end_ts) as usize).max(1));
+    scored_hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    scored_hits.truncate(
+        max_hits
+            .min(recent_candidate_limit(start_ts, end_ts) as usize)
+            .max(1),
+    );
     let prompt_context = build_prompt_context(&route, &scored_hits);
 
     Ok(HybridRetrievalContext {
@@ -1444,9 +1626,13 @@ pub fn build_hybrid_context(
     })
 }
 
-pub fn reindex_markdown_vault(app: &AppHandle, vault_path: &str) -> Result<VaultIndexStats, String> {
+pub fn reindex_markdown_vault(
+    app: &AppHandle,
+    vault_path: &str,
+) -> Result<VaultIndexStats, String> {
     let session_id = begin_vault_reindex_session();
-    let canonical_vault = fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
+    let canonical_vault =
+        fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
     let vault_root = canonical_vault.to_string_lossy().to_string();
     let conn = crate::intent::db::open(app)?;
     delete_vault_chunks_for_root(&conn, &vault_root)?;
@@ -1510,8 +1696,14 @@ pub fn reindex_markdown_vault(app: &AppHandle, vault_path: &str) -> Result<Vault
             .strip_prefix(&canonical_vault)
             .ok()
             .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|| path.file_name().and_then(|name| name.to_str()).unwrap_or("unknown.md").to_string());
-        indexed_chunks += index_single_vault_note(&conn, &vault_root, &path, &relative_path, &content)?;
+            .unwrap_or_else(|| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("unknown.md")
+                    .to_string()
+            });
+        indexed_chunks +=
+            index_single_vault_note(&conn, &vault_root, &path, &relative_path, &content)?;
         indexed_files += 1;
         emit_vault_index_progress(
             app,
@@ -1552,7 +1744,8 @@ pub fn build_vault_context(
     query: &str,
     max_hits: usize,
 ) -> Result<HybridRetrievalContext, String> {
-    let canonical_vault = fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
+    let canonical_vault =
+        fs::canonicalize(vault_path).map_err(|e| format!("Invalid vault path: {e}"))?;
     let vault_root = canonical_vault.to_string_lossy().to_string();
     let conn = crate::intent::db::open(app)?;
 
@@ -1681,19 +1874,30 @@ pub fn build_vault_context(
             candidate.semantic_score = cosine_similarity(&query_embedding, &vector);
             semantic.push(candidate);
         }
-        semantic.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
+        semantic.sort_by(|a, b| {
+            b.semantic_score
+                .partial_cmp(&a.semantic_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         semantic.truncate(12);
     }
 
     let structured_count = structured.len();
-    let mut deduped: std::collections::HashMap<i64, RetrievalCandidate> = std::collections::HashMap::new();
-    for mut candidate in structured.into_iter().chain(lexical.iter().cloned()).chain(semantic.iter().cloned()) {
+    let mut deduped: std::collections::HashMap<i64, RetrievalCandidate> =
+        std::collections::HashMap::new();
+    for mut candidate in structured
+        .into_iter()
+        .chain(lexical.iter().cloned())
+        .chain(semantic.iter().cloned())
+    {
         let overlap = lexical_overlap_score(
             &query_terms,
             &format!("{} {}", candidate.chunk_summary, candidate.chunk_text),
         );
         candidate.lexical_score = candidate.lexical_score.max(overlap);
-        let entry = deduped.entry(candidate.chunk_id).or_insert_with(|| candidate.clone());
+        let entry = deduped
+            .entry(candidate.chunk_id)
+            .or_insert_with(|| candidate.clone());
         entry.lexical_score = entry.lexical_score.max(candidate.lexical_score);
         entry.semantic_score = entry.semantic_score.max(candidate.semantic_score);
         entry.structured_score = entry.structured_score.max(candidate.structured_score);
@@ -1703,10 +1907,26 @@ pub fn build_vault_context(
         .into_values()
         .map(|candidate| {
             let route_multiplier = match route.as_str() {
-                "semantic" => 0.55 * candidate.semantic_score + 0.25 * candidate.lexical_score + 0.20 * candidate.structured_score,
-                "structured" => 0.55 * candidate.structured_score + 0.30 * candidate.lexical_score + 0.15 * candidate.semantic_score,
-                "keyword" => 0.65 * candidate.lexical_score + 0.20 * candidate.structured_score + 0.15 * candidate.semantic_score,
-                _ => 0.40 * candidate.semantic_score + 0.35 * candidate.lexical_score + 0.25 * candidate.structured_score,
+                "semantic" => {
+                    0.55 * candidate.semantic_score
+                        + 0.25 * candidate.lexical_score
+                        + 0.20 * candidate.structured_score
+                }
+                "structured" => {
+                    0.55 * candidate.structured_score
+                        + 0.30 * candidate.lexical_score
+                        + 0.15 * candidate.semantic_score
+                }
+                "keyword" => {
+                    0.65 * candidate.lexical_score
+                        + 0.20 * candidate.structured_score
+                        + 0.15 * candidate.semantic_score
+                }
+                _ => {
+                    0.40 * candidate.semantic_score
+                        + 0.35 * candidate.lexical_score
+                        + 0.25 * candidate.structured_score
+                }
             };
             let score = route_multiplier * 1.05;
             let summary = if candidate.chunk_summary.trim().is_empty() {
@@ -1728,7 +1948,11 @@ pub fn build_vault_context(
         })
         .collect::<Vec<_>>();
 
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     hits.truncate(max_hits.max(1));
 
     let prompt_lines = hits
@@ -1820,7 +2044,9 @@ fn collect_top_apps(
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![start_ts, end_ts, limit], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map(params![start_ts, end_ts, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|row| row.ok()).collect())
 }
@@ -1841,7 +2067,9 @@ fn collect_recent_chat_snippets(
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![start_ts, end_ts, limit], |row| row.get::<_, String>(0))
+        .query_map(params![start_ts, end_ts, limit], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|e| e.to_string())?;
     Ok(rows
         .filter_map(|row| row.ok())
@@ -1866,7 +2094,9 @@ fn collect_diary_snippets(
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![start_ts, end_ts, limit], |row| row.get::<_, String>(0))
+        .query_map(params![start_ts, end_ts, limit], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|e| e.to_string())?;
     Ok(rows
         .filter_map(|row| row.ok())
@@ -1892,20 +2122,31 @@ fn collect_file_projects(
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![start_ts, end_ts, limit], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map(params![start_ts, end_ts, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|row| row.ok()).collect())
 }
 
-fn count_for_range(conn: &Connection, table: &str, column: &str, start_ts: i64, end_ts: i64) -> Result<i64, String> {
-    let sql = format!(
-        "SELECT COUNT(*) FROM {table} WHERE {column} >= ?1 AND {column} < ?2"
-    );
+fn count_for_range(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<i64, String> {
+    let sql = format!("SELECT COUNT(*) FROM {table} WHERE {column} >= ?1 AND {column} < ?2");
     conn.query_row(&sql, params![start_ts, end_ts], |row| row.get(0))
         .map_err(|e| e.to_string())
 }
 
-fn build_daily_summary_for_day(conn: &Connection, date_key: &str, start_ts: i64, end_ts: i64) -> Result<(), String> {
+fn build_daily_summary_for_day(
+    conn: &Connection,
+    date_key: &str,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<(), String> {
     let top_apps = collect_top_apps(conn, start_ts, end_ts, 5)?;
     let chat_count = count_for_range(conn, "chat_messages", "created_at", start_ts, end_ts)?;
     let diary_count = count_for_range(conn, "diary_entries", "updated_at", start_ts, end_ts)?;
@@ -1980,7 +2221,12 @@ fn build_daily_summary_for_day(conn: &Connection, date_key: &str, start_ts: i64,
     Ok(())
 }
 
-fn build_weekly_summary_for_week(conn: &Connection, week_key: &str, start_ts: i64, end_ts: i64) -> Result<(), String> {
+fn build_weekly_summary_for_week(
+    conn: &Connection,
+    week_key: &str,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<(), String> {
     let top_apps = collect_top_apps(conn, start_ts, end_ts, 6)?;
     let chat_count = count_for_range(conn, "chat_messages", "created_at", start_ts, end_ts)?;
     let diary_count = count_for_range(conn, "diary_entries", "updated_at", start_ts, end_ts)?;
@@ -2076,7 +2322,9 @@ fn refresh_recent_rollups(app: &AppHandle) -> Result<(), String> {
 
     for weeks_ago in 0..16i64 {
         let anchor = Utc::now().timestamp() - (weeks_ago * 7 * 86_400);
-        let Some(local_dt) = chrono::DateTime::from_timestamp(anchor, 0).map(|dt| dt.with_timezone(&Local)) else {
+        let Some(local_dt) =
+            chrono::DateTime::from_timestamp(anchor, 0).map(|dt| dt.with_timezone(&Local))
+        else {
             continue;
         };
         let weekday = local_dt.weekday().num_days_from_monday() as i64;
@@ -2084,7 +2332,11 @@ fn refresh_recent_rollups(app: &AppHandle) -> Result<(), String> {
         let Some(start_naive) = start_date.and_hms_opt(0, 0, 0) else {
             continue;
         };
-        let Some(start_ts) = Local.from_local_datetime(&start_naive).single().map(|dt| dt.timestamp()) else {
+        let Some(start_ts) = Local
+            .from_local_datetime(&start_naive)
+            .single()
+            .map(|dt| dt.timestamp())
+        else {
             continue;
         };
         let end_ts = start_ts + (7 * 86_400);
@@ -2101,7 +2353,10 @@ pub fn start_rollup_worker(app_handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             let worker_handle = app_handle.clone();
-            let result = tauri::async_runtime::spawn_blocking(move || refresh_recent_rollups(&worker_handle)).await;
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                refresh_recent_rollups(&worker_handle)
+            })
+            .await;
             if let Ok(Err(error)) = result {
                 eprintln!("[retrieval] rollup refresh failed: {error}");
             } else if let Err(error) = result {

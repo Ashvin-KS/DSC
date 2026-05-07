@@ -19,14 +19,16 @@ pub fn open(app: &tauri::AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
     // Performance-critical PRAGMAs — applied on every connection open
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode=WAL;
         PRAGMA foreign_keys=ON;
         PRAGMA synchronous=NORMAL;
         PRAGMA cache_size=-8000;
         PRAGMA temp_store=MEMORY;
         PRAGMA mmap_size=268435456;
-    ")
+    ",
+    )
     .map_err(|e| e.to_string())?;
     Ok(conn)
 }
