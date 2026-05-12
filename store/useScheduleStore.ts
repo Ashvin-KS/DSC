@@ -206,6 +206,7 @@ export const useScheduleStore = create<ScheduleState>()(
 
             deleteTask: async (id) => {
                 const task = get().tasks.find(t => t.id === id);
+                const previousTasks = get().tasks;
 
                 set((state) => ({
                     tasks: state.tasks.filter((t) => t.id !== id),
@@ -222,6 +223,7 @@ export const useScheduleStore = create<ScheduleState>()(
                     } catch (e) {
                         console.error("Failed to delete Google Task:", e);
                         const message = e instanceof Error ? e.message : String(e);
+                        set({ tasks: previousTasks });
                         set({ googleStatusMessage: `Failed to delete Google task: ${message}` });
                     }
                 }
@@ -229,6 +231,7 @@ export const useScheduleStore = create<ScheduleState>()(
 
             completeTask: async (id) => {
                 const task = get().tasks.find(t => t.id === id);
+                const previousTasks = get().tasks;
 
                 // Optimistically remove from list
                 set((state) => ({
@@ -248,6 +251,7 @@ export const useScheduleStore = create<ScheduleState>()(
                     } catch (e) {
                         console.error("Failed to complete Google Task:", e);
                         const message = e instanceof Error ? e.message : String(e);
+                        set({ tasks: previousTasks });
                         set({ googleStatusMessage: `Failed to complete Google task: ${message}` });
                     }
                 }
@@ -326,6 +330,7 @@ export const useScheduleStore = create<ScheduleState>()(
 
             deleteEvent: async (id, syncToGoogle = false) => {
                 const event = get().events.find(e => e.id === id);
+                const previousEvents = get().events;
 
                 set((state) => ({
                     events: state.events.filter((e) => e.id !== id),
@@ -340,6 +345,7 @@ export const useScheduleStore = create<ScheduleState>()(
                     } catch (e) {
                         console.error("Failed to delete Google event:", e);
                         const message = e instanceof Error ? e.message : String(e);
+                        set({ events: previousEvents });
                         set({ googleStatusMessage: `Failed to delete Google Calendar event: ${message}` });
                     }
                 }
@@ -490,6 +496,11 @@ export const useScheduleStore = create<ScheduleState>()(
         }),
         {
             name: 'schedule-storage',
+            partialize: (state) => ({
+                tasks: state.tasks,
+                events: state.events,
+                isGoogleConnected: state.isGoogleConnected,
+            }),
         }
     )
 );

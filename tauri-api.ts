@@ -149,6 +149,8 @@ export function initAtheletiaApi() {
         return true;
       },
       search: (query: string) => invoke<any[]>('music_search', { query }),
+      getMusicHistory: (startTime: number, endTime: number, limit?: number) =>
+        invoke<string[]>('get_music_history', { startTime, endTime, limit: limit ?? 1000 }),
       getPlaylists: () => invoke<any[]>('music_get_playlists'),
       savePlaylists: (playlists: any) => invoke<boolean>('music_save_playlists', { playlists }),
       getLibrary: () => invoke<any>('music_get_library'),
@@ -171,8 +173,9 @@ export function initAtheletiaApi() {
         timeRange?: string,
         selectedSources?: string[],
         _unused?: string[],
-        apiKey?: string
-      ) => invoke<any>('send_chat_message', { sessionId, message, model, provider, timeRange, selectedSources, apiKey }),
+        apiKey?: string,
+        requestId?: number
+      ) => invoke<any>('send_chat_message', { sessionId, message, model, provider, timeRange, selectedSources, apiKey, requestId }),
       cancelChat: () => invoke<boolean>('cancel_chat'),
       startActivityTracker: () => invoke<boolean>('start_activity_tracker'),
       getDashboardOverview: (refresh?: boolean) => invoke<any>('dashboard_get_overview', { refresh }),
@@ -296,6 +299,7 @@ declare global {
       music?: {
         openWindow: () => Promise<boolean>;
         search: (query: string) => Promise<any[]>;
+        getMusicHistory: (startTime: number, endTime: number, limit?: number) => Promise<string[]>;
         getPlaylists: () => Promise<any[]>;
         savePlaylists: (playlists: any) => Promise<boolean>;
         getLibrary: () => Promise<{ likedSongs: any[]; recentlyPlayed: any[] }>;
@@ -308,7 +312,7 @@ declare global {
         createChatSession: () => Promise<any>;
         deleteChatSession: (sessionId: string) => Promise<boolean>;
         getChatMessages: (sessionId: string) => Promise<any[]>;
-        sendChatMessage: (sessionId: string, message: string, model?: string, provider?: string, timeRange?: string, selectedSources?: string[], _unused?: string[], apiKey?: string) => Promise<any>;
+        sendChatMessage: (sessionId: string, message: string, model?: string, provider?: string, timeRange?: string, selectedSources?: string[], _unused?: string[], apiKey?: string, requestId?: number) => Promise<any>;
         cancelChat: () => Promise<boolean>;
         startActivityTracker: () => Promise<boolean>;
 

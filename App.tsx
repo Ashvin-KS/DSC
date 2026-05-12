@@ -20,6 +20,7 @@ const BrainView = React.lazy(() => import('./views/BrainView').then(m => ({ defa
 const ScheduleView = React.lazy(() => import('./views/ScheduleView').then(m => ({ default: m.ScheduleView })));
 const ZenView = React.lazy(() => import('./views/ZenView').then(m => ({ default: m.ZenView })));
 const MusicView = React.lazy(() => import('./views/MusicView').then(m => ({ default: m.MusicView })));
+const WorkoutView = React.lazy(() => import('./views/WorkoutView').then(m => ({ default: m.WorkoutView })));
 const ChatView = React.lazy(() => import('./views/ChatView').then(m => ({ default: m.ChatView })));
 const ActivityView = React.lazy(() => import('./views/ActivityView').then(m => ({ default: m.ActivityView })));
 const DiaryView = React.lazy(() => import('./views/DiaryView').then(m => ({ default: m.DiaryView })));
@@ -84,9 +85,15 @@ const App: React.FC = () => {
   // Warm Brain explorer/file cache before the Brain view is mounted.
   useEffect(() => {
     if (isTrayPanelWindow) return;
-    preloadBrainVaultCache().catch((err) => {
-      console.debug('Brain cache preload failed.', err);
-    });
+    preloadBrainVaultCache()
+      .then((result) => {
+        if (result.warnings.length > 0) {
+          console.warn('Brain cache preload completed with warnings.', result.warnings.join(' | '));
+        }
+      })
+      .catch((err) => {
+        console.warn('Brain cache preload failed.', err);
+      });
   }, [isTrayPanelWindow]);
 
   useEffect(() => {
@@ -248,6 +255,7 @@ const App: React.FC = () => {
       case 'schedule': content = <ScheduleView />; break;
       case 'zen': content = <ZenView />; break;
       case 'music': content = <MusicView />; break;
+      case 'workout': content = <WorkoutView />; break;
       case 'settings': content = <SettingsView />; break;
       default: content = null;
     }

@@ -7,6 +7,8 @@ import 'katex/dist/katex.min.css';
 import { ChevronRight, ChevronDown, Folder, FileText, FolderOpen, Edit3, Square, Send, Sparkles } from 'lucide-react';
 import { MermaidBlock } from '../../components/MermaidBlock';
 import { BrainChatOption } from '../../services/brainAiService';
+import { sanitizeAiVisibleText, VISUALIZE_INFO_RE } from '../../lib/aiText';
+import { VisualizeBlock } from '../../components/VisualizeBlock';
 
 interface FileNode {
   name: string;
@@ -118,8 +120,8 @@ const ChatInputBox: React.FC<{
   onStop: () => void;
   isLoading: boolean;
   showModeToggle?: boolean;
-  mode?: 'lecture' | 'edit';
-  onModeChange?: (mode: 'lecture' | 'edit') => void;
+  mode?: 'lecture' | 'edit' | 'mcq';
+  onModeChange?: (mode: 'lecture' | 'edit' | 'mcq') => void;
   placeholder: string;
   pendingInput?: string | null;
   onPendingInputConsumed?: () => void;
@@ -188,6 +190,12 @@ const ChatInputBox: React.FC<{
                 >
                   Edit
                 </button>
+                <button
+                  onClick={() => onModeChange?.('mcq')}
+                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors ${mode === 'mcq' ? 'bg-[#262626] text-purple-300' : 'text-gray-500 hover:text-gray-300'}`}
+                >
+                  MCQ
+                </button>
               </div>
             )}
 
@@ -227,7 +235,7 @@ interface FileTreeItemRealProps {
   onSelect: (path: string, isDirectory: boolean) => void;
   expandedFolders: Set<string>;
   toggleFolder: (path: string) => void;
-  onDrop: (sourcePath: string, targetPath: string) => void;
+  onDrop: (sourcePath: string, targetPath: string) => void | Promise<unknown>;
   onRename: (oldPath: string, newName: string) => void;
 }
 
@@ -245,13 +253,15 @@ const FileTreeItemReal: React.FC<FileTreeItemRealProps> = ({
   // Drag Handlers
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('sourcePath', node.path);
+    e.dataTransfer.setData('application/x-atheletia-path', node.path);
+    e.dataTransfer.setData('text/plain', node.path);
     e.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
     e.stopPropagation();
     if (node.isDirectory) {
+      e.preventDefault();
       setIsDragOver(true);
       e.dataTransfer.dropEffect = 'move';
     }
@@ -267,9 +277,13 @@ const FileTreeItemReal: React.FC<FileTreeItemRealProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-    const sourcePath = e.dataTransfer.getData('sourcePath');
+    const sourcePath = e.dataTransfer.getData('application/x-atheletia-path')
+      || e.dataTransfer.getData('sourcePath')
+      || e.dataTransfer.getData('text/plain');
     if (sourcePath && node.isDirectory) {
-      onDrop(sourcePath, node.path);
+      void Promise.resolve(onDrop(sourcePath, node.path)).catch((error) => {
+        console.error('Brain file drop failed:', error);
+      });
     }
   };
 
@@ -568,10 +582,8 @@ const ChatBubbleImpl: React.FC<{
   const [isThinkExpanded, setIsThinkExpanded] = React.useState(false);
   const [freeTextReply, setFreeTextReply] = React.useState('');
 
-  // Parse for <think> tags - handle attributes (e.g. <think reasoning>), both closed and unclosed blocks
-  const thinkMatchClosed = text.match(/<think[^>]*>([\s\S]*?)<\/think>/i);
-  const thinkMatchUnclosed = !thinkMatchClosed ? text.match(/<think[^>]*>([\s\S]*)/i) : null;
-  let taggedThinking = thinkMatchClosed ? thinkMatchClosed[1] : (thinkMatchUnclosed ? thinkMatchUnclosed[1] : null);
+  text = sender === 'ai' ? sanitizeAiVisibleText(text) : text;
+  let taggedThinking = null;
 
   // If this message resulted in a successfully parsed action, we completely hide the raw text.
   // We still allow 'thinkContent' if DeepSeek or others generated thoughts before acting.
@@ -636,8 +648,8 @@ const ChatBubbleImpl: React.FC<{
     }
   }
 
-  // Combine tagged and heuristic thinking
-  const thinkContent = [taggedThinking, heuristicThinking].filter(Boolean).join('\n\n').trim() || null;
+  // Hidden model reasoning is intentionally never rendered.
+  const thinkContent = null;
   const showThinkingOnlyState = sender === 'ai' && isStreaming && !cleanText && !!thinkContent;
   const containsHiddenActionMarkup = /<atheletia_(?:action_json|content)[^>]*>?/i.test(text)
     || /```json/i.test(text)
@@ -671,8 +683,8 @@ const ChatBubbleImpl: React.FC<{
         </div>
       )}
 
-      {/* Thinking Process (Collapsible) */}
-      {thinkContent && (
+      {/* Hidden model reasoning is intentionally not rendered. */}
+      {false && thinkContent && (
         <div className="w-full mb-2">
           <button
             onClick={() => setIsThinkExpanded(!isThinkExpanded)}
@@ -751,6 +763,10 @@ const ChatBubbleImpl: React.FC<{
                   em: ({ children }) => <em className="italic text-gray-400">{children}</em>,
                   code: ({ className, children, ...props }) => {
                     const codeText = flattenReactNodeText(children).replace(/\n$/, '');
+                    const lang = className?.replace('language-', '') || '';
+                    if (VISUALIZE_INFO_RE.test(lang) || lang === 'visualize-html') {
+                      return <VisualizeBlock html={codeText} />;
+                    }
                     const mermaidChart = extractMermaidChart(codeText, className);
                     if (mermaidChart) {
                       return <MermaidBlock chart={mermaidChart} />;
@@ -771,6 +787,10 @@ const ChatBubbleImpl: React.FC<{
                   },
                   pre: ({ children }) => {
                     const { className: preClassName, codeText: preCodeText } = extractPreCodePayload(children);
+                    const lang = preClassName?.replace('language-', '') || '';
+                    if (VISUALIZE_INFO_RE.test(lang) || lang === 'visualize-html') {
+                      return <VisualizeBlock html={preCodeText} />;
+                    }
                     const mermaidChart = extractMermaidChart(preCodeText, preClassName);
                     if (mermaidChart) {
                       return <MermaidBlock chart={mermaidChart} />;
@@ -797,7 +817,7 @@ const ChatBubbleImpl: React.FC<{
                   hr: () => <hr className="border-[#333] my-3" />,
                 }}
               >
-                {displayedText}
+                {displayedText.replace(/```html[ \t]+visualize/gi, '```visualize-html')}
               </ReactMarkdown>
               {(isStreaming && sender === 'ai') && (
                 <span className="inline-block w-[5px] h-[14px] ml-0.5 align-[-2px] bg-purple-400/80 rounded-sm animate-pulse" />

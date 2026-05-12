@@ -49,6 +49,7 @@ import { useFavoriteModels } from '../../hooks/useFavoriteModels';
 import { useIntentStore } from '../../store/useIntentStore';
 import { useMultiProviderModels, setStoredModelWithProvider, getStoredModelWithProvider } from '../../hooks/useMultiProviderModels';
 import { getProviderKey, resolveProviderForModel } from '../../lib/modelFetch';
+import { sanitizeAiVisibleText } from '../../lib/aiText';
 
 // Source options
 const SOURCE_OPTIONS: Array<{ id: ChatSourceId; label: string; default: boolean }> = [
@@ -140,6 +141,11 @@ interface ParsedAssistantAction {
     action: ConfirmActionPayload | null;
 }
 
+interface ChatStreamEventPayload {
+    request_id: number;
+    content: string;
+}
+
 function parseAssistantAction(content: string): ParsedAssistantAction {
     const marker = /\[\[IF_ACTION:(\{[\s\S]*\})\]\]/m;
     const match = content.match(marker);
@@ -180,10 +186,7 @@ function extractThinkingBlocks(content: string): string {
 }
 
 function mergeStreamThinkingIntoContent(content: string, streaming: string): string {
-    const thinkingBlocks = extractThinkingBlocks(streaming);
-    if (!thinkingBlocks) return content;
-    if (/<think[^>]*>/i.test(content)) return content;
-    return `${thinkingBlocks}\n\n${content}`.trim();
+    return sanitizeAiVisibleText(content || streaming);
 }
 
 /** Returns all text that comes after the last complete JSON tool-call block. */
@@ -381,31 +384,60 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         const controller = new AbortController();
         const signal = controller.signal;
         const unlisteners: Array<() => void> = [];
-        
+
         let tokenBuffer = '';
+        let tokenBufferRequestId: number | null = null;
         let flushTimeout: ReturnType<typeof setTimeout> | null = null;
+
+        const flushTokenBuffer = () => {
+            const requestId = tokenBufferRequestId;
+            const bufferedText = tokenBuffer;
+            tokenBuffer = '';
+            tokenBufferRequestId = null;
+
+            if (signal.aborted || requestId === null) return;
+            if (requestId !== activeRequestIdRef.current) return;
+            if (stoppedRequestIdsRef.current.has(requestId)) return;
+            if (bufferedText.trim().length > 0) {
+                setStreamingContent((prev) => prev + bufferedText);
+            }
+        };
         
         async function setupListener() {
-            const unlistenToken = await listen<string>('chat://token', (event) => {
+            const unlistenToken = await listen<ChatStreamEventPayload>('chat://token', (event) => {
                 if (signal.aborted) return;
-                if (stoppedRequestIdsRef.current.has(activeRequestIdRef.current)) return;
-                tokenBuffer += event.payload;
-                
+                const payload = event.payload;
+                if (!payload || typeof payload.request_id !== 'number' || typeof payload.content !== 'string') return;
+                if (payload.request_id !== activeRequestIdRef.current) return;
+                if (stoppedRequestIdsRef.current.has(payload.request_id)) return;
+
+                if (tokenBufferRequestId !== null && tokenBufferRequestId !== payload.request_id) {
+                    tokenBuffer = '';
+                }
+                tokenBufferRequestId = payload.request_id;
+                tokenBuffer += payload.content;
+
                 if (flushTimeout) clearTimeout(flushTimeout);
                 flushTimeout = setTimeout(() => {
-                    if (signal.aborted) return;
-                    if (stoppedRequestIdsRef.current.has(activeRequestIdRef.current)) return;
-                    setStreamingContent((prev) => prev + tokenBuffer);
-                    tokenBuffer = '';
+                    flushTimeout = null;
+                    flushTokenBuffer();
                 }, 30);
             });
-            const unlistenStatus = await listen<string>('chat://status', (event) => {
+            const unlistenStatus = await listen<ChatStreamEventPayload>('chat://status', (event) => {
                 if (signal.aborted) return;
-                if (stoppedRequestIdsRef.current.has(activeRequestIdRef.current)) return;
-                setAgentStatus(event.payload || '');
+                const payload = event.payload;
+                if (!payload || typeof payload.request_id !== 'number') return;
+                if (payload.request_id !== activeRequestIdRef.current) return;
+                if (stoppedRequestIdsRef.current.has(payload.request_id)) return;
+                setAgentStatus(payload.content || '');
             });
-            const unlistenDone = await listen<string>('chat://done', () => {
+            const unlistenDone = await listen<ChatStreamEventPayload>('chat://done', (event) => {
                 if (signal.aborted) return;
+                const payload = event.payload;
+                if (!payload || typeof payload.request_id !== 'number') return;
+                if (payload.request_id !== activeRequestIdRef.current) return;
+                if (stoppedRequestIdsRef.current.has(payload.request_id)) return;
+                flushTokenBuffer();
                 setAgentStatus('');
                 setDisplayedStatus('');
             });
@@ -420,6 +452,9 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         setupListener();
         return () => {
             controller.abort();
+            if (flushTimeout) {
+                clearTimeout(flushTimeout);
+            }
             unlisteners.forEach((fn) => fn());
         };
     }, []);
@@ -548,17 +583,18 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 provider,
                 overrides?.timeRange || selectedTimeRange,
                 overrides?.sources || selectedSources,
-                apiKey
+                apiKey,
+                requestId
             );
 
             // If user pressed Stop while awaiting, discard the response
             if (stoppedRequestIdsRef.current.has(requestId)) return;
 
             const { cleanedContent, action } = parseAssistantAction(response.content);
-            const finalContent = mergeStreamThinkingIntoContent(
+            const finalContent = sanitizeAiVisibleText(mergeStreamThinkingIntoContent(
                 cleanedContent || 'Please confirm the suggested scope/source update to continue.',
                 streamingContentRef.current
-            );
+            ));
             const normalizedResponse: ChatMessageType = {
                 ...response,
                 content: finalContent,
@@ -597,6 +633,8 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 setStreamingContent('');
                 setAgentStatus('');
                 setDisplayedStatus('');
+            } else {
+                stoppedRequestIdsRef.current.delete(requestId);
             }
         }
     };

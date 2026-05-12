@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import type { ChatMessage as ChatMessageType, AgentStep, ActivityRef } from '../../lib/chatTypes';
 import { formatTime } from '../../lib/chatUtils';
+import { sanitizeAiVisibleText, VISUALIZE_INFO_RE } from '../../lib/aiText';
+import { VisualizeBlock } from '../VisualizeBlock';
 import {
     ChevronDown,
     ChevronRight,
@@ -35,7 +37,7 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
     const hasSteps = message.tool_calls && message.tool_calls.length > 0;
     const hasActivities = message.activities && message.activities.length > 0;
     const { answerText, thinkingText } = splitThinkingContent(message.content);
-    const hasThinking = !isUser && thinkingText.length > 0;
+    const hasThinking = false;
     const rawAssistant = isUser ? message.content : cleanAssistantContent(answerText || message.content);
     const bubbleText = isUser ? rawAssistant : stripLeadingChainOfThought(rawAssistant).trim();
 
@@ -90,8 +92,8 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
 
             <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
 
-                {/* Thinking badge */}
-                {hasThinking && (
+                {/* Hidden model reasoning is intentionally not rendered. */}
+                {false && hasThinking && (
                     <div className="mb-1.5 w-full">
                         <button
                             onClick={() => setShowThinking((prev) => !prev)}
@@ -216,6 +218,7 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
 }
 
 function MarkdownMessage({ text }: { text: string }) {
+    const normalizedText = text.replace(/```html[ \t]+visualize/gi, '```visualize-html');
     return (
         <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -256,6 +259,10 @@ function MarkdownMessage({ text }: { text: string }) {
                 code: ({ className, children, ...props }) => {
                     const isBlock = !!className;
                     const lang = className?.replace('language-', '') ?? '';
+                    const codeText = flattenReactNodeText(children).replace(/\n$/, '');
+                    if (isBlock && (VISUALIZE_INFO_RE.test(lang) || lang === 'visualize-html')) {
+                        return <VisualizeBlock html={codeText} />;
+                    }
                     if (isBlock) {
                         return (
                             <code className="block text-xs text-gray-100 whitespace-pre-wrap font-mono" data-lang={lang} {...props as object}>
@@ -301,9 +308,17 @@ function MarkdownMessage({ text }: { text: string }) {
                 hr: () => <hr className="border-white/10 my-3" />,
             }}
         >
-            {text}
+            {normalizedText}
         </ReactMarkdown>
     );
+}
+
+function flattenReactNodeText(node: React.ReactNode): string {
+    if (node == null || typeof node === 'boolean') return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(flattenReactNodeText).join('');
+    if (React.isValidElement(node)) return flattenReactNodeText((node.props as { children?: React.ReactNode }).children);
+    return '';
 }
 
 // ─── Tool icon & color map ───
@@ -482,6 +497,7 @@ function cleanAssistantContent(content: string): string {
         text = stripToolJsonPayloads(text);
     }
     text = stripReasoningLeaks(text);
+    text = sanitizeAiVisibleText(text);
     text = text.replace(/<th\*{0,4}Answer[^>]*>/gi, '').replace(/<\/th>/gi, '');
     text = text.replace(/\n{3,}/g, '\n\n').trim();
     return text;

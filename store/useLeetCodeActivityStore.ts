@@ -246,7 +246,15 @@ export const useLeetCodeActivityStore = create<LeetCodeActivityState>()(
             }
         }),
         {
-            name: 'atheletia-leetcode-activity'
+            name: 'atheletia-leetcode-activity',
+            partialize: (state) => ({
+                currentMonthKey: state.currentMonthKey,
+                currentActivity: state.currentActivity,
+                history: state.history,
+                currentStreak: state.currentStreak,
+                longestStreak: state.longestStreak,
+                lastActivityDate: state.lastActivityDate,
+            }),
         }
     )
 );

@@ -10,6 +10,9 @@ export const ZenView: React.FC = () => {
     isPomodoroEnabled, togglePomodoro, mode, setMode,
     autoSyncMusic, toggleAutoSyncMusic
   } = useTimerStore();
+  const playlists = useMusicStore((s) => s.playlists);
+  const setActivePlaylist = useMusicStore((s) => s.setActivePlaylist);
+  const setActiveTab = useNavStore((s) => s.setActiveTab);
 
   const [dndEnabled, setDndEnabled] = useState(false);
   const [isEditingTime, setIsEditingTime] = useState(false);
@@ -163,7 +166,7 @@ export const ZenView: React.FC = () => {
           </span>
           <button
             onClick={() => {
-              useNavStore.getState().setActiveTab('music');
+              setActiveTab('music');
             }}
             className="text-xs text-accent hover:text-accent transition-colors flex items-center gap-1"
           >
@@ -171,10 +174,24 @@ export const ZenView: React.FC = () => {
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {useMusicStore.getState().playlists.slice(0, 3).map((playlist) => (
+          <button
+            onClick={() => {
+              localStorage.setItem('atheletia_music_taste_prompt', 'instrumental deep focus mix for coding and studying');
+              window.dispatchEvent(new CustomEvent('atheletia:music-taste-prompt', { detail: 'instrumental deep focus mix for coding and studying' }));
+              setActiveTab('music');
+            }}
+            className="group relative overflow-hidden rounded-xl bg-purple-500/10 border border-purple-400/20 hover:border-purple-300/50 transition-all duration-300 text-left h-32 flex flex-col justify-end p-4"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/20 via-transparent to-cyan-500/10" />
+            <div className="relative z-10">
+              <span className="text-sm font-bold text-white">AI Focus Mix</span>
+              <span className="mt-1 block text-[10px] text-purple-200 font-medium">Taste AI playlist</span>
+            </div>
+          </button>
+          {playlists.slice(0, 2).map((playlist) => (
             <button
               key={playlist.id}
-              onClick={() => useMusicStore.getState().setActivePlaylist(playlist.id)}
+              onClick={() => setActivePlaylist(playlist.id)}
               className="group relative overflow-hidden rounded-xl bg-white/5 border border-white/5 hover:border-white/20 transition-all duration-300 text-left h-32 flex flex-col justify-end p-4"
             >
               {/* Background Image */}

@@ -1,5 +1,18 @@
 import { create } from 'zustand';
 import { LS_PLAYLISTS } from '../lib/constants';
+import { useNotificationStore } from './useNotificationStore';
+
+let initialMusicStatusMessage = '';
+
+const getMusicErrorMessage = (error: unknown, fallback: string) => {
+    if (error instanceof Error && error.message.trim()) {
+        return error.message;
+    }
+    if (typeof error === 'string' && error.trim()) {
+        return error;
+    }
+    return fallback;
+};
 
 export interface Track {
     id: string;
@@ -22,6 +35,7 @@ interface MusicState {
     playlists: Playlist[];
     likedSongs: Track[];
     recentlyPlayed: Track[];
+    musicStatusMessage: string;
     queue: Track[]; // The active context array (search, liked, playlist)
     activePlaylistId: number | null;
     currentTrack: Track | null;
@@ -45,9 +59,11 @@ interface MusicState {
     setVolume: (volume: number) => void;
     toggleLike: (track: Track) => void;
     addToRecentlyPlayed: (track: Track) => void;
+    setMusicStatusMessage: (message: string) => void;
 
     // Playlist Management
     createPlaylist: (name: string) => void;
+    createPlaylistWithTracks: (name: string, tracks: Track[]) => Promise<number>;
     deletePlaylist: (id: number) => void;
     addTrackToPlaylist: (playlistId: number, track: Track) => void;
     removeTrackFromPlaylist: (playlistId: number, trackIndex: number) => void;
@@ -58,31 +74,35 @@ interface MusicState {
     clearSeek: () => void;
 }
 
-const savePlaylistsToStorage = (playlists: Playlist[]) => {
+const savePlaylistsToStorage = async (playlists: Playlist[]) => {
     localStorage.setItem(LS_PLAYLISTS, JSON.stringify(playlists));
-    if (window.atheletiaAPI?.music) {
-        window.atheletiaAPI.music.savePlaylists(playlists).catch(console.error);
+    if (window.atheletiaAPI?.music?.savePlaylists) {
+        await window.atheletiaAPI.music.savePlaylists(playlists);
     }
 };
 
 // Initial playlist migration
 const migratePlaylists = () => {
-    const current = localStorage.getItem(LS_PLAYLISTS);
-    if (!current) {
-        const legacy = localStorage.getItem('musicapp_playlists') || localStorage.getItem('allentire_playlists');
-        if (legacy) {
-            localStorage.setItem(LS_PLAYLISTS, legacy);
-            localStorage.removeItem('musicapp_playlists');
-            localStorage.removeItem('allentire_playlists');
+    try {
+        const current = localStorage.getItem(LS_PLAYLISTS);
+        if (!current) {
+            const legacy = localStorage.getItem('musicapp_playlists') || localStorage.getItem('allentire_playlists');
+            if (legacy) {
+                localStorage.setItem(LS_PLAYLISTS, legacy);
+                localStorage.removeItem('musicapp_playlists');
+                localStorage.removeItem('allentire_playlists');
+            }
         }
+    } catch (error) {
+        initialMusicStatusMessage = `Failed to migrate music playlists: ${getMusicErrorMessage(error, 'Unknown error')}`;
     }
 };
 migratePlaylists();
 
-const saveLibraryToStorage = (library: MusicLibrary) => {
+const saveLibraryToStorage = async (library: MusicLibrary) => {
     localStorage.setItem('atheletia_music_library', JSON.stringify(library));
-    if (window.atheletiaAPI?.music) {
-        window.atheletiaAPI.music.saveLibrary(library).catch(console.error);
+    if (window.atheletiaAPI?.music?.saveLibrary) {
+        await window.atheletiaAPI.music.saveLibrary(library);
     }
 };
 
@@ -113,6 +133,7 @@ export const useMusicStore = create<MusicState>((set, get) => ({
     playlists: [],
     likedSongs: initialLibrary.likedSongs,
     recentlyPlayed: initialLibrary.recentlyPlayed,
+    musicStatusMessage: initialMusicStatusMessage,
     queue: [],
     activePlaylistId: null,
     currentTrack: null,
@@ -125,6 +146,7 @@ export const useMusicStore = create<MusicState>((set, get) => ({
 
     setPlaylists: (playlists) => set({ playlists }),
     setLibrary: (library) => set({ likedSongs: library.likedSongs || [], recentlyPlayed: library.recentlyPlayed || [] }),
+    setMusicStatusMessage: (message) => set({ musicStatusMessage: message }),
 
     setActivePlaylist: (id) => {
         set({ activePlaylistId: id });
@@ -180,7 +202,7 @@ export const useMusicStore = create<MusicState>((set, get) => ({
     updateProgress: (currentTime, duration) => set({ currentTime, duration }),
     setVolume: (volume) => set({ volume }),
 
-    toggleLike: (track) => {
+    toggleLike: async (track) => {
         const { likedSongs } = get();
         const isLiked = likedSongs.some(t => t.id === track.id);
         const newLikedSongs = isLiked
@@ -188,24 +210,34 @@ export const useMusicStore = create<MusicState>((set, get) => ({
             : [...likedSongs, track];
 
         set({ likedSongs: newLikedSongs });
-        saveLibraryToStorage({ likedSongs: newLikedSongs, recentlyPlayed: get().recentlyPlayed });
+        try {
+            await saveLibraryToStorage({ likedSongs: newLikedSongs, recentlyPlayed: get().recentlyPlayed });
+            set({ musicStatusMessage: '' });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to save liked songs: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
     },
 
-    addToRecentlyPlayed: (track) => {
+    addToRecentlyPlayed: async (track) => {
         const { recentlyPlayed, likedSongs } = get();
         // Remove if it's already there to move it to the front
         const filtered = recentlyPlayed.filter(t => t.id !== track.id);
         const newRecentlyPlayed = [track, ...filtered].slice(0, 50); // Cap at 50
 
         set({ recentlyPlayed: newRecentlyPlayed });
-        saveLibraryToStorage({ likedSongs, recentlyPlayed: newRecentlyPlayed });
+        try {
+            await saveLibraryToStorage({ likedSongs, recentlyPlayed: newRecentlyPlayed });
+            set({ musicStatusMessage: '' });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to save recently played: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
     },
 
     setSeek: (time) => set({ seekTo: time }),
     clearSeek: () => set({ seekTo: null }),
 
     // Playlist Management
-    createPlaylist: (name) => {
+    createPlaylist: async (name) => {
         const newPlaylist: Playlist = {
             id: Date.now(),
             name,
@@ -213,19 +245,58 @@ export const useMusicStore = create<MusicState>((set, get) => ({
         };
         const updatedPlaylists = [...get().playlists, newPlaylist];
         set({ playlists: updatedPlaylists });
-        savePlaylistsToStorage(updatedPlaylists);
+        try {
+            await savePlaylistsToStorage(updatedPlaylists);
+            set({ musicStatusMessage: '' });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to save playlists: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
     },
 
-    deletePlaylist: (id) => {
+    createPlaylistWithTracks: async (name, tracks) => {
+        const uniqueTracks = tracks.filter((track, index, list) => (
+            track?.id && list.findIndex((candidate) => candidate.id === track.id) === index
+        ));
+        const newPlaylist: Playlist = {
+            id: Date.now(),
+            name,
+            tracks: uniqueTracks
+        };
+        const updatedPlaylists = [...get().playlists, newPlaylist];
+        set({ playlists: updatedPlaylists, activePlaylistId: newPlaylist.id });
+        if (uniqueTracks[0]) {
+            get().setTrack(uniqueTracks[0], uniqueTracks, 0);
+        }
+        try {
+            await savePlaylistsToStorage(updatedPlaylists);
+            set({ musicStatusMessage: '' });
+            useNotificationStore.getState().pushNotification({
+                type: 'success',
+                title: 'Playlist saved',
+                message: `${newPlaylist.name} has ${uniqueTracks.length} tracks.`,
+                source: 'music',
+            });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to save playlist: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
+        return newPlaylist.id;
+    },
+
+    deletePlaylist: async (id) => {
         const updatedPlaylists = get().playlists.filter(p => p.id !== id);
         set({ playlists: updatedPlaylists });
         if (get().activePlaylistId === id) {
             set({ activePlaylistId: null, currentTrack: null, isPlaying: false });
         }
-        savePlaylistsToStorage(updatedPlaylists);
+        try {
+            await savePlaylistsToStorage(updatedPlaylists);
+            set({ musicStatusMessage: '' });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to delete playlist: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
     },
 
-    addTrackToPlaylist: (playlistId, track) => {
+    addTrackToPlaylist: async (playlistId, track) => {
         const updatedPlaylists = get().playlists.map(p => {
             if (p.id === playlistId) {
                 return { ...p, tracks: [...p.tracks, track] };
@@ -233,10 +304,15 @@ export const useMusicStore = create<MusicState>((set, get) => ({
             return p;
         });
         set({ playlists: updatedPlaylists });
-        savePlaylistsToStorage(updatedPlaylists);
+        try {
+            await savePlaylistsToStorage(updatedPlaylists);
+            set({ musicStatusMessage: '' });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to add track: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
     },
 
-    removeTrackFromPlaylist: (playlistId, trackIndex) => {
+    removeTrackFromPlaylist: async (playlistId, trackIndex) => {
         const updatedPlaylists = get().playlists.map(p => {
             if (p.id === playlistId) {
                 return { ...p, tracks: p.tracks.filter((_, i) => i !== trackIndex) };
@@ -244,6 +320,11 @@ export const useMusicStore = create<MusicState>((set, get) => ({
             return p;
         });
         set({ playlists: updatedPlaylists });
-        savePlaylistsToStorage(updatedPlaylists);
+        try {
+            await savePlaylistsToStorage(updatedPlaylists);
+            set({ musicStatusMessage: '' });
+        } catch (error) {
+            set({ musicStatusMessage: `Failed to remove track: ${getMusicErrorMessage(error, 'Unknown error')}` });
+        }
     },
 }));

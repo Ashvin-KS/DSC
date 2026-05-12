@@ -49,12 +49,15 @@ import {
   Plus
 } from 'lucide-react';
 import { BrainActionType, BrainChatMessage, BrainChatOption, ParsedActionPayload, buildBrainNoteContext, buildModelConversation, inferActionContentFromResponse, isUiTranscriptNoise, parseActionPayload, sanitizeProposedMarkdown } from '../services/brainAiService';
+import { StatusBanner } from '../components/ui/StatusBanner';
 import { useIntentStore } from '../store/useIntentStore';
 import { useMultiProviderModels, getStoredModelWithProvider, setStoredModelWithProvider, inferProviderFromModel } from '../hooks/useMultiProviderModels';
 import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
 import { MermaidBlock } from '../components/MermaidBlock';
 import { buildFileTreeSignature, cacheFileContent, cacheFileTree, getCachedFileContent, getCachedFileTree, invalidateFileTreeCache } from '../lib/notesCache';
 import { ChatInputBox, FileTreeItemReal, MarkdownRenderer, ChatBubble } from './brain/BrainViewSupportComponents';
+import { McqPopup } from '../components/McqPopup';
+import { parseMcqSetFromText, useMcqStore } from '../store/useMcqStore';
 import {
   createTryHandleVaultMultiFileChainIntent,
   createTryHandleVaultFileListIntent,
@@ -74,6 +77,57 @@ import {
 } from './brain/BrainViewHandlers';
 
 import { DEFAULT_VAULT, BRAIN_LAST_MODEL_STORAGE_KEY, DEFAULT_NIM_MODEL, DEFAULT_BRAIN_SCOPE, type BrainScope, type FileNode, type VaultSearchResult, type VaultIndexProgress, type VaultPathResolution, type VaultResolveConfidence, type VaultMultiFileChainState, type MultiFileInstruction, dedupeEquivalentPaths, extractMarkdownHeadingTitles, normalizeMarkdownFileName, findNodeByPath, getParentDirectory, getDirectoryForNodePath, normalizePathForComparison, areEquivalentPaths, pathIsWithin, stripWindowsExtendedPathPrefix, isAbsoluteFilePath, joinFileSystemPath, escapeRegExp, collectDirectoryPaths, collectMarkdownPaths, getErrorMessage, sanitizeVisibleBrainResponse, isMarkdownPath, filterMarkdownTree, normalizeClarificationOptions, isExplicitWholeRewriteIntent, hasOperationIntent, hasSpecificEditTarget, isAmbiguousOperationRequest, looksLikeClarificationQuestion, isVaultPathActionIntent, isBulkVaultOpenIntent, isVaultInventoryIntent, isMultiFileVaultIntent, isMultiFileChainDoneSignal, extractVaultDestinationHint, requestsCreateAndWriteInVault, extractRequestedNoteTitle, parseMultiFileInstruction, buildMultiFileStarterMarkdown, buildBrainActionPreview, MARKDOWN_STYLES, flattenReactNodeText, normalizeMermaidChart, firstMermaidDirectiveLine, looksLikeMermaid, extractMermaidChart, extractPreCodePayload, TiptapEditor } from './brain/BrainViewShared';
+
+const getVaultStatusTone = (message: string): 'info' | 'success' | 'warning' | 'error' | 'loading' => {
+  const normalized = message.toLowerCase();
+  if (!normalized) return 'info';
+  if (normalized.includes('failed') || normalized.includes('error')) return 'error';
+  if (normalized.includes('stopped') || normalized.includes('cancelled') || normalized.includes('canceled')) return 'warning';
+  if (normalized.includes('indexing') || normalized.includes('reindex') || normalized.includes('syncing')) return 'loading';
+  if (normalized.includes('indexed') || normalized.includes('synced') || normalized.includes('created') || normalized.includes('opened') || normalized.includes('reverted') || normalized.includes('saved')) return 'success';
+  return 'info';
+};
+
+const McqResponseTools: React.FC<{
+  text: string;
+  notePath: string;
+  onSave: (set: NonNullable<ReturnType<typeof parseMcqSetFromText>>) => void;
+  onOpen: (set: NonNullable<ReturnType<typeof parseMcqSetFromText>>) => void;
+  onDelete: (setId: string) => void;
+  savedSets: { id: string; title: string; notePath?: string; topic?: string; questions: { question: string; options: string[]; answer: string; explanation?: string }[] }[];
+}> = ({ text, notePath, onSave, onOpen, onDelete, savedSets }) => {
+  const parsed = useMemo(() => parseMcqSetFromText(text, notePath), [text, notePath]);
+  if (!parsed) return null;
+
+  const savedMatch = savedSets.find((s) => s.title === parsed.title);
+
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <button
+        onClick={() => onOpen(parsed)}
+        className="rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-[11px] font-semibold text-purple-200 hover:bg-purple-500/20 transition-colors"
+      >
+        Take MCQ Quiz ({parsed.questions.length} questions)
+      </button>
+      {!savedMatch && (
+        <button
+          onClick={() => onSave(parsed)}
+          className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[11px] text-gray-400 hover:bg-white/[0.08] transition-colors"
+        >
+          Save
+        </button>
+      )}
+      {savedMatch && (
+        <button
+          onClick={() => onDelete(savedMatch.id)}
+          className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300 hover:bg-red-500/20 transition-colors"
+        >
+          Delete
+        </button>
+      )}
+    </div>
+  );
+};
 
 export const BrainView: React.FC = () => {
   const [vaultPath, setVaultPath] = useState<string>(() => {
@@ -138,7 +192,7 @@ export const BrainView: React.FC = () => {
     return localStorage.getItem('brain_vaultPath') || DEFAULT_VAULT;
   });
   const [vaultIndexProgress, setVaultIndexProgress] = useState<VaultIndexProgress | null>(null);
-  const [, setVaultStatusMessage] = useState('Vault mode can search the whole markdown vault and prepare note or folder actions from the index root.');
+  const [vaultStatusMessage, setVaultStatusMessage] = useState('');
   const storedBrainModel = getStoredModelWithProvider(BRAIN_LAST_MODEL_STORAGE_KEY);
   const [selectedModel, setSelectedModel] = useState(() => storedBrainModel?.model || localStorage.getItem(BRAIN_LAST_MODEL_STORAGE_KEY) || DEFAULT_NIM_MODEL);
   const [selectedProvider, setSelectedProvider] = useState(() => storedBrainModel?.provider || '');
@@ -159,7 +213,7 @@ export const BrainView: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [pendingRewindInput, setPendingRewindInput] = useState<string | null>(null);
   const [streamingMsgIndex, setStreamingMsgIndex] = useState<number | null>(null);
-  const [aiMode, setAiMode] = useState<'lecture' | 'edit'>('lecture');
+  const [aiMode, setAiMode] = useState<'lecture' | 'edit' | 'mcq'>('lecture');
   const [proposedAction, setProposedAction] = useState<{
     scope: BrainScope;
     type: 'insert' | 'create' | 'edit_note' | 'create_folder' | 'move_note' | 'open_note' | 'rename_note' | 'delete_item' | 'replace_selection' | 'insert_at_cursor' | 'find_and_replace' | 'replace_all';
@@ -186,6 +240,14 @@ export const BrainView: React.FC = () => {
   const activeVaultIndexRootRef = useRef<string | null>(localStorage.getItem('brain_vaultPath') || DEFAULT_VAULT);
   const pendingSubtreeSyncRef = useRef<Set<string>>(new Set());
   const modelPopupRef = useRef<HTMLDivElement>(null);
+  const allMcqSets = useMcqStore((s) => s.sets);
+  const mcqSets = useMemo(() => {
+    if (!selectedFile) return [];
+    return allMcqSets.filter((set) => set.notePath === selectedFile);
+  }, [allMcqSets, selectedFile]);
+  const saveMcqSet = useMcqStore((s) => s.saveSet);
+  const deleteMcqSet = useMcqStore((s) => s.deleteSet);
+  const [activeMcqSet, setActiveMcqSet] = useState<NonNullable<ReturnType<typeof parseMcqSetFromText>> | null>(null);
 
   // Load chat history when file changes
   useEffect(() => {
@@ -551,6 +613,7 @@ export const BrainView: React.FC = () => {
       setVaultStatusMessage(statusMessage);
     } catch (error) {
       console.error('Failed to stop vault reindex:', error);
+      setVaultStatusMessage(`Failed to stop vault indexing. ${getErrorMessage(error)}`);
     }
   }, []);
 
@@ -633,6 +696,7 @@ export const BrainView: React.FC = () => {
       } : null));
     } catch (error) {
       console.error('Manual vault reindex failed:', error);
+      setVaultStatusMessage((prev) => prev || `Manual vault reindex failed. ${getErrorMessage(error)}`);
     }
   }, [isVaultReindexing, reindexOpenedVault, stopVaultReindex]);
 
@@ -693,6 +757,7 @@ export const BrainView: React.FC = () => {
       })
       .catch((error) => {
         console.error('Incremental vault sync failed:', error);
+        setVaultStatusMessage(`Incremental vault sync failed for ${toVaultRelativePath(cleanedPath)}. ${getErrorMessage(error)}`);
       })
       .finally(() => {
         pendingSubtreeSyncRef.current.delete(syncKey);
@@ -1329,7 +1394,16 @@ export const BrainView: React.FC = () => {
     }
   };
 
-  const handleFileDrop = createHandleFileDrop({ findNodeByPath, fileTree, resolveVaultTargetPath, isMarkdownPath, resolveVaultDestinationDirectory, getParentDirectory, areEquivalentPaths, invalidateFileTreeCache, vaultPath, syncVaultSubtreeInBackground, loadFileTree, selectedFile, openFile });
+  const runFileDrop = createHandleFileDrop({ findNodeByPath, fileTree, resolveVaultTargetPath, isMarkdownPath, resolveVaultDestinationDirectory, getParentDirectory, areEquivalentPaths, pathIsWithin, invalidateFileTreeCache, vaultPath, syncVaultSubtreeInBackground, loadFileTree, selectedFile, openFile });
+  const handleFileDrop = async (sourcePath: string, targetPath: string) => {
+    const result = await runFileDrop(sourcePath, targetPath);
+    if (result.success) {
+      setVaultStatusMessage(result.newPath ? `Moved to ${toVaultRelativePath(result.newPath)}.` : 'Moved item.');
+    } else if (result.error) {
+      setVaultStatusMessage(result.error);
+    }
+    return result;
+  };
 
   const handleRename = async (oldPath: string, newName: string) => {
     if (!window.atheletiaAPI?.notes) return;
@@ -1353,6 +1427,7 @@ export const BrainView: React.FC = () => {
       }
     } else {
       console.error('Rename failed:', result.error);
+      setVaultStatusMessage(`Rename failed. ${result.error || 'Unknown rename failure.'}`);
     }
   };
 
@@ -1373,6 +1448,7 @@ export const BrainView: React.FC = () => {
     }
     window.atheletiaAPI?.settings?.brainCancelStream?.().catch((error: unknown) => {
       console.error('Failed to cancel Brain stream:', error);
+      setVaultStatusMessage(`Failed to cancel Brain stream. ${getErrorMessage(error)}`);
     });
     setStreamingMsgIndex(null);
     setIsAiLoading(false);
@@ -1432,7 +1508,7 @@ export const BrainView: React.FC = () => {
   });
 
   // Handle Revert
-  const handleRevertAction = createHandleRevertAction({ previousContent, selectedFile, syncVaultSubtreeInBackground, setFileContent, setEditContent, isEditing, editorRef, setAiMessages, setPreviousContent });
+  const handleRevertAction = createHandleRevertAction({ previousContent, selectedFile, syncVaultSubtreeInBackground, setFileContent, setEditContent, isEditing, editorRef, setAiMessages, setPreviousContent, setVaultStatusMessage });
 
   // Sidebar States
   const [isExplorerOpen, setIsExplorerOpen] = useState(true);
@@ -1618,6 +1694,24 @@ export const BrainView: React.FC = () => {
                 ? `Indexing ${vaultIndexProgress.processed_files}/${vaultIndexProgress.total_files}`
                 : 'Indexing markdown vault...'}
             </div>
+          </div>
+        )}
+
+        {vaultStatusMessage && (
+          <div className="px-4 pt-3">
+            <StatusBanner
+              tone={getVaultStatusTone(vaultStatusMessage)}
+              title="Brain status"
+              message={vaultStatusMessage}
+              action={
+                <button
+                  onClick={() => setVaultStatusMessage('')}
+                  className="rounded-md border border-white/10 px-2.5 py-1 text-xs text-gray-200 hover:bg-white/5"
+                >
+                  Dismiss
+                </button>
+              }
+            />
           </div>
         )}
 
@@ -1922,9 +2016,48 @@ export const BrainView: React.FC = () => {
 
           <div className="flex-1 flex flex-col px-5 pb-4 pt-3 overflow-hidden">
             {brainScope === 'note' && selectedFile && (
-              <div className="mb-2 flex items-center gap-2 rounded border border-[#2f2f2f] bg-[#101010] px-2 py-1.5 text-[11px] text-gray-300">
-                <FileText size={11} className="text-cyan-400 shrink-0" />
-                <span className="truncate">{selectedFile.split(/[/\\]/).pop()}</span>
+              <div className="mb-2 space-y-2">
+                <div className="flex items-center gap-2 rounded border border-[#2f2f2f] bg-[#101010] px-2 py-1.5 text-[11px] text-gray-300">
+                  <FileText size={11} className="text-cyan-400 shrink-0" />
+                  <span className="truncate">{selectedFile.split(/[/\\]/).pop()}</span>
+                </div>
+                {mcqSets.length > 0 && (
+                  <div className="rounded border border-purple-500/20 bg-purple-950/10 px-2 py-2">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300">Saved MCQs</span>
+                      <span className="text-[10px] text-gray-500">{mcqSets.length} set{mcqSets.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {mcqSets.map((set) => (
+                        <div
+                          key={set.id}
+                          className="flex items-center gap-2 rounded-md border border-purple-500/20 bg-[#141018] px-2 py-1.5"
+                        >
+                          <button
+                            onClick={() => setActiveMcqSet({
+                              title: set.title,
+                              topic: set.topic,
+                              notePath: set.notePath,
+                              questions: set.questions,
+                            })}
+                            className="flex-1 min-w-0 text-left text-[11px] text-gray-200 hover:text-purple-200 transition-colors"
+                            title="Click to take quiz"
+                          >
+                            <div className="truncate font-semibold">{set.title}</div>
+                            <div className="text-[10px] text-gray-500">{set.questions.length} questions</div>
+                          </button>
+                          <button
+                            onClick={() => deleteMcqSet(set.id)}
+                            className="shrink-0 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            title="Delete this MCQ set"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1937,45 +2070,80 @@ export const BrainView: React.FC = () => {
 
             {/* Chat History */}
             <div className="flex-1 overflow-y-auto flex flex-col gap-4 mb-4 pr-1 custom-scrollbar">
-              {currentMessages.map((msg, i) => (
-                <div key={i} className="group/msg relative">
-                  <ChatBubble
-                    sender={msg.sender}
-                    text={msg.text}
-                    context={msg.context}
-                    isAction={msg.isAction}
-                    options={msg.options?.length
-                      ? msg.options
-                      : undefined}
-                    onOptionSelect={msg.options?.length
-                      ? (option) => {
-                        handleChatOptionSelect(option, i, msg.questionPrompt, msg.questionId);
-                      }
-                      : undefined}
-                    allowFreeTextReply={msg.sender === 'ai' && !!msg.allowFreeTextReply}
-                    freeTextReplyPlaceholder={msg.freeTextReplyPlaceholder}
-                    onFreeTextReply={msg.sender === 'ai' && msg.allowFreeTextReply
-                      ? (reply) => {
-                        handleChatFreeTextReply(reply, i, msg.questionPrompt, msg.questionId);
-                      }
-                      : undefined}
-                    isStreaming={i === streamingMsgIndex}
-                    onStreamingDone={() => { if (i === streamingMsgIndex) setStreamingMsgIndex(null); }}
-                  />
-                  {msg.sender === 'user' && !isAiLoading && (
-                    <button
-                      onClick={() => {
-                        setPendingRewindInput(msg.text);
-                        setCurrentMessages(prev => prev.slice(0, i));
-                      }}
-                      className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-md text-gray-500 hover:text-amber-400 hover:bg-white/10 transition-all border border-transparent hover:border-white/10 shadow-sm"
-                      title="Undo — rewind to this message and edit it"
-                    >
-                      <Undo2 size={16} />
-                    </button>
-                  )}
-                </div>
-              ))}
+              {currentMessages.map((msg, i) => {
+                const isMcqStreaming = aiMode === 'mcq' && msg.sender === 'ai' && i === streamingMsgIndex;
+                const mcqParsed = msg.sender === 'ai' && brainScope === 'note' && selectedFile ? parseMcqSetFromText(msg.text, selectedFile) : null;
+                const isMcqModeMessage = aiMode === 'mcq' && msg.sender === 'ai' && brainScope === 'note' && selectedFile;
+
+                return (
+                  <div key={i} className="group/msg relative">
+                    {isMcqModeMessage ? (
+                      isMcqStreaming ? (
+                        <div className="flex items-start">
+                          <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/10 text-gray-400 rounded-2xl rounded-tl-sm border border-purple-500/10 px-3 py-2 text-sm">
+                            <span className="animate-pulse">Generating MCQs...</span>
+                          </div>
+                        </div>
+                      ) : mcqParsed ? (
+                        <div className="flex items-start">
+                          <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/10 text-gray-300 rounded-2xl rounded-tl-sm border border-purple-500/10 px-3 py-2 text-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Check size={14} className="text-purple-400" />
+                              <span className="font-semibold text-purple-200">MCQ Ready</span>
+                            </div>
+                            <div className="text-xs text-gray-400 mb-2">{mcqParsed.questions.length} questions generated for "{mcqParsed.title}"</div>
+                            <McqResponseTools text={msg.text} notePath={selectedFile} onSave={saveMcqSet} onOpen={setActiveMcqSet} onDelete={deleteMcqSet} savedSets={mcqSets} />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start">
+                          <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/10 text-gray-400 rounded-2xl rounded-tl-sm border border-purple-500/10 px-3 py-2 text-sm">
+                            <span className="animate-pulse">Processing MCQ...</span>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      <>
+                        <ChatBubble
+                          sender={msg.sender}
+                          text={msg.text}
+                          context={msg.context}
+                          isAction={msg.isAction}
+                          options={msg.options?.length
+                            ? msg.options
+                            : undefined}
+                          onOptionSelect={msg.options?.length
+                            ? (option) => {
+                              handleChatOptionSelect(option, i, msg.questionPrompt, msg.questionId);
+                            }
+                            : undefined}
+                          allowFreeTextReply={msg.sender === 'ai' && !!msg.allowFreeTextReply}
+                          freeTextReplyPlaceholder={msg.freeTextReplyPlaceholder}
+                          onFreeTextReply={msg.sender === 'ai' && msg.allowFreeTextReply
+                            ? (reply) => {
+                              handleChatFreeTextReply(reply, i, msg.questionPrompt, msg.questionId);
+                            }
+                            : undefined}
+                          isStreaming={false}
+                          onStreamingDone={() => { if (i === streamingMsgIndex) setStreamingMsgIndex(null); }}
+                        />
+                        {msg.sender === 'user' && !isAiLoading && (
+                          <button
+                            onClick={() => {
+                              setPendingRewindInput(msg.text);
+                              setCurrentMessages(prev => prev.slice(0, i));
+                            }}
+                            className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-md text-gray-500 hover:text-amber-400 hover:bg-white/10 transition-all border border-transparent hover:border-white/10 shadow-sm"
+                            title="Undo — rewind to this message and edit it"
+                          >
+                            <Undo2 size={16} />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
               {isAiLoading && currentMessages[currentMessages.length - 1]?.sender !== 'ai' && (
                 <div className="flex items-start">
                   <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/10 text-gray-400 rounded-2xl rounded-tl-sm border border-purple-500/10 px-3 py-2 text-sm">
@@ -2138,6 +2306,20 @@ export const BrainView: React.FC = () => {
             onPendingInputConsumed={() => setPendingRewindInput(null)}
           />
         </div>
+      )}
+
+      {activeMcqSet && (
+        <McqPopup
+          mcqSet={{
+            id: activeMcqSet.notePath,
+            notePath: activeMcqSet.notePath,
+            title: activeMcqSet.title,
+            topic: activeMcqSet.topic,
+            questions: activeMcqSet.questions,
+            createdAt: Date.now(),
+          }}
+          onClose={() => setActiveMcqSet(null)}
+        />
       )}
     </div>
   );

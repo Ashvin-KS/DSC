@@ -1,8 +1,172 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useMusicStore, Track } from '../store/useMusicStore';
+import { StatusBanner } from '../components/ui/StatusBanner';
+import { useIntentStore } from '../store/useIntentStore';
+import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
 
-import { Home, Search, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Repeat, Shuffle, Plus, Trash2, Music, Heart, Clock } from 'lucide-react';
+import { Home, Search, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Repeat, Shuffle, Plus, Trash2, Music, Heart, Clock, Wand2 } from 'lucide-react';
 import './MusicApp.css';
+
+const TASTE_STAGES = ['history', 'taste', 'search', 'build', 'saved'] as const;
+
+const parseJsonArray = (text: string): string[] | null => {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const raw = fenced || text;
+  const first = raw.indexOf('[');
+  const last = raw.lastIndexOf(']');
+  if (first < 0 || last <= first) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(first, last + 1));
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : null;
+  } catch {
+    return null;
+  }
+};
+
+const HISTORY_SEPARATOR_RE = /\s*(?:\u2014|\u2013|-)\s*/;
+const TASTE_HISTORY_LIMIT = 5000;
+
+const normalizeTasteEntry = (value: string): string => value.trim().toLowerCase();
+
+const collectTasteHistory = async (likedSongs: Track[], recentlyPlayed: Track[]): Promise<string[]> => {
+  const historyMap = new Map<string, string>();
+
+  const addHistoryItem = (title: string, artist = '') => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return;
+    const cleanArtist = artist.trim();
+    const key = `${cleanTitle.toLowerCase()}::${cleanArtist.toLowerCase()}`;
+    if (!historyMap.has(key)) {
+      historyMap.set(key, cleanArtist ? `${cleanTitle} - ${cleanArtist}` : cleanTitle);
+    }
+  };
+
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const history = await window.atheletiaAPI?.music?.getMusicHistory?.(0, now, TASTE_HISTORY_LIMIT);
+    if (Array.isArray(history) && history.length > 0) {
+      for (const item of history) {
+        const entry = String(item).trim();
+        if (!entry) continue;
+        const parts = entry.split(HISTORY_SEPARATOR_RE);
+        if (parts.length >= 2) {
+          addHistoryItem(parts[0].trim(), parts.slice(1).join(' - ').trim());
+        } else {
+          addHistoryItem(entry);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load music history', error);
+  }
+
+  for (const track of [...likedSongs.slice(0, 8), ...recentlyPlayed.slice(0, 12)]) {
+    addHistoryItem(track.title);
+  }
+
+  return [...historyMap.values()].slice(0, 300);
+};
+
+const TASTE_PROMPT_STOPWORDS = new Set([
+  'songs',
+  'song',
+  'music',
+  'create',
+  'make',
+  'give',
+  'playlist',
+  'playlists',
+  'mix',
+  'track',
+  'tracks',
+  'official',
+  'audio',
+  'video',
+  'lyrics',
+  'lyric',
+  'the',
+  'a',
+  'an',
+  'of',
+  'and',
+  'or',
+  'for',
+  'to',
+  'from',
+  'with',
+  'just',
+  'but',
+  'its',
+  'my',
+  'your',
+  'me',
+  'based',
+  'heard',
+  'hear',
+  'listened',
+  'listening',
+  'history',
+  'recent',
+  'all',
+  'time',
+]);
+
+const tastePromptTokens = (prompt: string): string[] =>
+  prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !TASTE_PROMPT_STOPWORDS.has(token));
+
+const rankTasteHistory = (history: string[], prompt: string): string[] => {
+  const tokens = tastePromptTokens(prompt);
+
+  if (tokens.length === 0) return [];
+
+  return history
+    .map((entry) => {
+      const lower = entry.toLowerCase();
+      const score = tokens.reduce((total, token) => total + (lower.includes(token) ? 1 : 0), 0);
+      return { entry, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.entry.localeCompare(b.entry))
+    .map((item) => item.entry);
+};
+
+const normalizeForSearchMatch = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const scoreTasteSearchResult = (track: Track, query: string): number => {
+  const title = normalizeForSearchMatch(track.title);
+  const queryText = normalizeForSearchMatch(query);
+  if (!title || !queryText) return 0;
+
+  const tokens = queryText
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !TASTE_PROMPT_STOPWORDS.has(token));
+
+  let score = 0;
+  if (title.includes(queryText) || queryText.includes(title)) score += 8;
+  for (const token of tokens) {
+    if (title.includes(token)) score += 1;
+  }
+  return score;
+};
+
+const pickBestTasteSearchResult = (tracks: Track[], query: string): Track | null => {
+  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+  const ranked = tracks
+    .map((track, index) => ({ track, index, score: scoreTasteSearchResult(track, query) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked[0]?.track || null;
+};
 
 export const MusicView: React.FC = () => {
   const {
@@ -29,11 +193,15 @@ export const MusicView: React.FC = () => {
     setVolume,
     setSeek,
     createPlaylist,
+    createPlaylistWithTracks,
     deletePlaylist,
     addTrackToPlaylist,
     removeTrackFromPlaylist,
     toggleLike,
+    musicStatusMessage,
+    setMusicStatusMessage,
   } = useMusicStore();
+  const settings = useIntentStore((s) => s.settings);
 
   const [currentView, setCurrentView] = useState('home');
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,8 +224,29 @@ export const MusicView: React.FC = () => {
   // UI state for creating playlist
   const [playlistNameInput, setPlaylistNameInput] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [tastePrompt, setTastePrompt] = useState('');
+  const [tasteStage, setTasteStage] = useState<typeof TASTE_STAGES[number] | null>(null);
+  const [tasteMessage, setTasteMessage] = useState('');
+  const [tasteBusy, setTasteBusy] = useState(false);
+  const [tasteTracks, setTasteTracks] = useState<Track[]>([]);
 
   const progressBarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const pendingPrompt = localStorage.getItem('atheletia_music_taste_prompt');
+    if (pendingPrompt) {
+      localStorage.removeItem('atheletia_music_taste_prompt');
+      setTastePrompt(pendingPrompt);
+      setCurrentView('taste');
+    }
+    const onTastePrompt = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      setTastePrompt(detail || 'Deep focus mix with instrumental tracks');
+      setCurrentView('taste');
+    };
+    window.addEventListener('atheletia:music-taste-prompt', onTastePrompt);
+    return () => window.removeEventListener('atheletia:music-taste-prompt', onTastePrompt);
+  }, []);
 
   // Search via Tauri backend to avoid CORS and ensure stability
   const handleSearch = async (e: React.FormEvent) => {
@@ -65,15 +254,17 @@ export const MusicView: React.FC = () => {
     if (!searchQuery.trim()) return;
     setLoading(true);
     setCurrentView('search');
+    setMusicStatusMessage('');
     try {
-      if (window.atheletiaAPI?.music) {
+      if (window.atheletiaAPI?.music?.search) {
         const results = await window.atheletiaAPI.music.search(searchQuery);
         setSearchResults(results);
       } else {
-        console.warn('Music API not available on this platform.');
+        setMusicStatusMessage('Music search is unavailable in this runtime.');
       }
     } catch (err) {
       console.error('Search failed', err);
+      setMusicStatusMessage(err instanceof Error ? err.message : 'Music search failed.');
     }
     setLoading(false);
   };
@@ -141,13 +332,17 @@ export const MusicView: React.FC = () => {
     e.preventDefault();
     if (!playlistSearchQuery.trim()) return;
     setIsPlaylistSearching(true);
+    setMusicStatusMessage('');
     try {
-      if (window.atheletiaAPI?.music) {
+      if (window.atheletiaAPI?.music?.search) {
         const results = await window.atheletiaAPI.music.search(playlistSearchQuery);
         setPlaylistSearchResults(results);
+      } else {
+        setMusicStatusMessage('Playlist search is unavailable in this runtime.');
       }
     } catch (err) {
       console.error('Playlist search failed', err);
+      setMusicStatusMessage(err instanceof Error ? err.message : 'Playlist search failed.');
     }
     setIsPlaylistSearching(false);
   };
@@ -158,6 +353,170 @@ export const MusicView: React.FC = () => {
       createPlaylist(playlistNameInput.trim());
       setPlaylistNameInput('');
       setShowCreateForm(false);
+    }
+  };
+
+  const handleGenerateTaste = async () => {
+    if (!tastePrompt.trim() || tasteBusy) return;
+    setTasteBusy(true);
+    setTasteTracks([]);
+    setMusicStatusMessage('');
+    const advance = (stage: typeof TASTE_STAGES[number], message: string) => {
+      setTasteStage(stage);
+      setTasteMessage(message);
+    };
+    try {
+      advance('history', 'Reading listening history');
+      const history = await collectTasteHistory(likedSongs, recentlyPlayed);
+      advance('history', `Found ${history.length} tracks in history`);
+      if (history.length === 0) {
+        throw new Error('Taste AI could not find any listened music history yet. Play a few tracks or enable media tracking, then try again.');
+      }
+      const historyMatches = rankTasteHistory(history, tastePrompt);
+      const promptTokens = tastePromptTokens(tastePrompt);
+      const historyLookup = new Map(history.map((entry) => [normalizeTasteEntry(entry), entry]));
+
+      const fuzzyLookup = (query: string): string | null => {
+        const norm = normalizeTasteEntry(query);
+        if (historyLookup.has(norm)) return historyLookup.get(norm)!;
+        for (const [key, value] of historyLookup) {
+          if (key.includes(norm) || norm.includes(key)) return value;
+        }
+        const tokens = norm.split(/\s+/).filter((t) => t.length >= 3);
+        if (tokens.length > 0) {
+          let bestMatch = '';
+          let bestScore = 0;
+          for (const [key, value] of historyLookup) {
+            const score = tokens.reduce((s, t) => s + (key.includes(t) ? 1 : 0), 0);
+            if (score > bestScore) {
+              bestScore = score;
+              bestMatch = value;
+            }
+          }
+          if (bestScore > 0) return bestMatch;
+        }
+        return null;
+      };
+
+      advance('taste', 'Asking AI for search directions');
+      let queries: string[] | null = null;
+      let suggestedName = '';
+      const model = (settings as any)?.defaultModel || (settings as any)?.ai?.model || 'meta/llama-3.3-70b-instruct';
+      const provider = resolveProviderForModel(model, (settings as any)?.defaultProvider || (settings as any)?.ai?.provider, 'nvidia');
+      
+      const getApiKeyForProvider = (settings: any, provider: string) => {
+        const key = getProviderKey(settings, provider);
+        if (key) return key;
+        const fallbacks = ['openai', 'nvidia', 'anthropic', 'groq', 'gemini'];
+        for (const p of fallbacks) {
+          const k = getProviderKey(settings, p);
+          if (k) return k;
+        }
+        return '';
+      };
+      
+      const apiKey = getApiKeyForProvider(settings as any, provider);
+      
+      if (window.atheletiaAPI?.settings?.chatCompletion && (apiKey || provider === 'local')) {
+        try {
+          const response = await window.atheletiaAPI.settings.chatCompletion(
+            model,
+            [
+              {
+                role: 'system',
+                content: 'You are a precise music curator. Given a user prompt and listening history, select only songs that appear in that history and match the prompt. Return ONLY a JSON object: {"playlist_name": "creative name", "queries": ["Song Title - Artist", ...]}. Use exact song titles and artist names from the history. Output ONLY valid JSON, no markdown.',
+              },
+              {
+                role: 'user',
+                content: `Prompt: "${tastePrompt}"\n\nBest matches from history:\n${historyMatches.slice(0, 30).join('\n') || 'None found by keyword.'}\n\nFull listening history:\n${history.slice(0, 150).join('\n') || 'No history yet.'}`,
+              },
+            ],
+            800,
+            0.5,
+            apiKey,
+            provider,
+          );
+          const text = typeof response === 'string'
+            ? response
+            : response?.choices?.[0]?.message?.content || response?.content || '';
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]);
+              queries = Array.isArray(parsed.queries)
+                ? parsed.queries
+                    .map(String)
+                    .map((entry) => fuzzyLookup(entry))
+                    .filter((entry): entry is string => Boolean(entry))
+                : null;
+              suggestedName = String(parsed.playlist_name || '').trim();
+            } catch {
+              queries = parseJsonArray(text)
+                ?.map((entry) => fuzzyLookup(entry))
+                .filter((entry): entry is string => Boolean(entry)) || null;
+            }
+          } else {
+            queries = parseJsonArray(text)
+              ?.map((entry) => fuzzyLookup(entry))
+              .filter((entry): entry is string => Boolean(entry)) || null;
+          }
+        } catch (aiError) {
+          console.warn('AI Taste generation failed, falling back to deterministic queries.', aiError);
+        }
+      }
+
+      queries = [...new Set([...(queries || []).slice(0, 25), ...historyMatches.slice(0, 25)])];
+      if (!queries || queries.length === 0) {
+        const matches = history.filter(track => promptTokens.some(kw => track.toLowerCase().includes(kw)));
+        
+        if (matches.length > 0) {
+          queries = matches.slice(0, 15);
+        } else if (promptTokens.length === 0) {
+          queries = history.slice(0, 15);
+        } else {
+          throw new Error(`I found ${history.length} listened tracks, but none matched "${tastePrompt.trim()}". Try a different language, artist, or vibe from your listening history.`);
+        }
+      }
+
+      advance('search', `Searching YouTube for ${queries.length} tracks`);
+      const found: Track[] = [];
+      const batchSize = 5;
+      for (let i = 0; i < queries.slice(0, 25).length; i += batchSize) {
+        const batch = queries.slice(i, i + batchSize);
+        const batchResults = await Promise.allSettled(
+          batch.map((query) => window.atheletiaAPI?.music?.search?.(query) || Promise.resolve([]))
+        );
+        for (let resultIndex = 0; resultIndex < batchResults.length; resultIndex += 1) {
+          const result = batchResults[resultIndex];
+          if (result.status !== 'fulfilled') continue;
+          const tracks = result.value;
+          if (!Array.isArray(tracks)) continue;
+          const track = pickBestTasteSearchResult(tracks, batch[resultIndex]);
+          if (track?.id && !found.some((item) => item.id === track.id)) {
+            found.push(track);
+          }
+        }
+        setTasteTracks([...found]);
+        if (found.length >= 25) break;
+      }
+
+      advance('build', 'Building the playlist');
+      const tracks = found.slice(0, 25);
+      if (tracks.length === 0) {
+        throw new Error('No tracks were found for that taste prompt.');
+      }
+      const name = suggestedName || `Taste AI - ${tastePrompt.trim().slice(0, 32)}`;
+      const id = await createPlaylistWithTracks(name, tracks);
+      setActivePlaylist(id);
+      play();
+      setCurrentView('playlist');
+      advance('saved', 'Saved and ready to play');
+    } catch (err) {
+      console.error('Taste AI failed', err);
+      setMusicStatusMessage(err instanceof Error ? err.message : String(err) || 'Taste AI playlist generation failed.');
+      setTasteStage(null);
+    } finally {
+      setTasteBusy(false);
     }
   };
 
@@ -181,6 +540,12 @@ export const MusicView: React.FC = () => {
                 onClick={() => { setCurrentView('search'); document.getElementById('search-input')?.focus(); }}
               >
                 <Search size={24} /> Search UI
+              </div>
+              <div
+                className={`nav-item ${currentView === 'taste' ? 'active' : ''}`}
+                onClick={() => setCurrentView('taste')}
+              >
+                <Wand2 size={24} /> Taste AI
               </div>
             </div>
 
@@ -252,6 +617,24 @@ export const MusicView: React.FC = () => {
 
           {/* MAIN VIEW */}
           <div className="main-view">
+            {musicStatusMessage && (
+              <div style={{ padding: '16px 24px 0 24px' }}>
+                <StatusBanner
+                  tone="error"
+                  title="Music action failed"
+                  message={musicStatusMessage}
+                  action={
+                    <button
+                      onClick={() => setMusicStatusMessage('')}
+                      className="rounded-md border border-red-400/30 px-2.5 py-1 text-xs text-red-100 hover:bg-red-500/15"
+                    >
+                      Dismiss
+                    </button>
+                  }
+                />
+              </div>
+            )}
+
             <div className="top-bar">
               <form onSubmit={handleSearch} className="search-container">
                 <Search size={20} color="#b3b3b3" />
@@ -265,9 +648,53 @@ export const MusicView: React.FC = () => {
               </form>
             </div>
 
-            {currentView === 'home' && (
+            {(currentView === 'home' || currentView === 'taste') && (
               <div style={{ padding: '24px' }}>
                 <h2 style={{ fontSize: '32px', marginBottom: '24px' }}>Good afternoon</h2>
+
+                <div style={{ marginBottom: '28px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.035)', borderRadius: '8px', padding: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '12px' }}>
+                    <div>
+                      <h3 style={{ fontSize: '20px', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}><Wand2 size={20} /> Taste AI</h3>
+                      <p style={{ color: '#9ca3af', margin: '4px 0 0', fontSize: '13px' }}>Prompt a vibe. It uses your all-time listened music, searches YouTube, and saves a playlist.</p>
+                    </div>
+                    <button
+                      onClick={handleGenerateTaste}
+                      disabled={tasteBusy || !tastePrompt.trim()}
+                      className="btn-add-tag"
+                      style={{ minWidth: '130px', opacity: tasteBusy || !tastePrompt.trim() ? 0.5 : 1 }}
+                    >
+                      {tasteBusy ? 'Generating' : 'Generate'}
+                    </button>
+                  </div>
+                  <input
+                    value={tastePrompt}
+                    onChange={(event) => setTastePrompt(event.target.value)}
+                    placeholder="e.g. gym drill energy, late night coding, UK indie nostalgia"
+                    style={{ width: '100%', border: '1px solid rgba(255,255,255,0.1)', background: '#111', color: '#fff', borderRadius: '6px', padding: '12px', outline: 'none' }}
+                  />
+                  {(tasteStage || tasteTracks.length > 0) && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${TASTE_STAGES.length}, minmax(0, 1fr))`, gap: '6px' }}>
+                        {TASTE_STAGES.map((stage, index) => {
+                          const currentIndex = tasteStage ? TASTE_STAGES.indexOf(tasteStage) : -1;
+                          const active = index <= currentIndex;
+                          return (
+                            <div key={stage} style={{ height: '6px', borderRadius: '999px', background: active ? '#1ed760' : 'rgba(255,255,255,0.1)' }} />
+                          );
+                        })}
+                      </div>
+                      <div style={{ marginTop: '8px', color: '#b3b3b3', fontSize: '12px' }}>{tasteMessage}</div>
+                      {tasteTracks.length > 0 && (
+                        <div style={{ marginTop: '10px', display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+                          {tasteTracks.slice(0, 8).map((track) => (
+                            <img key={track.id} src={track.thumbnail} alt="" style={{ width: '44px', height: '44px', borderRadius: '4px', objectFit: 'cover' }} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {recentlyPlayed.length > 0 && (
                   <div className="results-grid" style={{ marginBottom: '32px' }}>

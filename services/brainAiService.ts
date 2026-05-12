@@ -13,6 +13,8 @@ export type BrainActionType =
   | 'find_and_replace'
   | 'replace_all';
 
+import { buildRecentConversationContext, sanitizeAiHistoryText } from '../lib/aiText';
+
 export interface ParsedQuestionOption {
   label?: string;
   value?: string;
@@ -502,7 +504,7 @@ export const sanitizeProposedMarkdown = (content?: string, options: SanitizeOpti
   return normalizeMarkdownLayout(cleaned);
 };
 
-export const buildModelConversation = (messages: BrainChatMessage[], aiMode: 'lecture' | 'edit') => {
+export const buildModelConversation = (messages: BrainChatMessage[], aiMode: 'lecture' | 'edit' | 'mcq') => {
   const filtered = messages.filter(m => {
     if (!m.text || !m.text.trim()) return false;
     if (m.isAction) return false;
@@ -530,12 +532,12 @@ export const buildModelConversation = (messages: BrainChatMessage[], aiMode: 'le
     if (userCount >= maxUser && aiCount >= maxAi) break;
   }
 
-  return selected
-    .reverse()
-    .map(m => ({
-      role: m.sender === 'ai' ? 'assistant' : 'user',
-      content: sanitizeMessageForModel(m.text)
-    }));
+  const ordered = selected.reverse().map(m => ({
+    sender: m.sender,
+    text: sanitizeAiHistoryText(sanitizeMessageForModel(m.text)),
+  }));
+  const currentPrompt = ordered[ordered.length - 1]?.sender === 'user' ? ordered[ordered.length - 1].text : '';
+  return buildRecentConversationContext(ordered, currentPrompt, ordered.length);
 };
 
 const repairJson = (raw: string): string => {

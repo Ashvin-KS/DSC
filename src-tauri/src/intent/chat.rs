@@ -246,6 +246,44 @@ fn db_get_api_keys(conn: &rusqlite::Connection) -> Option<String> {
     })
 }
 
+fn sanitize_chat_history_text(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+    loop {
+        let lower = rest.to_lowercase();
+        let Some(start) = lower.find("<think") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start..];
+        let Some(tag_end) = after_start.find('>') else {
+            break;
+        };
+        let after_tag = &after_start[tag_end + 1..];
+        let lower_after = after_tag.to_lowercase();
+        if let Some(end) = lower_after.find("</think>") {
+            rest = &after_tag[end + "</think>".len()..];
+        } else {
+            break;
+        }
+    }
+
+    out.replace("</think>", "")
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim().to_lowercase();
+            !trimmed.starts_with("thinking process")
+                && !trimmed.starts_with("reasoning:")
+                && !trimmed.starts_with("reasoning_content")
+                && !trimmed.starts_with("\"reasoning\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 fn db_store_assistant_msg(
     conn: &rusqlite::Connection,
     session_id: &str,
@@ -341,8 +379,10 @@ pub async fn send_chat_message(
     selected_sources: Option<Vec<String>>,
     sources: Option<Vec<String>>,
     api_key: Option<String>,
+    request_id: Option<u64>,
 ) -> Result<ChatMessageResponse, String> {
     reset_chat_cancel();
+    let request_id = request_id.unwrap_or(0);
     let now = Utc::now().timestamp();
     let effective_sources = if sources.is_some() {
         sources
@@ -407,7 +447,7 @@ pub async fn send_chat_message(
         .rev()
         .map(|m| QEMessage {
             role: m.role.clone(),
-            content: m.content.clone(),
+            content: sanitize_chat_history_text(&m.content),
         })
         .collect();
 
@@ -442,6 +482,7 @@ pub async fn send_chat_message(
         &prior_qe_messages,
         time_range.as_deref(),
         effective_sources.as_deref(),
+        request_id,
     )
     .await?;
 

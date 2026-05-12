@@ -4,6 +4,21 @@ import { useMusicStore } from '../../store/useMusicStore';
 import { usePlaylistLoader } from '../../hooks/usePlaylistLoader';
 import { PLAYER_STATE } from '../../lib/constants';
 
+type YouTubePlayer = {
+    getIframe: () => HTMLIFrameElement | null;
+    playVideo: () => void;
+    pauseVideo: () => void;
+    seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+    setVolume: (volume: number) => void;
+    getDuration: () => number;
+    getCurrentTime: () => number;
+};
+
+type YouTubePlayerEvent<T = unknown> = {
+    data: T;
+    target: YouTubePlayer;
+};
+
 export const MusicEngine: React.FC = () => {
     // Store
     const {
@@ -22,21 +37,35 @@ export const MusicEngine: React.FC = () => {
         volume
     } = useMusicStore();
 
-    const playerRef = useRef<any>(null);
+    const playerRef = useRef<YouTubePlayer | null>(null);
+    const playerReadyRef = useRef(false);
     const intervalRef = useRef<number | null>(null);
 
     // Load playlists using custom hook
     usePlaylistLoader(setPlaylists, setLibrary);
 
+    useEffect(() => {
+        playerReadyRef.current = false;
+        stopTimer();
+    }, [currentTrack?.id]);
+
     // Handle Play/Pause changes from Store
     useEffect(() => {
-        if (!playerRef.current) return;
-        if (isPlaying) {
-            playerRef.current.playVideo();
-            startTimer();
-        } else {
-            playerRef.current.pauseVideo();
-            stopTimer();
+        const player = playerRef.current;
+        if (!playerReadyRef.current || !player || typeof player.getIframe !== 'function' || !player.getIframe()) {
+            return;
+        }
+
+        try {
+            if (isPlaying) {
+                player.playVideo();
+                startTimer();
+            } else {
+                player.pauseVideo();
+                stopTimer();
+            }
+        } catch (error) {
+            console.warn('Music player sync failed', error);
         }
     }, [isPlaying]);
 
@@ -56,13 +85,21 @@ export const MusicEngine: React.FC = () => {
     }, [volume]);
 
     // Player Event Handlers
-    const onPlayerReady = (event: any) => {
+    const onPlayerReady = (event: YouTubePlayerEvent) => {
         playerRef.current = event.target;
+        playerReadyRef.current = true;
         playerRef.current.setVolume(volume);
-        if (isPlaying) playerRef.current.playVideo();
+        if (isPlaying) {
+            try {
+                playerRef.current.playVideo();
+                startTimer();
+            } catch (error) {
+                console.warn('Music player autoplay failed', error);
+            }
+        }
     };
 
-    const onPlayerStateChange = (event: any) => {
+    const onPlayerStateChange = (event: YouTubePlayerEvent<number>) => {
         const duration = playerRef.current?.getDuration() || 0;
 
         // Sync duration immediately
@@ -167,7 +204,7 @@ export const MusicEngine: React.FC = () => {
         <div style={{ position: 'absolute', top: -9999, left: -9999 }}>
             <YouTube
                 videoId={currentTrack.id}
-                opts={{ height: '1', width: '1', playerVars: { autoplay: 1, controls: 0 } }}
+                opts={{ height: '1', width: '1', playerVars: { autoplay: 0, controls: 0 } }}
                 onReady={onPlayerReady}
                 onStateChange={onPlayerStateChange}
             />

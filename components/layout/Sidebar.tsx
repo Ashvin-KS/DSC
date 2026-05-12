@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   LayoutGrid, Code2, Brain, CalendarClock, Headphones, Music2,
-  MessageSquare, Activity, BookOpen, Settings2
+  MessageSquare, Activity, BookOpen, Settings2, Dumbbell
 } from 'lucide-react';
 import { useNavStore, Tab } from '../../store/useNavStore';
 
@@ -15,6 +15,7 @@ const MAIN_NAV: { id: Tab; icon: React.ElementType; label: string }[] = [
   { id: 'schedule', icon: CalendarClock, label: 'Schedule' },
   { id: 'zen', icon: Headphones, label: 'Zen Mode' },
   { id: 'music', icon: Music2, label: 'Music' },
+  { id: 'workout', icon: Dumbbell, label: 'Workout' },
 ];
 
 export const Sidebar: React.FC = () => {

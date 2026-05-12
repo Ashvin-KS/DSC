@@ -588,6 +588,7 @@ async fn synthesize_answer_from_evidence(
     scope: &TimeScope,
     steps: &[AgentStep],
     activities: &[Value],
+    request_id: u64,
 ) -> Result<String, String> {
     let mut evidence_lines: Vec<String> = Vec::new();
     for (i, step) in steps.iter().take(8).enumerate() {
@@ -611,7 +612,7 @@ async fn synthesize_answer_from_evidence(
 
     let mut out = String::new();
     let on_token = |chunk: &str| {
-        let _ = app_handle.emit("chat://token", chunk);
+        emit_chat_stream_event(app_handle, "chat://token", request_id, chunk);
     };
     let messages = vec![
         ChatMessage {
@@ -838,7 +839,6 @@ where
     }
 
     let mut buffer = String::new();
-    let mut reasoning_open = false;
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         let chunk_str = String::from_utf8_lossy(&chunk);
         buffer.push_str(&chunk_str);
@@ -851,23 +851,8 @@ where
                 if data == "[DONE]" { break; }
                 if let Ok(stream_resp) = serde_json::from_str::<ChatStreamResponse>(data) {
                     if let Some(choice) = stream_resp.choices.first() {
-                        if let Some(ref reasoning) = choice.delta.reasoning_content {
-                            if !reasoning.is_empty() {
-                                if !reasoning_open {
-                                    output_buffer.push_str("<think>");
-                                    on_token("<think>");
-                                    reasoning_open = true;
-                                }
-                                output_buffer.push_str(reasoning);
-                                on_token(reasoning);
-                            }
-                        }
+                        // Provider reasoning tokens are internal model thoughts. Never emit them.
                         if let Some(ref content) = choice.delta.content {
-                            if reasoning_open {
-                                output_buffer.push_str("</think>");
-                                on_token("</think>");
-                                reasoning_open = false;
-                            }
                             output_buffer.push_str(content);
                             on_token(content);
                         }
@@ -876,11 +861,6 @@ where
             }
         }
         buffer = last_part;
-    }
-
-    if reasoning_open {
-        output_buffer.push_str("</think>");
-        on_token("</think>");
     }
 
     Ok(())

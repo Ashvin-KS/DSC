@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   Key, Brain, Activity, HardDrive, Info, Eye, EyeOff, Save, CheckCircle, RefreshCw, Search, Loader2,
   Bell, Palette, Languages, Download, Upload, Trash2, ShieldCheck, Monitor
@@ -100,11 +100,31 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  return fallback;
+}
+
+function normalizeSettings(data?: Partial<AppSettings> | null): AppSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(data || {}),
+    colorScheme: data?.colorScheme || DEFAULT_SETTINGS.colorScheme,
+    themePreset: data?.themePreset || (data?.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
+  };
+}
+
 export const SettingsView: React.FC = () => {
   const { settings, setSettings } = useIntentStore();
   const [local, setLocal] = useState<AppSettings>(settings ?? DEFAULT_SETTINGS);
   const [activeSection, setActiveSection] = useState<SectionId>('api');
   const [isSaving, setIsSaving] = useState(false);
+  const [saveStatusMsg, setSaveStatusMsg] = useState('');
 
   const [modelSearch, setModelSearch] = useState('');
   const { groups: modelGroups, allModels: allCloudModels, loading: modelsLoading, error: modelsErrorRaw, refetch: refetchModels } = useMultiProviderModels(local);
@@ -115,6 +135,9 @@ export const SettingsView: React.FC = () => {
   const [storageMsg, setStorageMsg] = useState('');
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const initialSettingsRef = useRef(settings);
+  const settingsLoadedRef = useRef(false);
+  const lastSavedSettingsRef = useRef('');
 
   const set = <K extends keyof AppSettings>(key: K) => (val: AppSettings[K]) => setLocal((p) => ({ ...p, [key]: val }));
   const setThemePreset = (themePreset: ThemePresetId) =>
@@ -124,66 +147,80 @@ export const SettingsView: React.FC = () => {
       colorScheme: resolveColorSchemeForTheme(themePreset),
     }));
 
-  const loadStorageStats = async () => {
+  const loadStorageStats = useCallback(async () => {
     try {
-      const stats = await window.atheletiaAPI?.storage?.getStats?.();
-      if (stats) setStorageStats(stats);
-    } catch {
-      setStorageMsg('Unable to fetch storage stats.');
-    }
-  };
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        // Only load from backend if Zustand store is empty (first load)
-        // This prevents overwriting saved changes when switching tabs
-        if (!settings && window.atheletiaAPI?.settings) {
-          const data = await window.atheletiaAPI.settings.get();
-          if (data) {
-            const merged = {
-              ...DEFAULT_SETTINGS,
-              ...data,
-              colorScheme: data.colorScheme || DEFAULT_SETTINGS.colorScheme,
-              themePreset: data.themePreset || (data.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
-            };
-            setLocal(merged);
-            setSettings(merged);
-          }
-        } else if (settings) {
-          // Use existing settings from Zustand store
-          setLocal({
-            ...DEFAULT_SETTINGS,
-            ...settings,
-            colorScheme: settings.colorScheme || DEFAULT_SETTINGS.colorScheme,
-            themePreset: settings.themePreset || (settings.colorScheme === 'light' ? 'light-2026' : 'dark-2026'),
-          });
-        }
-      } catch {
-        setLocal(DEFAULT_SETTINGS);
+      if (!window.atheletiaAPI?.storage?.getStats) {
+        setStorageMsg('Storage bridge is unavailable in this runtime.');
+        return;
       }
-      await loadStorageStats();
-    };
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      const stats = await window.atheletiaAPI.storage.getStats();
+      if (stats) {
+        setStorageStats(stats);
+        setStorageMsg('');
+      }
+    } catch (error) {
+      setStorageMsg(`Unable to fetch storage stats: ${getErrorMessage(error, 'Unknown error')}`);
+    }
   }, []);
 
-  const handleSave = async () => {
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        let merged = normalizeSettings(initialSettingsRef.current);
+        if (window.atheletiaAPI?.settings?.get) {
+          const data = await window.atheletiaAPI.settings.get();
+          if (data) merged = normalizeSettings(data);
+        }
+        if (!cancelled) {
+          setLocal(merged);
+          setSettings(merged);
+          lastSavedSettingsRef.current = JSON.stringify(merged);
+        }
+      } catch (error) {
+        const fallback = normalizeSettings(initialSettingsRef.current);
+        if (!cancelled) {
+          setLocal(fallback);
+          lastSavedSettingsRef.current = JSON.stringify(fallback);
+          setSaveStatusMsg(`Unable to load saved settings: ${getErrorMessage(error, 'Unknown error')}`);
+        }
+      } finally {
+        if (!cancelled) {
+          settingsLoadedRef.current = true;
+          await loadStorageStats();
+        }
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadStorageStats, setSettings]);
+
+  const handleSave = useCallback(async () => {
     const next = { ...local, aiProvider: inferProviderFromModel(local.defaultModel || '') };
     setSettings(next);
     setIsSaving(true);
+    setSaveStatusMsg('');
     try {
-      if (window.atheletiaAPI?.settings) await window.atheletiaAPI.settings.save(next);
+      if (!window.atheletiaAPI?.settings?.save) {
+        setSaveStatusMsg('Settings saved locally, but the backend bridge is unavailable.');
+        return;
+      }
+      await window.atheletiaAPI.settings.save(next);
+      lastSavedSettingsRef.current = JSON.stringify(next);
       await loadStorageStats();
-    } catch {
-      // keep local settings
+    } catch (error) {
+      setSaveStatusMsg(`Failed to save settings: ${getErrorMessage(error, 'Unknown error')}`);
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [loadStorageStats, local, setSettings]);
 
   // Auto-save with debouncing
   useEffect(() => {
+    if (!settingsLoadedRef.current) return;
+    if (JSON.stringify(local) === lastSavedSettingsRef.current) return;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
@@ -196,7 +233,7 @@ export const SettingsView: React.FC = () => {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [local]);
+  }, [handleSave, local]);
 
   const handleClearStorage = async () => {
     if (!confirm('Clear all activity/chat/diary/dashboard data? This cannot be undone.')) return;
@@ -266,6 +303,12 @@ export const SettingsView: React.FC = () => {
 
       <div className="flex-1 overflow-y-auto px-8 py-8">
         <div className="max-w-2xl space-y-8">
+          {saveStatusMsg && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              {saveStatusMsg}
+            </div>
+          )}
+
           {activeSection === 'api' && (
             <div className="space-y-5">
               <div>

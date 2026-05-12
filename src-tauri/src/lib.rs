@@ -2370,6 +2370,8 @@ pub fn run() {
             app_toggle_tray_panel,
             // ─── Intent commands ────────────────
             intent::activity::get_activities,
+            intent::activity::get_music_history,
+            intent::activity::music_get_history,
             intent::activity::get_activity_stats,
             intent::activity::start_activity_tracker,
             intent::chat::create_chat_session,

@@ -1,5 +1,9 @@
 import { cacheFileContent, cacheFileTree, type CachedFileNode } from './notesCache';
 
+export interface BrainVaultPreloadResult {
+  warnings: string[];
+}
+
 /** No default vault path — users must configure it in Brain settings. */
 export const DEFAULT_BRAIN_VAULT = '';
 
@@ -34,17 +38,24 @@ export const filterMarkdownTree = (nodes: CachedFileNode[]): CachedFileNode[] =>
 export const getStoredBrainVaultPath = (): string =>
   localStorage.getItem(BRAIN_VAULT_STORAGE_KEY) || DEFAULT_BRAIN_VAULT;
 
-export const preloadBrainVaultCache = async (): Promise<void> => {
-  if (typeof window === 'undefined' || !window.atheletiaAPI?.notes) return;
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return fallback;
+};
+
+export const preloadBrainVaultCache = async (): Promise<BrainVaultPreloadResult> => {
+  const warnings: string[] = [];
+  if (typeof window === 'undefined' || !window.atheletiaAPI?.notes) return { warnings };
 
   const vaultPath = getStoredBrainVaultPath();
-  if (!vaultPath) return;
+  if (!vaultPath) return { warnings };
 
   try {
     const tree = await window.atheletiaAPI.notes.getFileTree(vaultPath);
     cacheFileTree(vaultPath, filterMarkdownTree(tree as CachedFileNode[]));
   } catch (error) {
-    console.debug('Brain vault preload skipped (tree):', error);
+    warnings.push(`Brain vault preload skipped (tree): ${getErrorMessage(error, 'Unknown error')}`);
   }
 
   const selectedFile = localStorage.getItem(BRAIN_SELECTED_FILE_STORAGE_KEY);
@@ -58,6 +69,8 @@ export const preloadBrainVaultCache = async (): Promise<void> => {
       cacheFileContent(selectedFile, content);
     }
   } catch (error) {
-    console.debug('Brain vault preload skipped (file):', error);
+    warnings.push(`Brain vault preload skipped (file): ${getErrorMessage(error, 'Unknown error')}`);
   }
+
+  return { warnings };
 };

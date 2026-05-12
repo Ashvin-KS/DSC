@@ -22,6 +22,7 @@ interface TimerState {
 }
 
 import { useMusicStore } from './useMusicStore';
+import { useNotificationStore } from './useNotificationStore';
 
 export const useTimerStore = create<TimerState>()((set, get) => ({
     timeLeft: 25 * 60,     // 25 minutes default
@@ -57,7 +58,12 @@ export const useTimerStore = create<TimerState>()((set, get) => ({
                     useMusicStore.getState().pause();
                 }
 
-                // Optional: Play completion sound or notification here
+                useNotificationStore.getState().pushNotification({
+                    type: 'success',
+                    title: 'Focus timer complete',
+                    message: 'Your Zen focus session finished.',
+                    source: 'zen',
+                });
             } else {
                 set({ timeLeft: current - 1 });
             }

@@ -165,6 +165,11 @@ export const useCodeStore = create<CodeState>()(
         }),
         {
             name: 'atheletia-code-store',
+            partialize: (state) => ({
+                problems: state.problems,
+                activeProblemId: state.activeProblemId,
+                selectedCategory: state.selectedCategory,
+            }),
         }
     )
 );

@@ -518,8 +518,12 @@ Output rules:
               ? 'User selected text in editor. Prefer replace_selection.'
               : 'User selected text in rendered view. Prefer find_and_replace with exact raw markdown target_text.')
             : 'No explicit selection. Use insert_at_cursor for additions; use replace_all only for full rewrites.'}`
+          : aiMode === 'mcq'
+            ? `You are Atheletia AI in MCQ MODE.\n\nUse the provided note context, active selection first, to generate problem-based multiple-choice questions. If the user asks a follow-up like "explain each", "answers", or "continue", use the immediately previous MCQ set in the conversation.\n\nOutput clean markdown for the user. Also include one parseable JSON block at the end wrapped exactly in <atheletia_mcq_json>...</atheletia_mcq_json> with this shape:\n{\n  "title": "MCQ set title",\n  "topic": "topic",\n  "questions": [\n    { "question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "answer": "B", "explanation": "...", "source": "heading or snippet" }\n  ]\n}\n\nNever reveal hidden reasoning. Use markdown tables/lists where helpful.`
           : `You are Atheletia AI, a teaching assistant with an orchestration layer.\n\nMODE:\nLECTURE MODE: teach only.\n\nYou are given cleaned note context built from the current note only. Use the ACTIVE SELECTION first when it exists and do not drift to older unrelated chat or note content.\n\nOutput rules:\n- Explain and teach in plain markdown.\n- Do NOT output any JSON object.\n- Do NOT output <atheletia_action_json> or <atheletia_content> tags.\n- Do NOT propose file edits, replacements, or apply/discard style actions.\n- Keep the response instructional, concrete, and structured.`;
       }
+
+      systemPrompt += `\n\nVisualize mode:\n- If the user asks to visualize, diagram, simulate, render, make interactive, or create a visual preview, output a fenced block that starts exactly with \`\`\`html visualize.\n- The block must contain self-contained HTML/CSS/JS suitable for a sandboxed preview.\n- Keep normal prose as markdown outside the block.\n- Do not treat ordinary HTML from notes as a live preview unless it is inside that exact fenced visualize block.`;
 
       const buildMessages = () => {
         const convoContext = buildModelConversation(currentMessages, brainScope === 'note' ? aiMode : 'lecture');
@@ -580,7 +584,7 @@ Output rules:
         aiResponse = 'Sorry, I could not generate a response.';
       }
       const visibleAiResponse = sanitizeVisibleBrainResponse(aiResponse);
-      const finalMessageText = aiResponse.trim() ? aiResponse : visibleAiResponse;
+      const finalMessageText = visibleAiResponse || (aiResponse.trim() ? sanitizeVisibleBrainResponse(aiResponse) : '');
       const fallbackVisibleResponse = brainScope === 'vault'
         ? 'I can help with your vault. What would you like to do?'
         : 'I can help with this note. What would you like to do?';
@@ -1998,6 +2002,7 @@ export const createHandleFileDrop =
       resolveVaultDestinationDirectory,
       getParentDirectory,
       areEquivalentPaths,
+      pathIsWithin,
       invalidateFileTreeCache,
       vaultPath,
       syncVaultSubtreeInBackground,
@@ -2012,6 +2017,7 @@ export const createHandleFileDrop =
 
     let resolvedSourcePath = sourcePath;
     const sourceNode = findNodeByPath(fileTree, sourcePath);
+    const sourceIsDirectory = Boolean(sourceNode?.isDirectory);
 
     if (!sourceNode || !sourceNode.isDirectory) {
       const resolved = await resolveVaultTargetPath(sourcePath, targetPath);
@@ -2027,11 +2033,34 @@ export const createHandleFileDrop =
     }
 
     const destinationDir = resolveVaultDestinationDirectory(targetPath);
+    if (!areEquivalentPaths(destinationDir, vaultPath)) {
+      const destinationNode = findNodeByPath(fileTree, destinationDir);
+      if (!destinationNode || !destinationNode.isDirectory) {
+        return { success: false, error: 'Drop target must be a folder inside the vault.' };
+      }
+    }
+
+    if (!areEquivalentPaths(resolvedSourcePath, vaultPath) && !pathIsWithin(resolvedSourcePath, vaultPath)) {
+      return { success: false, error: 'Source must be inside the current Brain vault.' };
+    }
+    if (!areEquivalentPaths(destinationDir, vaultPath) && !pathIsWithin(destinationDir, vaultPath)) {
+      return { success: false, error: 'Destination must be inside the current Brain vault.' };
+    }
+    if (sourceIsDirectory && (areEquivalentPaths(resolvedSourcePath, destinationDir) || pathIsWithin(destinationDir, resolvedSourcePath))) {
+      return { success: false, error: 'A folder cannot be moved into itself or one of its descendants.' };
+    }
+
     const sourceParent = getParentDirectory(resolvedSourcePath);
     if (sourceParent && areEquivalentPaths(sourceParent, destinationDir)) {
       return { success: false, error: 'Source is already in that destination folder.' };
     }
 
+    const sourceName = sourceNode?.name || resolvedSourcePath.split(/[\\/]/).filter(Boolean).pop() || '';
+    const destinationNode = findNodeByPath(fileTree, destinationDir);
+    const destinationChildren = destinationNode?.children || (areEquivalentPaths(destinationDir, vaultPath) ? fileTree : []);
+    if (sourceName && destinationChildren.some((child: any) => child.name.toLowerCase() === sourceName.toLowerCase())) {
+      return { success: false, error: `A note or folder named "${sourceName}" already exists in the destination.` };
+    }
 
     const result = await window.atheletiaAPI.notes.moveFile(resolvedSourcePath, destinationDir);
     if (result.success) {
@@ -2040,8 +2069,13 @@ export const createHandleFileDrop =
       syncVaultSubtreeInBackground(destinationDir);
       await loadFileTree(true);
 
-      if (selectedFile && areEquivalentPaths(selectedFile, resolvedSourcePath) && result.newPath) {
-        await openFile(result.newPath, true);
+      if (selectedFile && result.newPath) {
+        if (areEquivalentPaths(selectedFile, resolvedSourcePath)) {
+          await openFile(result.newPath, true);
+        } else if (sourceIsDirectory && pathIsWithin(selectedFile, resolvedSourcePath)) {
+          const suffix = selectedFile.slice(resolvedSourcePath.length);
+          await openFile(`${result.newPath}${suffix}`, true);
+        }
       }
 
       return { success: true, newPath: result.newPath };
@@ -2206,6 +2240,7 @@ export const createHandleRevertAction =
       editorRef,
       setAiMessages,
       setPreviousContent,
+      setVaultStatusMessage,
     } = deps;
 
     if (!previousContent || !selectedFile || !window.atheletiaAPI?.notes) return;
@@ -2224,5 +2259,6 @@ export const createHandleRevertAction =
       }
     } catch (err) {
       console.error('Failed to revert:', err);
+      setVaultStatusMessage?.(`Failed to revert the note. ${err instanceof Error ? err.message : String(err)}`);
     }
   };

@@ -44,6 +44,59 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+#[derive(Serialize, Clone)]
+struct ChatStreamEvent {
+    request_id: u64,
+    content: String,
+}
+
+fn emit_chat_stream_event(
+    app_handle: &tauri::AppHandle,
+    channel: &str,
+    request_id: u64,
+    content: impl Into<String>,
+) {
+    let _ = app_handle.emit(
+        channel,
+        ChatStreamEvent {
+            request_id,
+            content: content.into(),
+        },
+    );
+}
+
+fn is_follow_up_query(query: &str) -> bool {
+    let text = query.trim().to_lowercase();
+    if text.is_empty() || text.len() > 260 {
+        return false;
+    }
+    let cues = [
+        "above",
+        "previous",
+        "last",
+        "that",
+        "this",
+        "these",
+        "those",
+        "each",
+        "same",
+        "continue",
+        "explain",
+        "explanation",
+        "answer key",
+        "answers",
+        "make shorter",
+        "make longer",
+        "rewrite",
+        "format",
+        "table",
+        "mcq",
+    ];
+    let exclusions = ["today", "yesterday", "last week", "this week", "activity", "screen", "browser"];
+    cues.iter().any(|cue| text.contains(cue))
+        && !exclusions.iter().any(|cue| text.contains(cue))
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct ChatResponse {
@@ -82,6 +135,7 @@ struct ChatStreamChoice {
 struct ChatStreamDelta {
     content: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     reasoning_content: Option<String>,
 }
 
@@ -161,6 +215,7 @@ You have access to the user's activity history (apps, windows, duration, time) a
 ## Response Format
 Output JSON for tool calls: { "tool": "tool_name", "args": { ... }, "reasoning": "..." }
 Output detailed, crisp, and highly specific final answers. Use markdown (like bolding and bullet points) to make the answer easy to read.
+When the user asks to visualize, diagram, simulate, render, make interactive, or create a visual preview, include a fenced block that starts exactly with ```html visualize and contains self-contained HTML/CSS/JS for a sandboxed preview. Use normal markdown outside that block. Do not use live HTML outside that fenced visualize block.
 For final answers, include:
 - A direct answer first
 - Evidence bullets with specific app/window/title + timestamp
@@ -411,6 +466,7 @@ pub async fn run_agentic_search_with_steps_and_scope(
         &[],
         time_scope,
         None,
+        0,
     )
     .await
 }
@@ -429,6 +485,7 @@ pub async fn run_agentic_search_with_steps_and_history(
         prior_messages,
         None,
         None,
+        0,
     )
     .await
 }
@@ -440,6 +497,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     prior_messages: &[ChatMessage],
     time_scope: Option<&str>,
     selected_sources: Option<&[String]>,
+    request_id: u64,
 ) -> Result<AgentResult, String> {
     let api_key = crate::utils::config::resolve_api_key(&settings.ai.api_key);
     let model = &settings.ai.model;
@@ -523,6 +581,22 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         });
     }
 
+    if is_follow_up_query(user_query) {
+        if let Some(last_assistant) = prior_messages
+            .iter()
+            .rev()
+            .find(|msg| msg.role.eq_ignore_ascii_case("assistant") && !msg.content.trim().is_empty())
+        {
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: format!(
+                    "FOLLOW-UP ANCHOR:\nThe current user message is a short follow-up. Use the previous visible assistant answer below as the primary context. Answer from it first, and do not search or call tools unless the user clearly asks for fresh external data.\n\n{}",
+                    truncate_for_token_limit(&last_assistant.content, 6000)
+                ),
+            });
+        }
+    }
+
     let needs_broad_scope = requires_broad_scope(user_query);
     let scope_warning = if needs_broad_scope
         && (resolved_scope.id == "today"
@@ -538,7 +612,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     messages.push(ChatMessage {
         role: "user".to_string(),
         content: format!(
-            "User query: \"{}\"\nCurrent Time: {}\nSelected Time Scope: {} ({} to {})\nAlways keep retrieval strictly inside this scope unless the user asks to change it. If you need to search for people, names, or girls, use `search_ocr` with a high limit and try different keywords or no keywords at all to get all the data. If you need to search for chats, use `get_recent_ocr` with a high limit and try different apps like \"whatsapp\", \"instagram\", \"telegram\", etc.{}",
+            "User query: \"{}\"\nCurrent Time: {}\nSelected Time Scope: {} ({} to {})\nAlways keep retrieval strictly inside this scope unless the user asks to change it. If this is a follow-up, answer from the recent visible assistant response before using retrieval. If you need to search for people, names, or girls, use `search_ocr` with a high limit and try different keywords or no keywords at all to get all the data. If you need to search for chats, use `get_recent_ocr` with a high limit and try different apps like \"whatsapp\", \"instagram\", \"telegram\", etc.{}",
             user_query,
             chrono::Local::now().to_rfc3339(),
             resolved_scope.label,
@@ -625,8 +699,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
     let use_long_range_pipeline =
         should_use_long_range_pipeline(user_query, &resolved_scope, &intent);
     if use_long_range_pipeline {
-        let _ = app_handle.emit(
+        emit_chat_stream_event(
+            app_handle,
             "chat://status",
+            request_id,
             "Building long-range evidence (multi-step)...",
         );
         if let Ok((pipeline_steps, pipeline_activities, digest)) = run_long_range_summary_pipeline(
@@ -691,15 +767,17 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
 
     for turn in 0..MAX_TURNS {
         if check_chat_cancelled() {
-            let _ = app_handle.emit("chat://done", "cancelled");
+            emit_chat_stream_event(app_handle, "chat://done", request_id, "cancelled");
             return Ok(AgentResult {
                 answer: String::new(),
                 steps,
                 activities_referenced: all_activities,
             });
         }
-        let _ = app_handle.emit(
+        emit_chat_stream_event(
+            app_handle,
             "chat://status",
+            request_id,
             format!("Thinking (step {}/{})", turn + 1, MAX_TURNS),
         );
         // 1. Call LLM with streaming callback
@@ -728,7 +806,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
             if !suppress_stream {
                 let cleaned = strip_internal_stream_markup(chunk);
                 if !cleaned.trim().is_empty() {
-                    let _ = app_handle.emit("chat://token", &cleaned);
+                    emit_chat_stream_event(app_handle, "chat://token", request_id, cleaned);
                 }
             }
         };
@@ -746,7 +824,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         .await?;
 
         if check_chat_cancelled() {
-            let _ = app_handle.emit("chat://done", "cancelled");
+            emit_chat_stream_event(app_handle, "chat://done", request_id, "cancelled");
             return Ok(AgentResult {
                 answer: String::new(),
                 steps,
@@ -891,7 +969,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                         });
                         continue;
                     }
-                    let _ = app_handle.emit("chat://done", "final_answer");
+                    emit_chat_stream_event(app_handle, "chat://done", request_id, "final_answer");
                     let action_marker =
                         build_insufficient_evidence_action_marker(user_query, &resolved_scope);
                     return Ok(AgentResult {
@@ -904,7 +982,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     });
                 }
                 // Done!
-                let _ = app_handle.emit("chat://done", "final_answer");
+                emit_chat_stream_event(app_handle, "chat://done", request_id, "final_answer");
                 return Ok(AgentResult {
                     answer: normalized,
                     steps,
@@ -951,7 +1029,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                         "retry_message": user_query
                     });
 
-                    let _ = app_handle.emit("chat://done", "final_answer");
+                    emit_chat_stream_event(app_handle, "chat://done", request_id, "final_answer");
                     return Ok(AgentResult {
                         answer: format!(
                             "I can answer this more accurately after your confirmation.\n\n[[IF_ACTION:{}]]",
@@ -984,7 +1062,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                         "retry_message": user_query
                     });
 
-                    let _ = app_handle.emit("chat://done", "final_answer");
+                    emit_chat_stream_event(app_handle, "chat://done", request_id, "final_answer");
                     return Ok(AgentResult {
                         answer: format!(
                             "I need one more data source before I can continue.\n\n[[IF_ACTION:{}]]",
@@ -1003,7 +1081,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                     tool,
                     enforced_args
                 );
-                let _ = app_handle.emit("chat://status", format!("Running {}", tool));
+                emit_chat_stream_event(app_handle, "chat://status", request_id, format!("Running {}", tool));
                 // Notify frontend of agent step (tool call) start?
                 // For now, frontend just sees tokens.
 
@@ -1020,8 +1098,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                         .and_then(|v| v.as_array())
                         .map(|v| v.len())
                         .unwrap_or(0);
-                    let _ = app_handle.emit(
+                    emit_chat_stream_event(
+                        app_handle,
                         "chat://status",
+                        request_id,
                         format!("Running {} searches in parallel", parallel_count),
                     );
                     let (out, activities) = execute_parallel_search(
@@ -1043,8 +1123,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                 if !intent.wants_music {
                     all_activities.retain(|item| !is_media_activity_ref(item));
                 }
-                let _ = app_handle.emit(
+                emit_chat_stream_event(
+                    app_handle,
                     "chat://status",
+                    request_id,
                     format!(
                         "{} completed ({} referenced items)",
                         tool,
@@ -1080,7 +1162,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
                 });
 
                 if check_chat_cancelled() {
-                    let _ = app_handle.emit("chat://done", "cancelled");
+                    emit_chat_stream_event(app_handle, "chat://done", request_id, "cancelled");
                     return Ok(AgentResult {
                         answer: String::new(),
                         steps,
@@ -1091,8 +1173,10 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         }
     }
 
-    let _ = app_handle.emit(
+    emit_chat_stream_event(
+        app_handle,
         "chat://status",
+        request_id,
         "Finalizing answer from gathered evidence...",
     );
     let answer = synthesize_answer_from_evidence(
@@ -1106,6 +1190,7 @@ pub async fn run_agentic_search_with_steps_and_history_and_scope(
         &resolved_scope,
         &steps,
         &all_activities,
+        request_id,
     ).await.unwrap_or_else(|_| "I checked your activity and found partial evidence, but not enough for a fully confident answer. Ask with a specific date/app and I will give exact details.".to_string());
     Ok(AgentResult {
         answer,

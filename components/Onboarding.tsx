@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     ArrowRight, ArrowLeft, CheckCircle2, Palette, Brain, Activity,
-    BookOpen, Music, Calendar, Timer, X, Sparkles, Zap, Eye, ShieldCheck
+    BookOpen, Music, Calendar, Timer, X, Sparkles, Zap, Eye, ShieldCheck, Dumbbell
 } from 'lucide-react';
-import { useIntentStore } from '../store/useIntentStore';
+import { useIntentStore, type AppSettings } from '../store/useIntentStore';
 import { useNavStore } from '../store/useNavStore';
-import { applyThemePreset, THEME_PRESETS } from '../lib/theme';
+import { applyThemePreset, THEME_PRESETS, type ThemePresetId } from '../lib/theme';
 
 const ONBOARDED_KEY = 'atheletia_onboarded';
 
 // ─── Providers ───────────────────────────────────────────────────────────────
-const AI_PROVIDERS = [
+type AiProviderId = 'nvidia' | 'openai' | 'anthropic' | 'groq' | 'gemini';
+type AiProvider = {
+    id: AiProviderId;
+    name: string;
+    settingsKey: keyof Pick<AppSettings, 'nvidiaApiKey' | 'openaiApiKey' | 'anthropicApiKey' | 'groqApiKey' | 'geminiApiKey'>;
+    placeholder: string;
+    note: string;
+    recommended?: boolean;
+};
+
+const AI_PROVIDERS: readonly AiProvider[] = [
     { id: 'nvidia', name: 'NVIDIA NIM', settingsKey: 'nvidiaApiKey', placeholder: 'nvapi-...', note: 'Free tier available', recommended: true },
     { id: 'openai', name: 'OpenAI', settingsKey: 'openaiApiKey', placeholder: 'sk-...', note: 'GPT-4o, GPT-4 models' },
     { id: 'anthropic', name: 'Anthropic', settingsKey: 'anthropicApiKey', placeholder: 'sk-ant-...', note: 'Claude models' },
@@ -19,13 +29,15 @@ const AI_PROVIDERS = [
 ] as const;
 
 // ─── Theme previews ──────────────────────────────────────────────────────────
-const THEME_PREVIEWS = [
+type ThemePreview = { id: ThemePresetId; name: string; bg: string; accent: string; border: string };
+
+const THEME_PREVIEWS: readonly ThemePreview[] = [
     { id: 'dark-2026', name: 'Dark 2026', bg: '#101720', accent: '#5a9aff', border: '#233245' },
     { id: 'monokai', name: 'Monokai', bg: '#272822', accent: '#f92672', border: '#3a3c32' },
     { id: 'abyss', name: 'Abyss', bg: '#001122', accent: '#00b5d8', border: '#0d2943' },
     { id: 'vs-dark', name: 'VS Dark', bg: '#252526', accent: '#007acc', border: '#313135' },
     { id: 'kimbie-dark', name: 'Kimbie', bg: '#221f1e', accent: '#f8b96d', border: '#362f2a' },
-    { id: 'tomorrow-night', name: 'Tomorrow Night', bg: '#002451', accent: '#ff9d4d', border: '#173767' },
+    { id: 'tomorrow-night-blue', name: 'Tomorrow Night', bg: '#002451', accent: '#ff9d4d', border: '#173767' },
     { id: 'light-2026', name: 'Light 2026', bg: '#ffffff', accent: '#2a6bff', border: '#d7dde8' },
     { id: 'light-modern', name: 'Light Modern', bg: '#fcfdff', accent: '#0f8b8d', border: '#d4dde9' },
     { id: 'solarized-light', name: 'Solarized Light', bg: '#fdf6e3', accent: '#268bd2', border: '#d6cfbb' },
@@ -44,12 +56,12 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
     const setActiveTab = useNavStore(s => s.setActiveTab);
 
     // API key step state
-    const [selectedProvider, setSelectedProvider] = useState('nvidia');
+    const [selectedProvider, setSelectedProvider] = useState<AiProviderId>('nvidia');
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [apiKeySaved, setApiKeySaved] = useState(false);
 
     // Theme step state
-    const [selectedTheme, setSelectedTheme] = useState(settings?.themePreset || 'dark-2026');
+    const [selectedTheme, setSelectedTheme] = useState<ThemePresetId>((settings?.themePreset || 'dark-2026') as ThemePresetId);
 
     // Privacy step state (seeded from current settings)
     const [trackApps, setTrackApps] = useState(settings?.trackApps ?? true);
@@ -63,13 +75,13 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
     const isFirst = currentStep === 0;
 
     // Apply theme when selected
-    const handleThemeSelect = useCallback((themeId: string) => {
+    const handleThemeSelect = useCallback((themeId: ThemePresetId) => {
         setSelectedTheme(themeId);
         // Actually apply the theme live
-        if (THEME_PRESETS[themeId as keyof typeof THEME_PRESETS]) {
+        if (THEME_PRESETS[themeId]) {
             applyThemePreset(themeId);
             if (settings) {
-                const updated = { ...settings, themePreset: themeId };
+                const updated: AppSettings = { ...settings, themePreset: themeId };
                 setSettings(updated);
                 try { window.atheletiaAPI?.settings?.save?.(updated); } catch { /* ok */ }
             }
@@ -82,12 +94,12 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
         const provider = AI_PROVIDERS.find(p => p.id === selectedProvider);
         if (!provider || !settings) return;
 
-        const updated = {
+        const updated: AppSettings = {
             ...settings,
             [provider.settingsKey]: apiKeyInput.trim(),
         };
-        setSettings(updated as any);
-        try { window.atheletiaAPI?.settings?.save?.(updated as any); } catch { /* ok */ }
+        setSettings(updated);
+        try { window.atheletiaAPI?.settings?.save?.(updated); } catch { /* ok */ }
         setApiKeySaved(true);
         setTimeout(() => setApiKeySaved(false), 3000);
     }, [apiKeyInput, selectedProvider, settings, setSettings]);
@@ -127,6 +139,7 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
                     { icon: Music, label: 'Music Player', color: 'text-green-400' },
                     { icon: Calendar, label: 'Schedule', color: 'text-orange-400' },
                     { icon: Timer, label: 'Focus Timer', color: 'text-indigo-400' },
+                    { icon: Dumbbell, label: 'Workout', color: 'text-emerald-400' },
                 ].map(({ icon: Icon, label, color }) => (
                     <div key={label} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.07]">
                         <Icon size={14} className={color} />
@@ -238,6 +251,7 @@ const OnboardingModal: React.FC<OnboardingProps> = ({ onComplete }) => {
                 { icon: Calendar, color: 'text-green-400', bg: 'bg-green-400/10', name: 'Schedule', desc: 'Google Calendar integration + task management.' },
                 { icon: Timer, color: 'text-indigo-400', bg: 'bg-indigo-400/10', name: 'Zen / Focus', desc: 'Pomodoro timer with music sync.' },
                 { icon: Music, color: 'text-green-300', bg: 'bg-green-300/10', name: 'Music', desc: 'Built-in YouTube Music player.' },
+                { icon: Dumbbell, color: 'text-emerald-300', bg: 'bg-emerald-300/10', name: 'Workout', desc: 'Editable weekly routines, AI workout helper, and exercise tutorials.' },
             ].map(({ icon: Icon, color, bg, name, desc }) => (
                 <div key={name} className="flex items-start gap-3 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                     <div className={`w-7 h-7 rounded-lg ${bg} flex items-center justify-center flex-shrink-0 mt-0.5`}>

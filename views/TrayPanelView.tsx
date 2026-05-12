@@ -8,6 +8,7 @@ import {
   CalendarDays,
   ChevronRight,
   Clock3,
+  Dumbbell,
   Gamepad2,
   LayoutDashboard,
   MessageSquare,
@@ -19,6 +20,7 @@ import {
   SkipBack,
   SkipForward,
 } from 'lucide-react';
+import { StatusBanner } from '../components/ui/StatusBanner';
 
 type TimerMode = 'pomodoro' | 'shortBreak' | 'longBreak';
 
@@ -74,21 +76,42 @@ const modeLabel = (mode: TimerMode) => {
   return 'Pomodoro';
 };
 
+const getTrayErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return fallback;
+};
+
 export const TrayPanelView: React.FC = () => {
   const [incognito, setIncognito] = useState<{ active: boolean; remainingSeconds: number }>({ active: false, remainingSeconds: 0 });
   const [gameMode, setGameMode] = useState(false);
   const [timerState, setTimerState] = useState<TimerSnapshot>(DEFAULT_TIMER);
   const [musicState, setMusicState] = useState<MusicSnapshot>(DEFAULT_MUSIC);
   const [busy, setBusy] = useState<string | null>(null);
+  const [panelStatus, setPanelStatus] = useState<{ tone: 'warning' | 'error'; title: string; message: string } | null>(null);
 
   const refreshSystemState = useCallback(async () => {
     try {
-      const status = await window.atheletiaAPI?.app?.getIncognitoStatus?.();
+      const appBridge = window.atheletiaAPI?.app;
+      if (!appBridge?.getIncognitoStatus || !appBridge.getGameMode) {
+        setPanelStatus({
+          tone: 'warning',
+          title: 'Tray bridge unavailable',
+          message: 'Some tray controls may not work in this runtime.',
+        });
+        return;
+      }
+      const status = await appBridge.getIncognitoStatus();
       if (status) setIncognito(status);
-      const gm = await window.atheletiaAPI?.app?.getGameMode?.();
+      const gm = await appBridge.getGameMode();
       if (typeof gm === 'boolean') setGameMode(gm);
-    } catch {
-      // ignore in non-tauri or transient errors
+      setPanelStatus(null);
+    } catch (error) {
+      setPanelStatus({
+        tone: 'error',
+        title: 'Tray state unavailable',
+        message: getTrayErrorMessage(error, 'Failed to read tray state.'),
+      });
     }
   }, []);
 
@@ -147,10 +170,16 @@ export const TrayPanelView: React.FC = () => {
   }, []);
 
   const runAction = useCallback(async (key: string, fn: () => Promise<any>) => {
+    setPanelStatus(null);
     try {
       setBusy(key);
       await fn();
     } catch (error) {
+      setPanelStatus({
+        tone: 'error',
+        title: 'Tray action failed',
+        message: getTrayErrorMessage(error, `Action ${key} failed.`),
+      });
       console.error(`[tray_panel] action failed: ${key}`, error);
     } finally {
       setBusy(null);
@@ -168,20 +197,22 @@ export const TrayPanelView: React.FC = () => {
   }, [runAction]);
 
   const hidePanel = useCallback(async () => {
-    try {
-      if (window.atheletiaAPI?.app?.toggleTrayPanel) {
-        await window.atheletiaAPI.app.toggleTrayPanel();
-        return;
+    await runAction('hide-panel', async () => {
+      try {
+        if (window.atheletiaAPI?.app?.toggleTrayPanel) {
+          await window.atheletiaAPI.app.toggleTrayPanel();
+          return;
+        }
+      } catch {
+        // fallback below
       }
-    } catch {
-      // fallback below
-    }
-    try {
-      await getCurrentWindow().hide();
-    } catch {
-      // ignore
-    }
-  }, []);
+      try {
+        await getCurrentWindow().hide();
+      } catch (error) {
+        throw new Error(getTrayErrorMessage(error, 'Unable to hide the tray panel.'));
+      }
+    });
+  }, [runAction]);
 
   const controlMusic = useCallback(async (action: 'prev' | 'play_pause' | 'next') => {
     await runAction(`music-${action}`, async () => {
@@ -240,10 +271,10 @@ export const TrayPanelView: React.FC = () => {
   }, [incognito]);
 
   return (
-    <div className="h-screen w-screen text-white" style={{ background: 'var(--bg-app)', color: 'var(--text-main)' }}>
-      <div className="h-full p-3">
+    <div className="h-screen w-screen overflow-y-auto custom-scrollbar text-white" style={{ background: 'var(--bg-app)', color: 'var(--text-main)' }}>
+      <div className="min-h-full p-3">
         <div
-          className="h-full rounded-2xl p-3 flex flex-col gap-3"
+          className="min-h-full rounded-2xl p-3 flex flex-col gap-3"
           style={{
             border: '1px solid var(--border-soft)',
             background: 'linear-gradient(180deg, var(--bg-elev-1) 0%, var(--bg-canvas) 100%)',
@@ -264,6 +295,14 @@ export const TrayPanelView: React.FC = () => {
             </button>
           </div>
 
+          {panelStatus && (
+            <StatusBanner
+              tone={panelStatus.tone}
+              title={panelStatus.title}
+              message={panelStatus.message}
+            />
+          )}
+
           <div className="rounded-xl border border-[#2a2c32] bg-[#151821] p-3">
             <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-2">Quick Open</div>
             <div className="grid grid-cols-3 gap-2">
@@ -274,6 +313,7 @@ export const TrayPanelView: React.FC = () => {
                 { id: 'schedule', label: 'Schedule', icon: CalendarDays },
                 { id: 'zen', label: 'Zen', icon: AlarmClock },
                 { id: 'music', label: 'Music', icon: Play },
+                { id: 'workout', label: 'Workout', icon: Dumbbell },
               ].map((item) => (
                 <button
                   key={item.id}

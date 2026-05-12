@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, Calendar, CheckSquare, X, Code2 } from 'lucide-react';
 import { Goal } from './GoalsManager';
 
@@ -13,6 +13,12 @@ export const TaskAlerter: React.FC<TaskAlerterProps> = ({ isOpen, onClose, pendi
   const [selectedForMigration, setSelectedForMigration] = useState<number[]>(
     pendingGoals.map(g => g.id)
   );
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedForMigration(pendingGoals.map(g => g.id));
+    }
+  }, [isOpen, pendingGoals]);
 
   // Mock LeetCode Status (In a real app, this would come from props/store)
   const isLeetCodeDone = false; 

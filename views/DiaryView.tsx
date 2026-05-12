@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { BookOpen, Sparkles, PenLine, ChevronLeft, ChevronRight, Loader2, Trash2, CalendarClock, BellRing, CheckCircle2 } from 'lucide-react';
 import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
+import { StatusBanner } from '../components/ui/StatusBanner';
 
 interface DiaryEntry {
     id: string;
@@ -38,6 +39,16 @@ function addDays(dateStr: string, n: number): string {
     return d.toISOString().slice(0, 10);
 }
 
+function getDiaryErrorMessage(error: unknown, fallback: string) {
+    if (error instanceof Error && error.message.trim()) {
+        return error.message;
+    }
+    if (typeof error === 'string' && error.trim()) {
+        return error;
+    }
+    return fallback;
+}
+
 /** Auto-create key stored in localStorage to avoid duplicate auto-creation */
 const getAutoCreateKey = (date: string) => `diary_auto_created_${date}`;
 
@@ -54,6 +65,7 @@ export const DiaryView: React.FC = () => {
     const [isSavingManual, setIsSavingManual] = useState(false);
     const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     const [autoCreateMsg, setAutoCreateMsg] = useState<string | null>(null);
+    const [entryStatusMsg, setEntryStatusMsg] = useState<string | null>(null);
     const textRef = useRef<HTMLTextAreaElement>(null);
 
     // Auto-create diary setting (stored in settings via key autoCreateDiary)
@@ -109,6 +121,7 @@ export const DiaryView: React.FC = () => {
         const load = async () => {
             try {
                 if (window.atheletiaAPI?.diary) {
+                    setEntryStatusMsg(null);
                     const data: DiaryEntry[] = await window.atheletiaAPI.diary.getEntries(activeDate);
                     if (cancelled) return;
                     const dateFiltered = (data || []).filter((e: DiaryEntry) => e.date === activeDate);
@@ -116,9 +129,17 @@ export const DiaryView: React.FC = () => {
                     const latestAi = dateFiltered.find((e: DiaryEntry) => e.isAiGenerated) || null;
                     setAiSummary(latestAi);
                 } else {
-                    if (!cancelled) { setEntries([]); setAiSummary(null); }
+                    if (!cancelled) {
+                        setEntries([]);
+                        setAiSummary(null);
+                        setEntryStatusMsg('Diary backend is unavailable in this runtime.');
+                    }
                 }
-            } catch { /* offline */ }
+            } catch (error) {
+                if (!cancelled) {
+                    setEntryStatusMsg(`Unable to load diary entries: ${getDiaryErrorMessage(error, 'Unknown error')}`);
+                }
+            }
         };
         load();
         return () => { cancelled = true; };
@@ -317,8 +338,13 @@ export const DiaryView: React.FC = () => {
                 const saved = await window.atheletiaAPI.diary.saveEntry(entry);
                 setEntries(p => [saved, ...p]);
                 setNewContent('');
+                setEntryStatusMsg(null);
+            } else {
+                setEntryStatusMsg('Diary backend is unavailable in this runtime.');
             }
-        } catch { /* ignore */ }
+        } catch (error) {
+            setEntryStatusMsg(`Failed to save manual note: ${getDiaryErrorMessage(error, 'Unknown error')}`);
+        }
         finally {
             setIsSavingManual(false);
         }
@@ -332,11 +358,14 @@ export const DiaryView: React.FC = () => {
             if (entry && window.atheletiaAPI?.diary) {
                 const saved = await window.atheletiaAPI.diary.saveEntry({ ...entry, content: editContent, updatedAt: now });
                 setEntries(p => p.map(e => e.id === editingId ? saved : e));
+                setEntryStatusMsg(null);
+                setEditingId(null);
+            } else if (!window.atheletiaAPI?.diary) {
+                setEntryStatusMsg('Diary backend is unavailable in this runtime.');
             }
         } catch (e) {
-            console.error("Failed to save edit:", e);
+            setEntryStatusMsg(`Failed to save edit: ${getDiaryErrorMessage(e, 'Unknown error')}`);
         }
-        setEditingId(null);
     };
 
     const handleDelete = async (id: string) => {
@@ -345,9 +374,12 @@ export const DiaryView: React.FC = () => {
                 await window.atheletiaAPI.diary.deleteEntry(id);
                 setEntries(p => p.filter(e => e.id !== id));
                 if (aiSummary?.id === id) setAiSummary(null);
+                setEntryStatusMsg(null);
+            } else {
+                setEntryStatusMsg('Diary backend is unavailable in this runtime.');
             }
         } catch (e) {
-            console.error("Failed to delete entry:", e);
+            setEntryStatusMsg(`Failed to delete entry: ${getDiaryErrorMessage(e, 'Unknown error')}`);
         }
     };
 
@@ -383,6 +415,24 @@ export const DiaryView: React.FC = () => {
                 <div className="mx-6 md:mx-10 mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent-soft)] border border-accent/20 text-accent text-xs">
                     <CheckCircle2 size={13} />
                     {autoCreateMsg}
+                </div>
+            )}
+
+            {entryStatusMsg && (
+                <div className="mx-6 md:mx-10 mb-3">
+                    <StatusBanner
+                        tone="error"
+                        title="Diary action failed"
+                        message={entryStatusMsg}
+                        action={
+                            <button
+                                onClick={() => setEntryStatusMsg(null)}
+                                className="rounded-md border border-red-400/30 px-2.5 py-1 text-xs text-red-100 hover:bg-red-500/15"
+                            >
+                                Dismiss
+                            </button>
+                        }
+                    />
                 </div>
             )}
 

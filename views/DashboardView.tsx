@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card } from '../components/ui/Card';
 import { LeetCodeCard } from '../components/dashboard/LeetCodeCard';
 import { FitnessCard } from '../components/dashboard/FitnessCard';
@@ -8,6 +8,8 @@ import { ProjectsCard } from '../components/dashboard/ProjectsCard';
 import { DetailModal } from '../components/dashboard/DetailModal';
 import { GraduationCap, AlertTriangle, Sparkles, RefreshCw } from 'lucide-react';
 import { NewsManager } from '../components/dashboard/NewsManager';
+import { TaskAlerter } from '../components/dashboard/TaskAlerter';
+import type { Goal } from '../components/dashboard/GoalsManager';
 import { StatusBanner } from '../components/ui/StatusBanner';
 
 type ViewMode = 'grid' | 'goals' | 'news';
@@ -21,6 +23,12 @@ type ExpandedDetail = {
   body: string;
   aiSummary?: string;
   loadingSummary?: boolean;
+};
+
+const getDashboardErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return fallback;
 };
 
 const agoFromUnix = (ts?: number) => {
@@ -42,11 +50,22 @@ export const DashboardView: React.FC = () => {
   const [overview, setOverview] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [editingDeadlineTitle, setEditingDeadlineTitle] = useState<string | null>(null);
   const [deadlineForm, setDeadlineForm] = useState({ title: '', due_date: '', status: 'pending', source: 'manual' });
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState({ name: '', update: '', files_changed: 0 });
   const primaryDeadline = overview?.deadlines?.[0] ?? null;
+  const dashboardAlertGoals = useMemo<Goal[]>(() => {
+    return (overview?.deadlines || [])
+      .filter((item: any) => String(item?.status || 'pending').toLowerCase() !== 'completed')
+      .slice(0, 8)
+      .map((item: any, index: number) => ({
+        id: index + 1,
+        text: item?.title || 'Untitled deadline',
+        completed: false,
+      }));
+  }, [overview?.deadlines]);
 
   React.useEffect(() => {
     const loadOverview = async () => {
@@ -82,6 +101,40 @@ export const DashboardView: React.FC = () => {
     }
   }, []);
 
+  const handleMigrateAlerts = useCallback(async (goalIds: number[]) => {
+    const selected = dashboardAlertGoals.filter((goal) => goalIds.includes(goal.id));
+    if (selected.length === 0) {
+      setShowAlerter(false);
+      return;
+    }
+
+    try {
+      setActionError(null);
+      if (!window.atheletiaAPI?.intent?.upsertDashboardDeadline) {
+        throw new Error('Dashboard bridge is unavailable in this runtime.');
+      }
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dueDate = tomorrow.toISOString().slice(0, 10);
+      let latestOverview = overview;
+
+      for (const goal of selected) {
+        latestOverview = await window.atheletiaAPI.intent.upsertDashboardDeadline({
+          title: goal.text,
+          due_date: dueDate,
+          status: 'pending',
+          source: 'system_check',
+        });
+      }
+      if (latestOverview) setOverview(latestOverview);
+    } catch (e) {
+      console.warn('Failed to move alert items', e);
+      setActionError(getDashboardErrorMessage(e, 'Failed to move alert items.'));
+    } finally {
+      setShowAlerter(false);
+    }
+  }, [dashboardAlertGoals, overview]);
+
   const resetDeadlineForm = () => {
     setEditingDeadlineTitle(null);
     setDeadlineForm({ title: '', due_date: '', status: 'pending', source: 'manual' });
@@ -95,55 +148,87 @@ export const DashboardView: React.FC = () => {
   const handleSaveDeadline = async () => {
     if (!deadlineForm.title.trim()) return;
     try {
-      const updated = await window.atheletiaAPI?.intent?.upsertDashboardDeadline?.({
+      setActionError(null);
+      if (!window.atheletiaAPI?.intent?.upsertDashboardDeadline) {
+        throw new Error('Dashboard bridge is unavailable in this runtime.');
+      }
+      const updated = await window.atheletiaAPI.intent.upsertDashboardDeadline({
         title: deadlineForm.title.trim(),
         due_date: deadlineForm.due_date.trim() || null,
         status: deadlineForm.status || 'pending',
         source: deadlineForm.source || 'manual',
       });
-      if (updated) setOverview(updated);
+      if (!updated) {
+        throw new Error('Dashboard deadline save returned no data.');
+      }
+      setOverview(updated);
       resetDeadlineForm();
     } catch (e) {
       console.warn('Failed to save deadline', e);
+      setActionError(getDashboardErrorMessage(e, 'Failed to save deadline.'));
     }
   };
 
   const handleDeleteDeadline = async (title: string) => {
     try {
-      const updated = await window.atheletiaAPI?.intent?.deleteDashboardDeadline?.(title);
-      if (updated) setOverview(updated);
+      setActionError(null);
+      if (!window.atheletiaAPI?.intent?.deleteDashboardDeadline) {
+        throw new Error('Dashboard bridge is unavailable in this runtime.');
+      }
+      const updated = await window.atheletiaAPI.intent.deleteDashboardDeadline(title);
+      if (!updated) {
+        throw new Error('Dashboard deadline delete returned no data.');
+      }
+      setOverview(updated);
       if (editingDeadlineTitle?.toLowerCase() === title.toLowerCase()) {
         resetDeadlineForm();
       }
     } catch (e) {
       console.warn('Failed to delete deadline', e);
+      setActionError(getDashboardErrorMessage(e, 'Failed to delete deadline.'));
     }
   };
 
   const handleSaveProject = async () => {
     if (!projectForm.name.trim()) return;
     try {
-      const updated = await window.atheletiaAPI?.intent?.upsertDashboardProject?.({
+      setActionError(null);
+      if (!window.atheletiaAPI?.intent?.upsertDashboardProject) {
+        throw new Error('Dashboard bridge is unavailable in this runtime.');
+      }
+      const updated = await window.atheletiaAPI.intent.upsertDashboardProject({
         name: projectForm.name.trim(),
         update: projectForm.update.trim() || 'Manual project update',
         files_changed: Number(projectForm.files_changed) || 0,
       });
-      if (updated) setOverview(updated);
+      if (!updated) {
+        throw new Error('Dashboard project save returned no data.');
+      }
+      setOverview(updated);
       resetProjectForm();
     } catch (e) {
       console.warn('Failed to save project', e);
+      setActionError(getDashboardErrorMessage(e, 'Failed to save project.'));
     }
   };
 
   const handleDeleteProject = async (name: string) => {
     try {
-      const updated = await window.atheletiaAPI?.intent?.deleteDashboardProject?.(name);
-      if (updated) setOverview(updated);
+      setActionError(null);
+      if (!window.atheletiaAPI?.intent?.deleteDashboardProject) {
+        throw new Error('Dashboard bridge is unavailable in this runtime.');
+      }
+      const updated = await window.atheletiaAPI.intent.deleteDashboardProject(name);
+      if (!updated) {
+        throw new Error('Dashboard project delete returned no data.');
+      }
+      setOverview(updated);
       if (editingProjectName?.toLowerCase() === name.toLowerCase()) {
         resetProjectForm();
       }
     } catch (e) {
       console.warn('Failed to delete project', e);
+      setActionError(getDashboardErrorMessage(e, 'Failed to delete project.'));
     }
   };
 
@@ -269,6 +354,16 @@ export const DashboardView: React.FC = () => {
         </div>
       )}
 
+      {actionError && (
+        <div className="px-4 md:px-8 pb-4">
+          <StatusBanner
+            tone="error"
+            title="Dashboard action failed"
+            message={actionError}
+          />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 px-4 md:px-8 pb-8 animate-in fade-in zoom-in duration-500">
 
         {/* --- TOP ROW --- */}
@@ -331,6 +426,13 @@ export const DashboardView: React.FC = () => {
           onManage={() => setOpenModal('projects')}
         />
       </div>
+
+      <TaskAlerter
+        isOpen={showAlerter}
+        onClose={() => setShowAlerter(false)}
+        pendingGoals={dashboardAlertGoals}
+        onMigrate={(goalIds) => { void handleMigrateAlerts(goalIds); }}
+      />
 
       {/* ─── Detail Modals ─────────────────────────────────────────── */}
 

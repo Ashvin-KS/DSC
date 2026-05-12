@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type Tab = 'dashboard' | 'code' | 'brain' | 'schedule' | 'zen' | 'music' | 'chat' | 'activity' | 'diary' | 'settings';
+export type Tab = 'dashboard' | 'code' | 'brain' | 'schedule' | 'zen' | 'music' | 'workout' | 'chat' | 'activity' | 'diary' | 'settings';
 
 interface NavState {
   activeTab: Tab;

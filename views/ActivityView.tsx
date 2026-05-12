@@ -3,6 +3,7 @@ import {
     Activity, Clock, Monitor, Globe, Headphones, Terminal, Puzzle,
     HelpCircle, ChevronDown, ChevronUp, RefreshCw, BarChart2, Filter,
 } from 'lucide-react';
+import { StatusBanner } from '../components/ui/StatusBanner';
 
 interface ActivityEntry {
     id: number;
@@ -62,9 +63,20 @@ function totalDuration(entries: ActivityEntry[]): string {
     return formatDuration(totalSecs);
 }
 
+function getActivityErrorMessage(error: unknown, fallback: string) {
+    if (error instanceof Error && error.message.trim()) {
+        return error.message;
+    }
+    if (typeof error === 'string' && error.trim()) {
+        return error;
+    }
+    return fallback;
+}
+
 export const ActivityView: React.FC = () => {
     const [allActivities, setAllActivities] = useState<ActivityEntry[]>([]);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<number | null>(null);
     const [timeRangeId, setTimeRangeId] = useState('today');
     const [catFilter, setCatFilter] = useState<number | null>(null);
@@ -76,6 +88,7 @@ export const ActivityView: React.FC = () => {
 
     const load = async (rangeId = timeRangeId) => {
         setLoading(true);
+        setLoadError(null);
         try {
             if (window.atheletiaAPI?.intent?.getActivities) {
                 const range = TIME_RANGES.find(r => r.id === rangeId)!.seconds();
@@ -92,10 +105,14 @@ export const ActivityView: React.FC = () => {
                 }));
 
                 setAllActivities(mappedData);
+            } else {
+                setAllActivities([]);
+                setLoadError('Activity tracking is unavailable in this runtime.');
             }
         } catch (e) {
             console.error('Failed to load activities', e);
             setAllActivities([]);
+            setLoadError(`Failed to load activities: ${getActivityErrorMessage(e, 'Unknown error')}`);
         } finally {
             setLoading(false);
         }
@@ -201,6 +218,24 @@ export const ActivityView: React.FC = () => {
                     </button>
                 </div>
             </div>
+
+            {loadError && (
+                <div className="px-6 md:px-10 pb-4">
+                    <StatusBanner
+                        tone="error"
+                        title="Activity load failed"
+                        message={loadError}
+                        action={
+                            <button
+                                onClick={() => setLoadError(null)}
+                                className="rounded-md border border-red-400/30 px-2.5 py-1 text-xs text-red-100 hover:bg-red-500/15"
+                            >
+                                Dismiss
+                            </button>
+                        }
+                    />
+                </div>
+            )}
 
             {/* Category breakdown bar */}
             {totalSecs > 0 && catTotals.length > 0 && (
