@@ -1,16 +1,38 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import mermaid from 'mermaid';
-import DOMPurify from 'dompurify';
 
 let mermaidInitialized = false;
 let mermaidThemeMode = '';
 
 const ensureMermaidInit = () => {
-  const scheme = document.documentElement.dataset.themeScheme === 'light' ? 'default' : 'dark';
+  const isLight = document.documentElement.dataset.themeScheme === 'light';
+  const scheme = isLight ? 'default' : 'dark';
   if (mermaidInitialized && mermaidThemeMode === scheme) return;
   mermaid.initialize({
     startOnLoad: false,
     theme: scheme,
+    flowchart: {
+      htmlLabels: true,
+      useMaxWidth: true
+    },
+    sequence: {
+      useMaxWidth: true
+    },
+    themeVariables: {
+      darkMode: !isLight,
+      fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      primaryTextColor: isLight ? '#172033' : '#eef4ff',
+      secondaryTextColor: isLight ? '#243044' : '#d8e0ee',
+      tertiaryTextColor: isLight ? '#243044' : '#d8e0ee',
+      nodeTextColor: isLight ? '#172033' : '#eef4ff',
+      textColor: isLight ? '#172033' : '#eef4ff',
+      mainBkg: isLight ? '#f8fbff' : '#141d28',
+      secondBkg: isLight ? '#eef5ff' : '#182231',
+      tertiaryBkg: isLight ? '#e7eef9' : '#202d3e',
+      primaryBorderColor: isLight ? '#6f8199' : '#b6c1d4',
+      lineColor: isLight ? '#516175' : '#b6c1d4',
+      edgeLabelBackground: isLight ? '#ffffff' : '#101720'
+    },
     securityLevel: 'strict',
     suppressErrorRendering: true
   } as any);
@@ -75,10 +97,40 @@ const MermaidBlockInner: React.FC<MermaidBlockProps> = ({ chart }) => {
   }
 
   return (
-    <div
-      className="my-3 overflow-x-auto rounded-lg border border-[#333] bg-[#111] p-2 [&>svg]:h-auto [&>svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, FORBID_TAGS: ['foreignObject'] }) }}
-    />
+    <>
+      <style>{`
+        .atheletia-mermaid text,
+        .atheletia-mermaid tspan,
+        .atheletia-mermaid .nodeLabel,
+        .atheletia-mermaid .label,
+        .atheletia-mermaid .label text,
+        .atheletia-mermaid .label span {
+          color: var(--text-strong) !important;
+          fill: var(--text-strong) !important;
+        }
+
+        .atheletia-mermaid .edgeLabel,
+        .atheletia-mermaid .edgeLabel span,
+        .atheletia-mermaid .edgeLabel text {
+          color: var(--text-main) !important;
+          fill: var(--text-main) !important;
+          background-color: var(--bg-canvas) !important;
+        }
+
+        .atheletia-mermaid .node rect,
+        .atheletia-mermaid .node circle,
+        .atheletia-mermaid .node ellipse,
+        .atheletia-mermaid .node polygon,
+        .atheletia-mermaid .node path {
+          fill: var(--bg-elev-1) !important;
+          stroke: var(--text-muted) !important;
+        }
+      `}</style>
+      <div
+        className="atheletia-mermaid my-3 overflow-x-auto rounded-lg border border-[#333] bg-[#111] p-2 [&>svg]:h-auto [&>svg]:max-w-full"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </>
   );
 };
 

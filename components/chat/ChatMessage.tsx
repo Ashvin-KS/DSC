@@ -6,6 +6,7 @@ import type { ChatMessage as ChatMessageType, AgentStep, ActivityRef } from '../
 import { formatTime } from '../../lib/chatUtils';
 import { sanitizeAiVisibleText, VISUALIZE_INFO_RE } from '../../lib/aiText';
 import { VisualizeBlock } from '../VisualizeBlock';
+import { MermaidBlock } from '../MermaidBlock';
 import {
     ChevronDown,
     ChevronRight,
@@ -263,6 +264,10 @@ function MarkdownMessage({ text }: { text: string }) {
                     if (isBlock && (VISUALIZE_INFO_RE.test(lang) || lang === 'visualize-html')) {
                         return <VisualizeBlock html={codeText} />;
                     }
+                    const mermaidChart = extractMermaidChart(codeText, className);
+                    if (mermaidChart) {
+                        return <MermaidBlock chart={mermaidChart} />;
+                    }
                     if (isBlock) {
                         return (
                             <code className="block text-xs text-gray-100 whitespace-pre-wrap font-mono" data-lang={lang} {...props as object}>
@@ -276,14 +281,25 @@ function MarkdownMessage({ text }: { text: string }) {
                         </code>
                     );
                 },
-                pre: ({ children }) => (
-                    <div className="relative my-2.5 group">
-                        <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-cyan-500/5 to-purple-500/5 pointer-events-none" />
-                        <pre className="text-xs bg-black/50 border border-white/10 rounded-xl p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                            {children}
-                        </pre>
-                    </div>
-                ),
+                pre: ({ children }) => {
+                    const { className, codeText } = extractPreCodePayload(children);
+                    const lang = className?.replace('language-', '') ?? '';
+                    if (VISUALIZE_INFO_RE.test(lang) || lang === 'visualize-html') {
+                        return <VisualizeBlock html={codeText} />;
+                    }
+                    const mermaidChart = extractMermaidChart(codeText, className);
+                    if (mermaidChart) {
+                        return <MermaidBlock chart={mermaidChart} />;
+                    }
+                    return (
+                        <div className="relative my-2.5 group">
+                            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-cyan-500/5 to-purple-500/5 pointer-events-none" />
+                            <pre className="text-xs bg-black/50 border border-white/10 rounded-xl p-4 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                                {children}
+                            </pre>
+                        </div>
+                    );
+                },
                 table: ({ children }) => (
                     <div className="overflow-x-auto my-3 rounded-xl border border-white/10">
                         <table className="min-w-full text-xs">{children}</table>
@@ -319,6 +335,70 @@ function flattenReactNodeText(node: React.ReactNode): string {
     if (Array.isArray(node)) return node.map(flattenReactNodeText).join('');
     if (React.isValidElement(node)) return flattenReactNodeText((node.props as { children?: React.ReactNode }).children);
     return '';
+}
+
+function normalizeMermaidChart(input: string): string {
+    let text = (input || '').replace(/\r\n/g, '\n').trim();
+    if (!text) return '';
+
+    const fencedWithLang = text.match(/^```\s*mermaid\s*\n([\s\S]*?)\n```$/i);
+    if (fencedWithLang?.[1]) {
+        text = fencedWithLang[1].trim();
+    } else {
+        text = text
+            .replace(/^```\s*mermaid\s*\n?/i, '')
+            .replace(/^mermaid\s*\n/i, '')
+            .replace(/\n?```$/i, '')
+            .trim();
+    }
+
+    return text;
+}
+
+function firstMermaidDirectiveLine(input: string): string {
+    const normalized = normalizeMermaidChart(input);
+    if (!normalized) return '';
+
+    const lines = normalized.split('\n').map(line => line.trim());
+    for (const line of lines) {
+        if (!line || line.startsWith('%%')) continue;
+        return line;
+    }
+
+    return '';
+}
+
+function looksLikeMermaid(input: string): boolean {
+    const firstLine = firstMermaidDirectiveLine(input);
+    return /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|gitGraph|quadrantChart|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|architecture|block-beta)\b/i.test(firstLine);
+}
+
+function extractMermaidChart(codeText: string, className?: string): string | null {
+    const normalized = normalizeMermaidChart(codeText);
+    if (!normalized) return null;
+
+    if (className?.includes('language-mermaid') || looksLikeMermaid(normalized)) {
+        return normalized;
+    }
+
+    return null;
+}
+
+function extractPreCodePayload(children: React.ReactNode): { className: string; codeText: string } {
+    const childNodes = React.Children.toArray(children);
+    const codeChild = childNodes.find(node => React.isValidElement(node));
+
+    if (codeChild && React.isValidElement<{ className?: string; children?: React.ReactNode }>(codeChild)) {
+        return {
+            className: codeChild.props.className || '',
+            codeText: flattenReactNodeText(codeChild.props.children),
+        };
+    }
+
+    return {
+        className: '',
+        codeText: flattenReactNodeText(children),
+    };
 }
 
 // ─── Tool icon & color map ───
