@@ -3,69 +3,19 @@ import { useMusicStore, Track } from '../store/useMusicStore';
 import { StatusBanner } from '../components/ui/StatusBanner';
 import { useIntentStore } from '../store/useIntentStore';
 import { getProviderKey, resolveProviderForModel } from '../lib/modelFetch';
+import {
+  sendChatMessage as chatServiceSend,
+  createChatSession as chatServiceCreateSession,
+  deleteChatSession as chatServiceDeleteSession,
+} from '../services/chatService';
 
 import { Home, Search, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Repeat, Shuffle, Plus, Trash2, Music, Heart, Clock, Wand2 } from 'lucide-react';
 import './MusicApp.css';
 
-const TASTE_STAGES = ['history', 'taste', 'search', 'build', 'saved'] as const;
-
-const parseJsonArray = (text: string): string[] | null => {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const raw = fenced || text;
-  const first = raw.indexOf('[');
-  const last = raw.lastIndexOf(']');
-  if (first < 0 || last <= first) return null;
-  try {
-    const parsed = JSON.parse(raw.slice(first, last + 1));
-    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : null;
-  } catch {
-    return null;
-  }
-};
+const TASTE_STAGES = ['taste', 'search', 'build', 'saved'] as const;
 
 const HISTORY_SEPARATOR_RE = /\s*(?:\u2014|\u2013|-)\s*/;
-const TASTE_HISTORY_LIMIT = 5000;
-
-const normalizeTasteEntry = (value: string): string => value.trim().toLowerCase();
-
-const collectTasteHistory = async (likedSongs: Track[], recentlyPlayed: Track[]): Promise<string[]> => {
-  const historyMap = new Map<string, string>();
-
-  const addHistoryItem = (title: string, artist = '') => {
-    const cleanTitle = title.trim();
-    if (!cleanTitle) return;
-    const cleanArtist = artist.trim();
-    const key = `${cleanTitle.toLowerCase()}::${cleanArtist.toLowerCase()}`;
-    if (!historyMap.has(key)) {
-      historyMap.set(key, cleanArtist ? `${cleanTitle} - ${cleanArtist}` : cleanTitle);
-    }
-  };
-
-  try {
-    const now = Math.floor(Date.now() / 1000);
-    const history = await window.atheletiaAPI?.music?.getMusicHistory?.(0, now, TASTE_HISTORY_LIMIT);
-    if (Array.isArray(history) && history.length > 0) {
-      for (const item of history) {
-        const entry = String(item).trim();
-        if (!entry) continue;
-        const parts = entry.split(HISTORY_SEPARATOR_RE);
-        if (parts.length >= 2) {
-          addHistoryItem(parts[0].trim(), parts.slice(1).join(' - ').trim());
-        } else {
-          addHistoryItem(entry);
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('Failed to load music history', error);
-  }
-
-  for (const track of [...likedSongs.slice(0, 8), ...recentlyPlayed.slice(0, 12)]) {
-    addHistoryItem(track.title);
-  }
-
-  return [...historyMap.values()].slice(0, 300);
-};
+const TASTE_BASE_SOURCES = ['apps', 'screen', 'media'] as const;
 
 const TASTE_PROMPT_STOPWORDS = new Set([
   'songs',
@@ -109,7 +59,83 @@ const TASTE_PROMPT_STOPWORDS = new Set([
   'recent',
   'all',
   'time',
+  'have',
+  'i',
 ]);
+
+const parseJsonArray = (text: string): string[] | null => {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const raw = fenced || text;
+  const first = raw.indexOf('[');
+  const last = raw.lastIndexOf(']');
+  if (first < 0 || last <= first) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(first, last + 1));
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : null;
+  } catch {
+    return null;
+  }
+};
+
+const TASTE_SEARCH_QUERY_LIMIT = 80;
+const TASTE_PLAYLIST_TRACK_LIMIT = 80;
+
+const normalizeForSearchMatch = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const TASTE_NOISE_TERMS = [
+  'playlist', 'jukebox', 'mix', 'hits', 'top', 'best', 'evergreen', 'all time',
+  'radio', 'collections', 'collection', 'full album', 'songs',
+];
+
+const TASTE_RESULT_NOISE_TERMS = [
+  'playlist', 'jukebox', 'mix', 'compilation', 'non stop', 'full album',
+  'top ', 'best ', 'evergreen', 'medley',
+];
+
+const isTasteResultNoiseTitle = (normalizedTitle: string): boolean =>
+  TASTE_RESULT_NOISE_TERMS.some((term) => normalizedTitle.includes(term));
+
+const splitTasteHistoryEntry = (entry: string): { title: string; artist: string } => {
+  const parts = entry.split(HISTORY_SEPARATOR_RE).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return { title: entry.trim(), artist: '' };
+  return { title: parts[0], artist: parts.slice(1).join(' - ') };
+};
+
+const isTasteNoiseEntry = (entry: string): boolean => {
+  const normalized = normalizeForSearchMatch(entry);
+  if (!normalized) return true;
+  if (entry.includes('|')) return true;
+  return TASTE_NOISE_TERMS.some((term) => normalized.includes(term));
+};
+
+const toTasteSearchQuery = (entry: string): string | null => {
+  const { title, artist } = splitTasteHistoryEntry(entry);
+  if (!title || isTasteNoiseEntry(title)) return null;
+  const normalizedArtist = normalizeForSearchMatch(artist);
+  const isUnknownArtist = normalizedArtist === 'unknown artist' || normalizedArtist === 'unknown';
+  if (artist && !isUnknownArtist && !isTasteNoiseEntry(artist)) return `${title} - ${artist}`;
+  return title;
+};
+
+const dedupePreserveOrder = (values: string[]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+};
 
 const tastePromptTokens = (prompt: string): string[] =>
   prompt
@@ -121,43 +147,55 @@ const tastePromptTokens = (prompt: string): string[] =>
 
 const rankTasteHistory = (history: string[], prompt: string): string[] => {
   const tokens = tastePromptTokens(prompt);
-
-  if (tokens.length === 0) return [];
+  if (tokens.length === 0) return history;
 
   return history
-    .map((entry) => {
-      const lower = entry.toLowerCase();
-      const score = tokens.reduce((total, token) => total + (lower.includes(token) ? 1 : 0), 0);
-      return { entry, score };
+    .map((entry, index) => {
+      const normalized = normalizeForSearchMatch(entry);
+      const score = tokens.reduce((total, token) => total + (normalized.includes(token) ? 1 : 0), 0);
+      return { entry, index, score };
     })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.entry.localeCompare(b.entry))
+    .filter((item) => item.score > 0 && !isTasteNoiseEntry(item.entry))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((item) => item.entry);
 };
-
-const normalizeForSearchMatch = (value: string): string =>
-  value
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 
 const scoreTasteSearchResult = (track: Track, query: string): number => {
   const title = normalizeForSearchMatch(track.title);
   const queryText = normalizeForSearchMatch(query);
   if (!title || !queryText) return 0;
 
+  let score = 0;
+  if (isTasteResultNoiseTitle(title)) {
+    score -= 6;
+  }
+
   const tokens = queryText
     .split(/\s+/)
     .filter((token) => token.length >= 3 && !TASTE_PROMPT_STOPWORDS.has(token));
 
-  let score = 0;
   if (title.includes(queryText) || queryText.includes(title)) score += 8;
   for (const token of tokens) {
     if (title.includes(token)) score += 1;
   }
   return score;
+};
+
+const pickFirstTasteSongResult = (tracks: Track[], query: string): Track | null => {
+  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+  const queryTokens = normalizeForSearchMatch(query)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !TASTE_PROMPT_STOPWORDS.has(token));
+
+  for (const track of tracks) {
+    const title = normalizeForSearchMatch(track.title);
+    if (!title) continue;
+    if (isTasteResultNoiseTitle(title)) continue;
+    if (queryTokens.length > 0 && !queryTokens.some((token) => title.includes(token))) continue;
+    return track;
+  }
+
+  return pickBestTasteSearchResult(tracks, query);
 };
 
 const pickBestTasteSearchResult = (tracks: Track[], query: string): Track | null => {
@@ -366,123 +404,142 @@ export const MusicView: React.FC = () => {
       setTasteMessage(message);
     };
     try {
-      advance('history', 'Reading listening history');
-      const history = await collectTasteHistory(likedSongs, recentlyPlayed);
-      advance('history', `Found ${history.length} tracks in history`);
-      if (history.length === 0) {
-        throw new Error('Taste AI could not find any listened music history yet. Play a few tracks or enable media tracking, then try again.');
-      }
-      const historyMatches = rankTasteHistory(history, tastePrompt);
-      const promptTokens = tastePromptTokens(tastePrompt);
-      const historyLookup = new Map(history.map((entry) => [normalizeTasteEntry(entry), entry]));
-
-      const fuzzyLookup = (query: string): string | null => {
-        const norm = normalizeTasteEntry(query);
-        if (historyLookup.has(norm)) return historyLookup.get(norm)!;
-        for (const [key, value] of historyLookup) {
-          if (key.includes(norm) || norm.includes(key)) return value;
-        }
-        const tokens = norm.split(/\s+/).filter((t) => t.length >= 3);
-        if (tokens.length > 0) {
-          let bestMatch = '';
-          let bestScore = 0;
-          for (const [key, value] of historyLookup) {
-            const score = tokens.reduce((s, t) => s + (key.includes(t) ? 1 : 0), 0);
-            if (score > bestScore) {
-              bestScore = score;
-              bestMatch = value;
-            }
-          }
-          if (bestScore > 0) return bestMatch;
-        }
-        return null;
-      };
-
-      advance('taste', 'Asking AI for search directions');
-      let queries: string[] | null = null;
-      let suggestedName = '';
+      advance('taste', 'Asking AI via Chat agent...');
       const model = (settings as any)?.defaultModel || (settings as any)?.ai?.model || 'meta/llama-3.3-70b-instruct';
       const provider = resolveProviderForModel(model, (settings as any)?.defaultProvider || (settings as any)?.ai?.provider, 'nvidia');
-      
-      const getApiKeyForProvider = (settings: any, provider: string) => {
-        const key = getProviderKey(settings, provider);
-        if (key) return key;
-        const fallbacks = ['openai', 'nvidia', 'anthropic', 'groq', 'gemini'];
-        for (const p of fallbacks) {
-          const k = getProviderKey(settings, p);
-          if (k) return k;
-        }
-        return '';
+      const apiKey = getProviderKey(settings as any, provider)
+        || getProviderKey(settings as any, 'openai')
+        || getProviderKey(settings as any, 'nvidia')
+        || getProviderKey(settings as any, 'anthropic')
+        || getProviderKey(settings as any, 'groq')
+        || getProviderKey(settings as any, 'gemini')
+        || '';
+
+      const session = await chatServiceCreateSession();
+      const sessionId = session?.id || (session as any);
+      if (!sessionId) throw new Error('Could not create chat session.');
+
+      type TasteAssistantAction = {
+        kind?: string;
+        suggested_time_range?: string | null;
+        enable_sources?: string[];
+        retry_message?: string;
       };
-      
-      const apiKey = getApiKeyForProvider(settings as any, provider);
-      
-      if (window.atheletiaAPI?.settings?.chatCompletion && (apiKey || provider === 'local')) {
-        try {
-          const response = await window.atheletiaAPI.settings.chatCompletion(
-            model,
-            [
-              {
-                role: 'system',
-                content: 'You are a precise music curator. Given a user prompt and listening history, select only songs that appear in that history and match the prompt. Return ONLY a JSON object: {"playlist_name": "creative name", "queries": ["Song Title - Artist", ...]}. Use exact song titles and artist names from the history. Output ONLY valid JSON, no markdown.',
-              },
-              {
-                role: 'user',
-                content: `Prompt: "${tastePrompt}"\n\nBest matches from history:\n${historyMatches.slice(0, 30).join('\n') || 'None found by keyword.'}\n\nFull listening history:\n${history.slice(0, 150).join('\n') || 'No history yet.'}`,
-              },
-            ],
-            800,
-            0.5,
-            apiKey,
-            provider,
-          );
-          const text = typeof response === 'string'
-            ? response
-            : response?.choices?.[0]?.message?.content || response?.content || '';
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]);
-              queries = Array.isArray(parsed.queries)
-                ? parsed.queries
-                    .map(String)
-                    .map((entry) => fuzzyLookup(entry))
-                    .filter((entry): entry is string => Boolean(entry))
-                : null;
-              suggestedName = String(parsed.playlist_name || '').trim();
-            } catch {
-              queries = parseJsonArray(text)
-                ?.map((entry) => fuzzyLookup(entry))
-                .filter((entry): entry is string => Boolean(entry)) || null;
-            }
-          } else {
-            queries = parseJsonArray(text)
-              ?.map((entry) => fuzzyLookup(entry))
-              .filter((entry): entry is string => Boolean(entry)) || null;
-          }
-        } catch (aiError) {
-          console.warn('AI Taste generation failed, falling back to deterministic queries.', aiError);
+
+      // Same marker contract as ChatPage.parseAssistantAction.
+      const parseAction = (text: string): { clean: string; action: TasteAssistantAction | null } => {
+        const marker = /\[\[IF_ACTION:(\{[\s\S]*\})\]\]/m;
+        const match = text.match(marker);
+        if (!match) return { clean: text, action: null };
+        let action: TasteAssistantAction | null = null;
+        try { action = JSON.parse(match[1]) as TasteAssistantAction; } catch { /* ignore */ }
+        return { clean: text.replace(marker, '').trim(), action };
+      };
+
+      const normalizeTasteSources = (sources?: string[]): string[] =>
+        (sources || []).filter((source) =>
+          ['apps', 'screen', 'media', 'browser', 'files'].includes(String(source).trim().toLowerCase())
+        );
+
+      // --- Helper: extract text after tool-call JSON blocks ---
+      const extractAnswer = (content: string): string => {
+        let depth = 0, inStr = false, esc = false, lastClosed = -1;
+        for (let i = 0; i < content.length; i++) {
+          const ch = content[i];
+          if (inStr) { if (esc) { esc = false; continue; } if (ch === '\\') { esc = true; continue; } if (ch === '"') inStr = false; continue; }
+          if (ch === '"') { inStr = true; continue; }
+          if (ch === '{') { depth++; continue; }
+          if (ch === '}' && depth > 0) { depth--; if (depth === 0) lastClosed = i; continue; }
         }
+        if (lastClosed < 0) return content;
+        return content.slice(lastClosed + 1).trim();
+      };
+
+      // --- Helper: try all parsing strategies on response text ---
+      const extractSongsFromText = (text: string): string[] => {
+        // Strategy 1: parse from answer tail (after tool-call JSON)
+        const tail = extractAnswer(text);
+        const fromTail = parseJsonArray(tail);
+        if (fromTail && fromTail.length > 0) return fromTail;
+
+        // Strategy 2: parse from full text (response may not have tool-call blocks)
+        const fromFull = parseJsonArray(text);
+        if (fromFull && fromFull.length > 0) return fromFull;
+
+        return [];
+      };
+
+      const chatPrompt = `You are a precise music curator. The user wants songs matching: "${tastePrompt.trim()}". Use the music/media history tools to retrieve the user's listened songs. From those results, find ALL songs that match the user's request. Return ONLY a JSON array of strings in the format ["Song Title - Artist", ...]. Do not include markdown formatting, explanations, code fences, or any other text. Output ONLY the pure JSON array.`;
+      const baseSources = [...TASTE_BASE_SOURCES];
+      let response = await chatServiceSend(
+        sessionId,
+        chatPrompt,
+        model,
+        provider,
+        'all_time',
+        baseSources as any,
+        apiKey
+      );
+
+      let rawText = typeof response === 'string' ? response : (response?.content || '');
+      console.log('[TasteAI] Raw response:', rawText);
+      let { clean, action } = parseAction(rawText);
+      console.log('[TasteAI] Cleaned text:', clean);
+
+      const needsScopeRetry =
+        action?.kind === 'confirm_scope_or_sources'
+        || rawText.includes('[[IF_ACTION:')
+        || /additional sources enabled/i.test(rawText);
+
+      if (needsScopeRetry) {
+        console.log('[TasteAI] Scope action:', action);
+        advance('taste', 'Confirming Chat scope and retrying...');
+
+        const enabledSources = normalizeTasteSources(action?.enable_sources);
+        const retrySources = Array.from(new Set([...baseSources, ...enabledSources]));
+        const retryTimeRange = action?.suggested_time_range || 'all_time';
+        const retryMessage: string = action?.retry_message || chatPrompt;
+
+        response = await chatServiceSend(
+          sessionId,
+          retryMessage,
+          model,
+          provider,
+          retryTimeRange,
+          retrySources as any,
+          apiKey
+        );
+
+        rawText = typeof response === 'string' ? response : (response?.content || '');
+        console.log('[TasteAI] Raw retry response:', rawText);
+        const parsed2 = parseAction(rawText);
+        clean = parsed2.clean;
+        action = parsed2.action;
+        console.log('[TasteAI] Cleaned retry text:', clean);
       }
 
-      queries = [...new Set([...(queries || []).slice(0, 25), ...historyMatches.slice(0, 25)])];
-      if (!queries || queries.length === 0) {
-        const matches = history.filter(track => promptTokens.some(kw => track.toLowerCase().includes(kw)));
-        
-        if (matches.length > 0) {
-          queries = matches.slice(0, 15);
-        } else if (promptTokens.length === 0) {
-          queries = history.slice(0, 15);
-        } else {
-          throw new Error(`I found ${history.length} listened tracks, but none matched "${tastePrompt.trim()}". Try a different language, artist, or vibe from your listening history.`);
-        }
+      chatServiceDeleteSession(sessionId).catch(() => {});
+
+      const queries = dedupePreserveOrder(extractSongsFromText(clean));
+      console.log('[TasteAI] Parsed songs:', queries);
+      advance('taste', `AI found ${queries.length} matching songs`);
+
+      if (queries.length === 0) {
+        const preview = rawText.slice(0, 300).replace(/\n/g, ' ');
+        throw new Error(`Taste AI: no songs parsed. AI responded: "${preview}"`);
       }
 
-      advance('search', `Searching YouTube for ${queries.length} tracks`);
+      const searchQueries = dedupePreserveOrder(
+        (queries ?? [])
+          .map((entry) => toTasteSearchQuery(entry))
+          .filter((entry): entry is string => Boolean(entry))
+      ).slice(0, TASTE_SEARCH_QUERY_LIMIT);
+
+      advance('search', `Searching YouTube for ${searchQueries.length} tracks`);
       const found: Track[] = [];
       const batchSize = 5;
-      for (let i = 0; i < queries.slice(0, 25).length; i += batchSize) {
-        const batch = queries.slice(i, i + batchSize);
+      for (let i = 0; i < searchQueries.length; i += batchSize) {
+        const batch = searchQueries.slice(i, i + batchSize);
         const batchResults = await Promise.allSettled(
           batch.map((query) => window.atheletiaAPI?.music?.search?.(query) || Promise.resolve([]))
         );
@@ -491,26 +548,25 @@ export const MusicView: React.FC = () => {
           if (result.status !== 'fulfilled') continue;
           const tracks = result.value;
           if (!Array.isArray(tracks)) continue;
-          const track = pickBestTasteSearchResult(tracks, batch[resultIndex]);
+          const track = pickFirstTasteSongResult(tracks, batch[resultIndex]);
           if (track?.id && !found.some((item) => item.id === track.id)) {
             found.push(track);
           }
         }
-        setTasteTracks([...found]);
-        if (found.length >= 25) break;
+        setTasteTracks(found.slice(0, TASTE_PLAYLIST_TRACK_LIMIT));
+        if (found.length >= TASTE_PLAYLIST_TRACK_LIMIT) break;
       }
 
       advance('build', 'Building the playlist');
-      const tracks = found.slice(0, 25);
+      const tracks = found.slice(0, TASTE_PLAYLIST_TRACK_LIMIT);
       if (tracks.length === 0) {
         throw new Error('No tracks were found for that taste prompt.');
       }
-      const name = suggestedName || `Taste AI - ${tastePrompt.trim().slice(0, 32)}`;
+      const name = `Taste AI - ${tastePrompt.trim().slice(0, 32)}`;
       const id = await createPlaylistWithTracks(name, tracks);
       setActivePlaylist(id);
-      play();
       setCurrentView('playlist');
-      advance('saved', 'Saved and ready to play');
+      advance('saved', 'Saved. Press play to start');
     } catch (err) {
       console.error('Taste AI failed', err);
       setMusicStatusMessage(err instanceof Error ? err.message : String(err) || 'Taste AI playlist generation failed.');

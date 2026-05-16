@@ -32,6 +32,7 @@ export const MusicEngine: React.FC = () => {
         pause,
         togglePlay,
         updateProgress,
+        setMusicStatusMessage,
         seekTo,
         clearSeek,
         volume
@@ -47,7 +48,8 @@ export const MusicEngine: React.FC = () => {
     useEffect(() => {
         playerReadyRef.current = false;
         stopTimer();
-    }, [currentTrack?.id]);
+        updateProgress(0, 0);
+    }, [currentTrack?.id, updateProgress]);
 
     // Handle Play/Pause changes from Store
     useEffect(() => {
@@ -67,15 +69,23 @@ export const MusicEngine: React.FC = () => {
         } catch (error) {
             console.warn('Music player sync failed', error);
         }
-    }, [isPlaying]);
+    }, [isPlaying, currentTrack?.id]);
 
     // Handle Seek changes from Store
     useEffect(() => {
         if (seekTo !== null && playerRef.current) {
             playerRef.current.seekTo(seekTo, true);
+            if (isPlaying) {
+                try {
+                    playerRef.current.playVideo();
+                    startTimer();
+                } catch (error) {
+                    console.warn('Music player seek/play failed', error);
+                }
+            }
             clearSeek();
         }
-    }, [seekTo, clearSeek]);
+    }, [seekTo, clearSeek, isPlaying]);
 
     // Handle Volume changes from Store
     useEffect(() => {
@@ -108,6 +118,8 @@ export const MusicEngine: React.FC = () => {
         if (event.data === PLAYER_STATE.PLAYING) {
             if (!isPlaying) play(); // Sync store if player started internally
             startTimer();
+        } else if (event.data === PLAYER_STATE.BUFFERING) {
+            startTimer();
         } else if (event.data === PLAYER_STATE.PAUSED || event.data === PLAYER_STATE.ENDED) {
             if (isPlaying && event.data === PLAYER_STATE.PAUSED) pause(); // Sync store if paused internally
             stopTimer();
@@ -116,6 +128,13 @@ export const MusicEngine: React.FC = () => {
         if (event.data === PLAYER_STATE.ENDED) {
             nextTrack();
         }
+    };
+
+    const onPlayerError = (event: YouTubePlayerEvent<number>) => {
+        console.warn('Music player could not play video', currentTrack?.id, event.data);
+        setMusicStatusMessage('That YouTube result could not be played here, so I skipped to the next track.');
+        stopTimer();
+        nextTrack();
     };
 
     const startTimer = () => {
@@ -203,10 +222,12 @@ export const MusicEngine: React.FC = () => {
     return (
         <div style={{ position: 'absolute', top: -9999, left: -9999 }}>
             <YouTube
+                key={currentTrack.id}
                 videoId={currentTrack.id}
                 opts={{ height: '1', width: '1', playerVars: { autoplay: 0, controls: 0 } }}
                 onReady={onPlayerReady}
                 onStateChange={onPlayerStateChange}
+                onError={onPlayerError}
             />
         </div>
     );

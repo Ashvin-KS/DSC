@@ -1210,103 +1210,217 @@ fn execute_tool(
     match tool {
         // Dedicated music history tool - finds songs from Spotify, YouTube, etc.
         "get_music_history" => {
-            let limit = args["limit"].as_u64().unwrap_or(100) as i32;
+            let limit = args["limit"].as_u64().unwrap_or(100).clamp(1, 1000) as usize;
             let hours = args["hours"].as_u64().unwrap_or(24) as i64;
-            let scan_limit = std::cmp::max(limit.saturating_mul(20), 500);
             let (start_ts, end_ts) = resolve_window_from_args(args, hours);
             let scope_label = args["scope_label"]
                 .as_str()
                 .unwrap_or("the selected time range");
 
-            // Query a broad slice of recent activity and filter by media_info in Rust.
-            // Music can be present while the active app is not an entertainment app.
-            let mut stmt = conn.prepare(
-                "SELECT app_name, window_title, start_time, duration_seconds, metadata, category_id
-                 FROM activities 
-                 WHERE start_time >= ?1 AND start_time <= ?2 AND metadata IS NOT NULL
-                 ORDER BY start_time DESC 
-                 LIMIT ?3"
-            ).map_err(|e| format!("SQL Error: {}", e))?;
+            let span_days = ((end_ts - start_ts).max(0) as f64 / 86_400.0).ceil() as usize;
+            let is_broad_scope = span_days >= 7;
+            let batch_size = if is_broad_scope { 5_000 } else { 1_500 };
+            let max_scan_rows = if is_broad_scope {
+                limit.saturating_mul(500).clamp(50_000, 400_000)
+            } else {
+                limit.saturating_mul(80).clamp(2_000, 60_000)
+            };
 
-            let rows = stmt
-                .query_map(rusqlite::params![start_ts, end_ts, scan_limit], |row| {
-                    let app_name: String = row.get(0)?;
-                    let window_title: String = row.get(1)?;
-                    let start_time: i64 = row.get(2)?;
-                    let duration_seconds: i32 = row.get(3)?;
-                    let metadata_blob: Option<Vec<u8>> = row.get(4)?;
-                    let category_id: i32 = row.get(5)?;
+            let is_music_app = |app_name: &str| {
+                let lower = app_name.to_lowercase();
+                lower.contains("spotify")
+                    || lower.contains("apple music")
+                    || lower.contains("itunes")
+                    || lower.contains("youtube music")
+                    || lower.contains("soundcloud")
+                    || lower.contains("vlc")
+                    || lower.contains("foobar")
+                    || lower.contains("winamp")
+                    || lower.contains("musicbee")
+                    || lower.contains("aimp")
+                    || lower.contains("atheletia")
+            };
 
-                    // Parse metadata to extract media_info
-                    let media_info = if let Some(blob) = &metadata_blob {
-                        if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(blob) {
-                            meta.media_info
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+            let is_noise = |value: &str| -> bool {
+                let lower = value.to_lowercase();
+                lower.starts_with("visual studio")
+                    || lower.starts_with("vscode")
+                    || lower.contains("package.json")
+                    || lower.contains("tsconfig")
+                    || lower.contains("cargo.toml")
+                    || lower.contains(".gitignore")
+                    || lower.contains("dockerfile")
+                    || lower.contains("localhost")
+                    || lower.contains("http://")
+                    || lower.contains("https://")
+                    || lower.ends_with(".ts")
+                    || lower.ends_with(".tsx")
+                    || lower.ends_with(".js")
+                    || lower.ends_with(".py")
+                    || lower.ends_with(".rs")
+                    || lower.ends_with(".md")
+                    || lower.ends_with(".json")
+                    || lower.ends_with(".css")
+                    || lower.ends_with(".html")
+                    || lower.ends_with(".sql")
+                    || lower.ends_with(".yaml")
+                    || lower.ends_with(".toml")
+                    || lower.ends_with(".log")
+                    || lower.ends_with(".txt")
+                    || lower.starts_with("npm ")
+                    || lower.starts_with("cargo ")
+                    || lower.starts_with("git ")
+                    || lower.starts_with("python ")
+                    || lower.starts_with("node ")
+                    || lower.starts_with("deno ")
+                    || lower.starts_with("bun ")
+            };
 
-                    Ok(serde_json::json!({
-                        "app_name": app_name,
-                        "window_title": window_title,
-                        "start_time": start_time,
-                        "duration_seconds": duration_seconds,
-                        "media_info": media_info,
-                        "category_id": category_id
-                    }))
-                })
-                .map_err(|e| e.to_string())?;
+            let parse_window_title_media_info = |app_name: &str, window_title: &str, category_id: i32| {
+                let title = window_title.trim();
+                if title.is_empty() {
+                    return None;
+                }
+
+                let title_lower = title.to_lowercase();
+                let music_like_context = category_id == 4
+                    || is_music_app(app_name)
+                    || title_lower.contains("spotify")
+                    || title_lower.contains("youtube music")
+                    || title_lower.contains("soundcloud")
+                    || title_lower.contains("apple music");
+                if !music_like_context {
+                    return None;
+                }
+
+                let dash_pos = title
+                    .find('–')
+                    .or_else(|| title.find('—'))
+                    .or_else(|| title.find(" - "));
+
+                let pos = dash_pos?;
+                let song_title = title[..pos].trim();
+                let rest = title[pos..]
+                    .trim_start_matches(&['–', '—', ' ', '-'][..])
+                    .trim();
+
+                if song_title.len() < 2 || rest.len() < 2 || is_noise(song_title) || is_noise(rest) {
+                    return None;
+                }
+
+                Some(serde_json::json!({
+                    "title": song_title,
+                    "artist": rest,
+                    "status": ""
+                }))
+            };
 
             let mut results: Vec<Value> = Vec::new();
             let mut seen_songs: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
 
-            for r in rows {
-                if let Ok(val) = r {
-                    let app_name = val.get("app_name").and_then(|a| a.as_str()).unwrap_or("");
+            let mut offset = 0usize;
+            while results.len() < limit && offset < max_scan_rows {
+                let page_limit = std::cmp::min(batch_size, max_scan_rows - offset);
+                if page_limit == 0 {
+                    break;
+                }
 
-                    // Check if it's Spotify by checking raw bytes (handles encoding issues)
-                    // Spotify app name can be "Spotify\u00008\u0016\u0001FileV" with embedded nulls
-                    let is_spotify = app_name.as_bytes().windows(7).any(|w| w == b"Spotify")
-                        || app_name.starts_with("Spotify");
+                let mut stmt = conn.prepare(
+                    "SELECT app_name, window_title, start_time, duration_seconds, metadata, category_id
+                     FROM activities
+                     WHERE start_time >= ?1 AND start_time <= ?2
+                     ORDER BY start_time DESC
+                     LIMIT ?3 OFFSET ?4"
+                ).map_err(|e| format!("SQL Error: {}", e))?;
 
-                    // Get media info to check if it's actual music
-                    let media = val.get("media_info").and_then(|m| m.as_object());
-                    let title = media
-                        .as_ref()
-                        .and_then(|m| m.get("title"))
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("");
-                    let artist = media
-                        .as_ref()
-                        .and_then(|m| m.get("artist"))
-                        .and_then(|a| a.as_str())
-                        .unwrap_or("");
+                let rows = stmt
+                    .query_map(rusqlite::params![start_ts, end_ts, page_limit as i64, offset as i64], |row| {
+                        let app_name: String = row.get(0)?;
+                        let window_title: String = row.get(1)?;
+                        let start_time: i64 = row.get(2)?;
+                        let duration_seconds: i32 = row.get(3)?;
+                        let metadata_blob: Option<Vec<u8>> = row.get(4)?;
+                        let category_id: i32 = row.get(5)?;
 
-                    // Structurally validate: valid music must have both title AND artist.
-                    // This replaces the previous hardcoded video keyword list.
-                    let is_song = !title.is_empty() && !artist.is_empty();
+                        // Parse metadata to extract media_info, with a title fallback for music-like windows.
+                        let media_info: Option<serde_json::Value> = if let Some(blob) = &metadata_blob {
+                            if let Ok(meta) = serde_json::from_slice::<ActivityMetadata>(blob) {
+                                meta.media_info
+                                    .and_then(|media| serde_json::to_value(media).ok())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
 
-                    // Create a unique key for deduplication
-                    let song_key = format!("{}-{}", title, artist);
+                        let media_info = media_info
+                            .or_else(|| parse_window_title_media_info(&app_name, &window_title, category_id));
 
-                    // Include if:
-                    // 1. It's Spotify with media info, OR
-                    // 2. It has media info that looks structurally like a song
-                    // And we haven't seen this song before (dedupe)
-                    let should_include =
-                        (is_spotify && media.is_some()) || (media.is_some() && is_song);
+                        Ok(serde_json::json!({
+                            "app_name": app_name,
+                            "window_title": window_title,
+                            "start_time": start_time,
+                            "duration_seconds": duration_seconds,
+                            "media_info": media_info,
+                            "category_id": category_id
+                        }))
+                    })
+                    .map_err(|e| e.to_string())?;
 
-                    if should_include && !seen_songs.contains(&song_key) {
-                        seen_songs.insert(song_key);
-                        results.push(val);
-                        if results.len() as i32 >= limit {
-                            break;
+                let mut page_rows = 0usize;
+                for r in rows {
+                    page_rows += 1;
+                    if let Ok(val) = r {
+                        let app_name = val.get("app_name").and_then(|a| a.as_str()).unwrap_or("");
+
+                        // Check if it's Spotify by checking raw bytes (handles encoding issues)
+                        // Spotify app name can be "Spotify\u00008\u0016\u0001FileV" with embedded nulls
+                        let is_spotify = app_name.as_bytes().windows(7).any(|w| w == b"Spotify")
+                            || app_name.starts_with("Spotify");
+
+                        // Get media info to check if it's actual music
+                        let media = val.get("media_info").and_then(|m| m.as_object());
+                        let title = media
+                            .as_ref()
+                            .and_then(|m| m.get("title"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("");
+                        let artist = media
+                            .as_ref()
+                            .and_then(|m| m.get("artist"))
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("");
+
+                        // Structurally validate: valid music must have both title AND artist.
+                        // This replaces the previous hardcoded video keyword list.
+                        let is_song = !title.is_empty() && !artist.is_empty();
+
+                        // Create a unique key for deduplication
+                        let song_key = format!("{}-{}", title.to_lowercase(), artist.to_lowercase());
+
+                        // Include if:
+                        // 1. It's Spotify with media info, OR
+                        // 2. It has media info that looks structurally like a song
+                        // And we haven't seen this song before (dedupe)
+                        let should_include =
+                            (is_spotify && media.is_some()) || (media.is_some() && is_song);
+
+                        if should_include && seen_songs.insert(song_key) {
+                            results.push(val);
+                            if results.len() >= limit {
+                                break;
+                            }
                         }
                     }
                 }
+
+                if results.len() >= limit || page_rows < page_limit {
+                    break;
+                }
+
+                offset += page_limit;
             }
 
             // Create activity references for frontend (transform to expected format)

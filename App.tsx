@@ -142,6 +142,10 @@ const App: React.FC = () => {
             const top = music.playlists?.[0];
             if (top?.id) {
               music.setActivePlaylist(top.id);
+              if (top.tracks.length > 0) {
+                music.setTrack(top.tracks[0], top.tracks, 0);
+                music.play();
+              }
             } else if (music.currentTrack) {
               music.play();
             }

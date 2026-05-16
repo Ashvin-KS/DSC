@@ -150,11 +150,6 @@ export const useMusicStore = create<MusicState>((set, get) => ({
 
     setActivePlaylist: (id) => {
         set({ activePlaylistId: id });
-        const playlist = get().playlists.find(p => p.id === id);
-        if (playlist && playlist.tracks.length > 0) {
-            get().setTrack(playlist.tracks[0], playlist.tracks, 0);
-            get().play();
-        }
     },
 
     setTrack: (track, context, index) => {
