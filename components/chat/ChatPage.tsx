@@ -249,6 +249,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     const [selectedModel, setSelectedModel] = useState<string>(() => getStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY)?.model || loadSelectedModelFromStorage());
     const [selectedProvider, setSelectedProvider] = useState<string>(() => getStoredModelWithProvider(CHAT_MODEL_STORAGE_KEY)?.provider || '');
     const [pendingAction, setPendingAction] = useState<ConfirmActionPayload | null>(null);
+    const [isRewoundEditing, setIsRewoundEditing] = useState(false);
 
     // Cloud vs Local toggle
     const [modelMode, setModelMode] = useState<'cloud' | 'local'>('cloud');
@@ -378,6 +379,14 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
     useEffect(() => {
         streamingContentRef.current = streamingContent;
     }, [streamingContent]);
+
+    // Auto-grow textarea whenever input changes
+    useEffect(() => {
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
+        }
+    }, [input]);
 
     // Listen for streaming tokens
     useEffect(() => {
@@ -509,6 +518,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
             setActiveSessionId(session.id);
             setMessages([]);
             setInput('');
+            setIsRewoundEditing(false);
             setStreamingContent('');
             streamingContentRef.current = '';
             inputRef.current?.focus();
@@ -556,6 +566,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
 
         setInput('');
         setIsSending(true);
+        setIsRewoundEditing(false);
         setStreamingContent('');
         setAgentStatus('Preparing search...');
 
@@ -576,6 +587,16 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 : resolveProviderForModel(selectedModel, selectedProvider);
             const apiKey = getProviderKey(settings, provider);
 
+            const customSystemPrompt = settings ? [
+                `You are talking to the user. Here are their profile details for deep personalization:`,
+                `User Name: ${settings.profileName || 'Anonymous'}`,
+                settings.profileRole ? `User Role/Profession: ${settings.profileRole}` : '',
+                settings.profileBio ? `User Bio/Preferences: ${settings.profileBio}` : '',
+                settings.profileTone ? `Preferred AI Persona/Tone: ${settings.profileTone}` : '',
+                settings.profileStyle ? `Preferred AI Reading/Writing Style: ${settings.profileStyle}` : '',
+                `Please tailor your summary, conversational style, complexity, and responses to align closely with the user's background, preferences, tone, and reading style. Keep descriptions and answers highly personalized.`,
+            ].filter(Boolean).join('\n') : undefined;
+
             const response = await sendChatMessage(
                 sessionId,
                 messageText.trim(),
@@ -584,7 +605,8 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
                 overrides?.timeRange || selectedTimeRange,
                 overrides?.sources || selectedSources,
                 apiKey,
-                requestId
+                requestId,
+                customSystemPrompt
             );
 
             // If user pressed Stop while awaiting, discard the response
@@ -678,6 +700,7 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
         // Load the clicked message text into the input
         if (clickedMsg.role === 'user') {
             setInput(clickedMsg.content);
+            setIsRewoundEditing(true);
         }
         inputRef.current?.focus();
     }, [messages]);
@@ -1261,6 +1284,23 @@ export function ChatPage({ initialPrompt }: ChatPageProps) {
 
                         <div className="border-t px-6 py-4" style={{ borderColor: 'var(--border-default)', background: 'var(--bg-elev-1)' }}>
                             <div className="max-w-3xl mx-auto space-y-3">
+                                {isRewoundEditing && (
+                                    <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-medium animate-pulse">
+                                        <div className="flex items-center gap-2">
+                                            <AlertCircle className="w-3.5 h-3.5" />
+                                            <span>You are editing a rewound message. Sending will recreate history from this point.</span>
+                                        </div>
+                                        <button 
+                                            onClick={() => {
+                                                setInput('');
+                                                setIsRewoundEditing(false);
+                                            }}
+                                            className="text-amber-400 hover:text-amber-300 underline font-semibold cursor-pointer transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="relative">
                                     <textarea
                                         ref={inputRef}

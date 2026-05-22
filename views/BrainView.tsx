@@ -1562,7 +1562,21 @@ export const BrainView: React.FC = () => {
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5 custom-scrollbar">
+          <div 
+            className="flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5 custom-scrollbar"
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const sourcePath = e.dataTransfer.getData('application/x-atheletia-path')
+                || e.dataTransfer.getData('sourcePath')
+                || e.dataTransfer.getData('text/plain');
+              if (sourcePath) {
+                void handleFileDrop(sourcePath, vaultActionRoot || vaultPath);
+              }
+            }}
+          >
             {fileTree.length === 0 ? (
               <div className="text-center text-gray-500 text-sm py-4">
                 {window.atheletiaAPI?.notes ? 'Loading...' : 'Run in Tauri desktop app to access files'}

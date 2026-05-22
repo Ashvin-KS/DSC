@@ -74,6 +74,13 @@ export interface AppSettings {
     dateFormat?: string;
     // Diary
     autoCreateDiary?: boolean;
+    // Profile
+    profileName?: string;
+    profileRole?: string;
+    profileColor?: string;
+    profileBio?: string;
+    profileTone?: 'Analytical' | 'Supportive' | 'Concise' | 'Empathetic' | 'Direct';
+    profileStyle?: 'Technical & Detailed' | 'Conversational & Casual' | 'Action-Oriented' | 'Simple & Direct';
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -100,6 +107,12 @@ interface IntentState {
     // Settings
     settings: AppSettings | null;
     setSettings: (settings: AppSettings) => void;
+
+    // Onboarding UI State
+    showOnboarding: boolean;
+    setShowOnboarding: (show: boolean) => void;
+    onboardingStep: number;
+    setOnboardingStep: (step: number | ((prev: number) => number)) => void;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -128,6 +141,13 @@ const DEFAULT_SETTINGS: AppSettings = {
     themePreset: 'dark-2026',
     locale: 'en-US',
     dateFormat: 'YYYY-MM-DD',
+    autoCreateDiary: false,
+    profileName: '',
+    profileRole: '',
+    profileColor: '#6366f1',
+    profileBio: '',
+    profileTone: 'Concise',
+    profileStyle: 'Simple & Direct',
 };
 
 export const useIntentStore = create<IntentState>((set) => ({
@@ -156,4 +176,15 @@ export const useIntentStore = create<IntentState>((set) => ({
 
     settings: DEFAULT_SETTINGS,
     setSettings: (settings) => set({ settings }),
+
+    showOnboarding: false,
+    setShowOnboarding: (show) => set({ showOnboarding: show }),
+    onboardingStep: 0,
+    setOnboardingStep: (step) =>
+        set((s) => ({
+            onboardingStep:
+                typeof step === 'function'
+                    ? (step as (prev: number) => number)(s.onboardingStep)
+                    : step,
+        })),
 }));

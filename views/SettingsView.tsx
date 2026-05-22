@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   Key, Brain, Activity, HardDrive, Info, Eye, EyeOff, Save, CheckCircle, RefreshCw, Search, Loader2,
-  Bell, Palette, Languages, Download, Upload, Trash2, ShieldCheck, Monitor
+  Bell, Palette, Languages, Download, Upload, Trash2, ShieldCheck, Monitor, User
 } from 'lucide-react';
 import { AppSettings, useIntentStore } from '../store/useIntentStore';
 import { THEME_GROUPS, getThemePreset, resolveColorSchemeForTheme, type ThemePresetId } from '../lib/theme';
@@ -35,9 +35,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   themePreset: 'dark-2026',
 };
 
-type SectionId = 'api' | 'ai' | 'tracking' | 'storage' | 'system' | 'appearance' | 'about';
+type SectionId = 'profile' | 'api' | 'ai' | 'tracking' | 'storage' | 'system' | 'appearance' | 'about';
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ElementType }[] = [
+  { id: 'profile', label: 'Profile', icon: User },
   { id: 'api', label: 'API Keys', icon: Key },
   { id: 'ai', label: 'AI Model', icon: Brain },
   { id: 'system', label: 'System', icon: Monitor },
@@ -121,13 +122,19 @@ function normalizeSettings(data?: Partial<AppSettings> | null): AppSettings {
 
 export const SettingsView: React.FC = () => {
   const { settings, setSettings } = useIntentStore();
-  const [local, setLocal] = useState<AppSettings>(settings ?? DEFAULT_SETTINGS);
-  const [activeSection, setActiveSection] = useState<SectionId>('api');
+  const [local, setLocal] = useState<AppSettings>(settings || DEFAULT_SETTINGS);
+  const [activeSection, setActiveSection] = useState<SectionId>('profile');
+  const [modelSearch, setModelSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatusMsg, setSaveStatusMsg] = useState('');
 
-  const [modelSearch, setModelSearch] = useState('');
-  const { groups: modelGroups, allModels: allCloudModels, loading: modelsLoading, error: modelsErrorRaw, refetch: refetchModels } = useMultiProviderModels(local);
+  const {
+    groups: modelGroups,
+    loading: modelsLoading,
+    error: modelsErrorRaw,
+    refetch: refetchModels,
+  } = useMultiProviderModels(local);
+
   const modelsError = modelsErrorRaw ? String(modelsErrorRaw) : '';
 
   const [storageStats, setStorageStats] = useState<any>(null);
@@ -306,6 +313,94 @@ export const SettingsView: React.FC = () => {
           {saveStatusMsg && (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
               {saveStatusMsg}
+            </div>
+          )}
+
+          {activeSection === 'profile' && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-bold text-white">Identity & Persona</h2>
+                <p className="text-xs text-gray-500">Configure your profile. The AI uses this context to tailor its advice.</p>
+              </div>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 block mb-1.5">Your Name</label>
+                    <input
+                      type="text"
+                      value={local.profileName || ''}
+                      onChange={(e) => set('profileName')(e.target.value)}
+                      placeholder="e.g. Alex Carter"
+                      className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 block mb-1.5">Role / Profession</label>
+                    <input
+                      type="text"
+                      value={local.profileRole || ''}
+                      onChange={(e) => set('profileRole')(e.target.value)}
+                      placeholder="e.g. Software Engineer"
+                      className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 block mb-1.5">Accent Color</label>
+                  <div className="flex items-center gap-2">
+                    {['#6366f1', '#8b5cf6', '#10b981', '#f43f5e', '#f59e0b', '#06b6d4'].map((color) => (
+                      <button
+                        key={color}
+                        onClick={() => set('profileColor')(color)}
+                        className={`w-7 h-7 rounded-full transition-all border ${
+                          local.profileColor === color ? 'border-white scale-110' : 'border-transparent hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 block mb-1.5">AI Memory / Bio & Preferences</label>
+                  <textarea
+                    value={local.profileBio || ''}
+                    onChange={(e) => set('profileBio')(e.target.value)}
+                    placeholder="Describe your coding preferences, primary tech stack, goals, or health context..."
+                    className="w-full h-24 bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/30 resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 block mb-1.5">Preferred Tone</label>
+                  <select
+                    value={local.profileTone || 'Concise'}
+                    onChange={(e) => set('profileTone')(e.target.value as any)}
+                    className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200"
+                  >
+                    <option value="Analytical">Analytical (Data-focused, logic-driven)</option>
+                    <option value="Supportive">Supportive (Encouraging, coaching-oriented)</option>
+                    <option value="Concise">Concise (Short, clean, to-the-point)</option>
+                    <option value="Empathetic">Empathetic (Understanding, reflective)</option>
+                    <option value="Direct">Direct (Blunt, actionable insights)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 block mb-1.5">Writing Style</label>
+                  <select
+                    value={local.profileStyle || 'Simple & Direct'}
+                    onChange={(e) => set('profileStyle')(e.target.value as any)}
+                    className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-sm text-gray-200"
+                  >
+                    <option value="Technical & Detailed">Technical & Detailed</option>
+                    <option value="Conversational & Casual">Conversational & Casual</option>
+                    <option value="Action-Oriented">Action-Oriented</option>
+                    <option value="Simple & Direct">Simple & Direct</option>
+                  </select>
+                </div>
+              </div>
             </div>
           )}
 

@@ -7,6 +7,7 @@ import { formatTime } from '../../lib/chatUtils';
 import { sanitizeAiVisibleText, VISUALIZE_INFO_RE } from '../../lib/aiText';
 import { VisualizeBlock } from '../VisualizeBlock';
 import { MermaidBlock } from '../MermaidBlock';
+import { useIntentStore } from '../../store/useIntentStore';
 import {
     ChevronDown,
     ChevronRight,
@@ -35,6 +36,18 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
     const [showThinking, setShowThinking] = useState(false);
     const [displayedText, setDisplayedText] = useState('');
     const isUser = message.role === 'user';
+    
+    const settings = useIntentStore((s) => s.settings);
+    const profileName = settings?.profileName || '';
+    const profileColor = settings?.profileColor || '#6366f1';
+    
+    const initials = (() => {
+        const parts = (profileName || '').trim().split(/\s+/);
+        if (parts.length === 0 || !parts[0]) return '?';
+        if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    })();
+
     const hasSteps = message.tool_calls && message.tool_calls.length > 0;
     const hasActivities = message.activities && message.activities.length > 0;
     const { answerText, thinkingText } = splitThinkingContent(message.content);
@@ -120,11 +133,11 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
                             boxShadow: '0 2px 12px rgba(8,145,178,0.25)',
                         }}
                     >
-                        <p className="text-sm text-white leading-relaxed whitespace-pre-wrap">{bubbleText}</p>
+                        <p className="text-sm text-white leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] break-words">{bubbleText}</p>
                     </div>
                 ) : (
                     <div
-                        className="relative rounded-2xl rounded-bl-sm px-4 py-3.5"
+                        className="relative rounded-2xl rounded-bl-sm px-4 py-3.5 [overflow-wrap:anywhere] break-words"
                         style={{
                             background: 'rgba(255,255,255,0.04)',
                             border: '1px solid rgba(255,255,255,0.08)',
@@ -201,9 +214,13 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
 
             {/* Avatar — user only */}
             {isUser && (
-                <div className="flex-shrink-0 mt-1">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-600 to-blue-700 flex items-center justify-center">
-                        <User className="w-3.5 h-3.5 text-white" />
+                <div className="flex-shrink-0 mt-1 select-none">
+                    <div 
+                        className="w-7 h-7 rounded-full flex items-center justify-center border border-white/10 text-[10px] font-bold text-white shadow-sm hover:scale-105 transition-transform duration-200"
+                        style={{ backgroundColor: profileColor }}
+                        title={profileName || 'User'}
+                    >
+                        {initials}
                     </div>
                 </div>
             )}
@@ -240,7 +257,7 @@ function MarkdownMessage({ text }: { text: string }) {
                 h5: ({ children }) => <h5 className="text-sm font-medium mt-1 mb-0.5 text-gray-300">{children}</h5>,
                 h6: ({ children }) => <h6 className="text-xs font-medium mt-1 mb-0.5 text-gray-400">{children}</h6>,
                 p: ({ children }) => (
-                    <p className="text-sm leading-relaxed text-gray-200 whitespace-pre-wrap mb-2 last:mb-0">{children}</p>
+                    <p className="text-sm leading-relaxed text-gray-200 whitespace-pre-wrap [overflow-wrap:anywhere] break-words mb-2 last:mb-0">{children}</p>
                 ),
                 ul: ({ children }) => <ul className="list-none pl-0 text-sm my-1.5 space-y-1">{children}</ul>,
                 ol: ({ children }) => <ol className="list-decimal pl-5 text-sm my-1.5 space-y-1 text-gray-200">{children}</ol>,
@@ -623,18 +640,18 @@ function splitThinkingContent(content: string): { answerText: string; thinkingTe
     let answerText = content;
     let thinkingText = '';
 
-    const thinkRegex = /<think[^>]*>([\s\S]*?)<\/think>/gi;
+    const thinkRegex = /<(think|thinking|thought)[^>]*>([\s\S]*?)<\/(think|thinking|thought)>/gi;
     let match;
 
     while ((match = thinkRegex.exec(content)) !== null) {
-        thinkingText += match[1] + '\n';
+        thinkingText += match[2] + '\n';
         answerText = answerText.replace(match[0], '');
     }
 
-    const unclosedThinkRegex = /<think[^>]*>([\s\S]*)$/i;
+    const unclosedThinkRegex = /<(think|thinking|thought)[^>]*>([\s\S]*)$/i;
     const unclosedMatch = unclosedThinkRegex.exec(answerText);
     if (unclosedMatch) {
-        thinkingText += unclosedMatch[1] + '\n';
+        thinkingText += unclosedMatch[2] + '\n';
         answerText = answerText.replace(unclosedMatch[0], '');
     }
 
@@ -757,6 +774,8 @@ function stripToolJsonPayloads(text: string): string {
         .replace(/\[\[IF_ACTION:\{[\s\S]*?\}\]\]/gi, '')
         .replace(/<think[^>]*>/gi, '')
         .replace(/<\/think>/gi, '')
+        .replace(/<thinking[^>]*>/gi, '')
+        .replace(/<\/thinking>/gi, '')
         .replace(/\[TOOL_CALL[^\]]*\].*/gim, '')
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
         .replace(/<tool_response>[\s\S]*?<\/tool_response>/gi, '')

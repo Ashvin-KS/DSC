@@ -134,8 +134,8 @@ export const WorkoutView: React.FC = () => {
 
   if (!activeDay) {
     return (
-      <div className="h-full flex items-center justify-center bg-[#0b0f14] text-gray-300">
-        <button onClick={resetToDefaults} className="rounded-md bg-white/10 px-4 py-2 text-sm hover:bg-white/15">
+      <div className="h-full flex items-center justify-center" style={{ background: 'var(--bg-app)', color: 'var(--text-main)' }}>
+        <button onClick={resetToDefaults} className="rounded-md px-4 py-2 text-sm transition-colors hover:opacity-80" style={{ background: 'var(--bg-elev-2)', color: 'var(--text-strong)' }}>
           Restore default workout plan
         </button>
       </div>
@@ -316,7 +316,12 @@ export const WorkoutView: React.FC = () => {
               <Dumbbell size={18} style={{ color: 'var(--success)' }} />
               <h1 className="text-sm font-bold uppercase tracking-wider" style={{ color: 'var(--text-strong)' }}>Workout</h1>
             </div>
-            <button onClick={addDay} className="rounded-md p-1.5 hover:bg-white/10 transition-colors" style={{ background: 'var(--success)', opacity: 0.15, color: 'var(--success)' }} title="Add day">
+            <button 
+              onClick={addDay} 
+              className="rounded-md p-1.5 transition-all duration-200 hover:bg-white/10 active:scale-95" 
+              style={{ color: 'var(--success)', background: 'color-mix(in srgb, var(--success) 15%, transparent)' }} 
+              title="Add day"
+            >
               <Plus size={16} />
             </button>
           </div>
@@ -354,7 +359,7 @@ export const WorkoutView: React.FC = () => {
           </div>
         </aside>
 
-        <main className="overflow-y-auto custom-scrollbar p-6">
+        <main className="flex-1 overflow-y-auto custom-scrollbar p-6">
           <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-[260px] flex-1">
               <input
@@ -375,7 +380,12 @@ export const WorkoutView: React.FC = () => {
               <button onClick={() => duplicateDay(activeDay.id)} className="rounded-md border p-2" style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-elev-2)', color: 'var(--text-soft)' }} title="Duplicate day">
                 <Copy size={16} />
               </button>
-              <button onClick={() => deleteDay(activeDay.id)} className="rounded-md border p-2" style={{ borderColor: 'var(--danger)', background: 'var(--danger)', opacity: 0.1, color: 'var(--danger)' }} title="Delete day">
+              <button 
+                onClick={() => deleteDay(activeDay.id)} 
+                className="rounded-md border p-2 transition-all hover:opacity-80 active:scale-95" 
+                style={{ borderColor: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 15%, transparent)', color: 'var(--danger)' }} 
+                title="Delete day"
+              >
                 <Trash2 size={16} />
               </button>
             </div>
@@ -465,11 +475,12 @@ export const WorkoutView: React.FC = () => {
                         <button
                           key={setIndex}
                           onClick={() => toggleSet(activeDay.id, exercise.id, setIndex)}
-                          className="h-8 min-w-8 rounded-md border text-xs font-bold transition-colors"
+                          className={`h-8 min-w-8 rounded-md border text-xs font-bold transition-all hover:opacity-100 hover:border-white/20 ${
+                            setState[setIndex] ? 'opacity-100' : 'opacity-35'
+                          }`}
                           style={{
                             borderColor: setState[setIndex] ? 'var(--success)' : 'var(--border-soft)',
                             background: setState[setIndex] ? 'var(--success)' : 'var(--bg-elev-2)',
-                            opacity: setState[setIndex] ? 1 : 0.04,
                             color: setState[setIndex] ? 'var(--accent-contrast)' : 'var(--text-faint)',
                           }}
                         >
@@ -479,11 +490,20 @@ export const WorkoutView: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       {exercise.videoLink && (
-                        <button onClick={() => window.open(exercise.videoLink, '_blank', 'noopener,noreferrer')} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs" style={{ borderColor: 'var(--accent)', background: 'var(--accent)', opacity: 0.1, color: 'var(--accent)' }}>
+                        <button 
+                          onClick={() => window.open(exercise.videoLink, '_blank', 'noopener,noreferrer')} 
+                          className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-all hover:opacity-80 active:scale-95" 
+                          style={{ borderColor: 'var(--accent)', background: 'color-mix(in srgb, var(--accent) 15%, transparent)', color: 'var(--accent)' }}
+                        >
                           <ExternalLink size={13} /> Tutorial
                         </button>
                       )}
-                      <button onClick={() => findTutorial(exercise)} disabled={tutorialBusyId === exercise.id} className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs disabled:opacity-50" style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-elev-2)', opacity: 0.04, color: 'var(--text-soft)' }}>
+                      <button 
+                        onClick={() => findTutorial(exercise)} 
+                        disabled={tutorialBusyId === exercise.id} 
+                        className="flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs disabled:opacity-50 transition-all opacity-70 hover:opacity-100 hover:bg-white/5" 
+                        style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-elev-2)', color: 'var(--text-soft)' }}
+                      >
                         <Search size={13} /> {tutorialBusyId === exercise.id ? 'Searching' : 'UK YouTube'}
                       </button>
                     </div>
@@ -493,7 +513,10 @@ export const WorkoutView: React.FC = () => {
             })}
           </div>
 
-          <button onClick={() => addExercise(activeDay.id)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed py-3 text-sm" style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-elev-1)', opacity: 0.025, color: 'var(--text-soft)' }}>
+          <button 
+            onClick={() => addExercise(activeDay.id)} 
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed py-3 text-sm transition-all border-white/10 hover:border-accent/40 text-gray-400 hover:text-white bg-white/[0.02] hover:bg-white/[0.04] opacity-80 hover:opacity-100"
+          >
             <Plus size={16} /> Add Exercise
           </button>
         </main>
@@ -563,7 +586,7 @@ export const WorkoutView: React.FC = () => {
             </div>
           )}
 
-          <div className="mt-5 rounded-lg border p-3 text-xs" style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-elev-1)', opacity: 0.03, color: 'var(--text-muted)' }}>
+          <div className="mt-5 rounded-lg border p-3 text-[11px] opacity-60" style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-elev-1)', color: 'var(--text-muted)' }}>
             Each field here is editable. The default weekly mock plan stays as the reset baseline, and any custom changes persist locally.
           </div>
         </aside>

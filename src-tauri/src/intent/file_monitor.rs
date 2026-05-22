@@ -138,11 +138,33 @@ fn scan_root(
     let root_string = root.to_string_lossy().to_string();
     let initialized = initialized_roots.contains(&root_string);
 
-    for entry in WalkDir::new(root)
+    let walker = WalkDir::new(root)
         .max_depth(MAX_SCAN_DEPTH)
         .into_iter()
-        .filter_map(|e| e.ok())
-    {
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            !matches!(
+                name.as_str(),
+                "system32"
+                    | "windows"
+                    | "library"
+                    | "program files"
+                    | "program files (x86)"
+                    | "programdata"
+                    | "appdata"
+                    | ".git"
+                    | "node_modules"
+                    | ".svelte-kit"
+                    | ".next"
+                    | "dist"
+                    | "target"
+                    | "build"
+                    | ".idea"
+                    | ".vscode"
+            )
+        });
+
+    for entry in walker.filter_map(|e| e.ok()) {
         let path = entry.path();
         if entry.file_type().is_dir() {
             let dir_str = path.to_string_lossy().to_string();

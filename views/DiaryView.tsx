@@ -237,7 +237,7 @@ export const DiaryView: React.FC = () => {
                 }
                 const apiKey = getApiKey();
                 if (!apiKey) {
-                    console.log(`[Diary] Auto-create failed for ${targetDate}: no API key configured`);
+                    setEntryStatusMsg(`[Diary] Auto-create failed for ${targetDate}: no API key configured. Go to Settings → API Keys to add one.`);
                     return false;
                 }
                 console.log(`[Diary] Auto-creating diary for ${targetDate}...`);
@@ -251,9 +251,9 @@ export const DiaryView: React.FC = () => {
                     }
                     return true;
                 }
-                console.log(`[Diary] Auto-create returned empty for ${targetDate}`);
+                setEntryStatusMsg(`[Diary] Auto-create failed for ${targetDate}: generation returned empty.`);
             } catch (err) {
-                console.log(`[Diary] Auto-create failed for ${targetDate}:`, err);
+                setEntryStatusMsg(`[Diary] Auto-create failed for ${targetDate}: ${err instanceof Error ? err.message : String(err)}`);
             }
             return false;
         };
@@ -263,40 +263,63 @@ export const DiaryView: React.FC = () => {
         const yesterday = yesterdayStr();
         const currentHour = now.getHours();
 
-        // Retry window: 8 PM (20:00) to 8 AM (08:00)
-        const isInRetryWindow = currentHour >= 20 || currentHour < 8;
+        // Active intervals
+        let activeInterval: NodeJS.Timeout | undefined;
 
-        // If past 8 PM, start retrying today's entry immediately
-        // If before 8 AM, also retry (might have failed overnight)
-        if (isInRetryWindow && !localStorage.getItem(getAutoCreateKey(today))) {
-            let attempts = 0;
-            const maxAttempts = 24; // ~2 hours of retries at 5-min intervals
-            const retryInterval = setInterval(async () => {
-                const hour = new Date().getHours();
-                if (hour >= 8 && hour < 20) {
-                    clearInterval(retryInterval);
-                    return; // outside window, stop
-                }
-                attempts++;
-                if (attempts > maxAttempts) {
-                    clearInterval(retryInterval);
-                    return;
-                }
-                const success = await runAutoCreate(today);
-                if (success) clearInterval(retryInterval);
-            }, 5 * 60 * 1000); // every 5 minutes
-            runAutoCreate(today); // first attempt immediately
-
-            // Cleanup on unmount or when deps change
-            return () => clearInterval(retryInterval);
+        // 1. Evening period (8 PM to 12 AM): Auto-create / retry TODAY
+        if (currentHour >= 20) {
+            if (!localStorage.getItem(getAutoCreateKey(today))) {
+                let attempts = 0;
+                const maxAttempts = 24; // ~2 hours
+                activeInterval = setInterval(async () => {
+                    const hour = new Date().getHours();
+                    if (hour < 20 && hour >= 8) {
+                        clearInterval(activeInterval);
+                        return;
+                    }
+                    attempts++;
+                    if (attempts > maxAttempts) {
+                        clearInterval(activeInterval);
+                        return;
+                    }
+                    const success = await runAutoCreate(today);
+                    if (success) clearInterval(activeInterval);
+                }, 5 * 60 * 1000);
+                runAutoCreate(today); // Immediate first attempt
+            }
         }
 
-        // Catch up yesterday if missed (one-shot, no retry)
-        if (!localStorage.getItem(getAutoCreateKey(yesterday))) {
-            runAutoCreate(yesterday);
+        // 2. Morning period (12 AM to 8 AM): Auto-create / retry YESTERDAY
+        if (currentHour < 8) {
+            if (!localStorage.getItem(getAutoCreateKey(yesterday))) {
+                let attempts = 0;
+                const maxAttempts = 24; // ~2 hours
+                activeInterval = setInterval(async () => {
+                    const hour = new Date().getHours();
+                    if (hour >= 8 && hour < 20) {
+                        clearInterval(activeInterval);
+                        return;
+                    }
+                    attempts++;
+                    if (attempts > maxAttempts) {
+                        clearInterval(activeInterval);
+                        return;
+                    }
+                    const success = await runAutoCreate(yesterday);
+                    if (success) clearInterval(activeInterval);
+                }, 5 * 60 * 1000);
+                runAutoCreate(yesterday); // Immediate first attempt
+            }
         }
 
-        // Schedule timer for next 8 PM
+        // 3. Late morning catch-up period (8 AM to 12 PM): One-shot catch-up for YESTERDAY if missed
+        if (currentHour >= 8 && currentHour < 12) {
+            if (!localStorage.getItem(getAutoCreateKey(yesterday))) {
+                runAutoCreate(yesterday);
+            }
+        }
+
+        // Schedule timer for next 8 PM to trigger today's auto-creation
         const next8pm = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 5);
         if (next8pm <= now) {
             next8pm.setDate(next8pm.getDate() + 1);
@@ -323,7 +346,10 @@ export const DiaryView: React.FC = () => {
             runAutoCreate(targetDay);
         }, msUntil8pm);
 
-        return () => clearTimeout(timer);
+        return () => {
+            if (activeInterval) clearInterval(activeInterval);
+            clearTimeout(timer);
+        };
     }, [autoCreateEnabled, generateSummaryForDate, activeDate]);
 
     const handleAddManual = async () => {

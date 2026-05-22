@@ -19,7 +19,10 @@ export function stripThinkBlocks(input: string): string {
   return (input || '')
     .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '')
     .replace(/<think[^>]*>[\s\S]*$/gi, '')
-    .replace(/<\/think>/gi, '');
+    .replace(/<\/think>/gi, '')
+    .replace(/<thinking[^>]*>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/<thinking[^>]*>[\s\S]*$/gi, '')
+    .replace(/<\/thinking>/gi, '');
 }
 
 export function sanitizeAiVisibleText(input: string): string {

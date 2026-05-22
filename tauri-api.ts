@@ -172,10 +172,10 @@ export function initAtheletiaApi() {
         provider?: string,
         timeRange?: string,
         selectedSources?: string[],
-        _unused?: string[],
+        systemInstruction?: string,
         apiKey?: string,
         requestId?: number
-      ) => invoke<any>('send_chat_message', { sessionId, message, model, provider, timeRange, selectedSources, apiKey, requestId }),
+      ) => invoke<any>('send_chat_message', { sessionId, message, model, provider, timeRange, selectedSources, apiKey, requestId, systemInstruction }),
       cancelChat: () => invoke<boolean>('cancel_chat'),
       startActivityTracker: () => invoke<boolean>('start_activity_tracker'),
       getDashboardOverview: (refresh?: boolean) => invoke<any>('dashboard_get_overview', { refresh }),
@@ -312,7 +312,7 @@ declare global {
         createChatSession: () => Promise<any>;
         deleteChatSession: (sessionId: string) => Promise<boolean>;
         getChatMessages: (sessionId: string) => Promise<any[]>;
-        sendChatMessage: (sessionId: string, message: string, model?: string, provider?: string, timeRange?: string, selectedSources?: string[], _unused?: string[], apiKey?: string, requestId?: number) => Promise<any>;
+        sendChatMessage: (sessionId: string, message: string, model?: string, provider?: string, timeRange?: string, selectedSources?: string[], systemInstruction?: string, apiKey?: string, requestId?: number) => Promise<any>;
         cancelChat: () => Promise<boolean>;
         startActivityTracker: () => Promise<boolean>;
 

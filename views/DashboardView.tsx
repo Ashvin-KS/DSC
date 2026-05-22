@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Card } from '../components/ui/Card';
 import { LeetCodeCard } from '../components/dashboard/LeetCodeCard';
 import { FitnessCard } from '../components/dashboard/FitnessCard';
@@ -15,6 +15,7 @@ import { StatusBanner } from '../components/ui/StatusBanner';
 type ViewMode = 'grid' | 'goals' | 'news';
 type ModalType = 'assignments' | 'projects' | null;
 const DASHBOARD_AUTO_REFRESH_MS = 5 * 60 * 60 * 1000;
+const FETCH_CACHE_TTL_MS = 60 * 1000; // Don't re-fetch within 60s of last fetch
 
 type ExpandedDetail = {
   kind: 'deadline' | 'project' | 'contact';
@@ -55,6 +56,7 @@ export const DashboardView: React.FC = () => {
   const [deadlineForm, setDeadlineForm] = useState({ title: '', due_date: '', status: 'pending', source: 'manual' });
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState({ name: '', update: '', files_changed: 0 });
+  const lastFetchedAt = useRef<number>(0);
   const primaryDeadline = overview?.deadlines?.[0] ?? null;
   const dashboardAlertGoals = useMemo<Goal[]>(() => {
     return (overview?.deadlines || [])
@@ -69,11 +71,16 @@ export const DashboardView: React.FC = () => {
 
   React.useEffect(() => {
     const loadOverview = async () => {
+      // Skip re-fetching if data was loaded recently (within 60s)
+      if (overview && Date.now() - lastFetchedAt.current < FETCH_CACHE_TTL_MS) {
+        setLoading(false);
+        return;
+      }
       try {
         setLoadError(null);
         if (window.atheletiaAPI?.intent?.getDashboardOverview) {
           const data = await window.atheletiaAPI.intent.getDashboardOverview(false);
-          if (data) setOverview(data);
+          if (data) { setOverview(data); lastFetchedAt.current = Date.now(); }
         }
       } catch (e) {
         console.warn('Failed to load dashboard overview', e);
@@ -91,7 +98,7 @@ export const DashboardView: React.FC = () => {
       setLoadError(null);
       if (window.atheletiaAPI?.intent?.refreshDashboardOverview) {
         const data = await window.atheletiaAPI.intent.refreshDashboardOverview();
-        if (data) setOverview(data);
+        if (data) { setOverview(data); lastFetchedAt.current = Date.now(); }
       }
     } catch (e) {
       console.warn('Failed to refresh dashboard overview', e);
@@ -313,22 +320,40 @@ export const DashboardView: React.FC = () => {
       {/* Dashboard Header */}
       <div className="flex items-center justify-between px-4 md:px-8 pt-2 pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Command Center</h1>
-          <p className="text-xs text-gray-500">System Nominal. Welcome back.</p>
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-strong)' }}>Dashboard</h1>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>System nominal. Welcome back.</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleRefresh}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/15 transition-all text-xs font-bold uppercase tracking-wider shadow-sm disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all disabled:opacity-50"
+            style={{
+              background: 'var(--accent-soft)',
+              border: '1px solid var(--border-strong)',
+              color: 'var(--accent)',
+            }}
             title="Refresh all dashboard data"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            Refresh Dashboard
+            Refresh
           </button>
           <button
             onClick={() => setShowAlerter(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161616] border border-[#262626] text-amber-500 hover:bg-amber-500/10 hover:border-amber-500/30 transition-all text-xs font-bold uppercase tracking-wider shadow-sm"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all"
+            style={{
+              background: 'var(--bg-elev-2)',
+              border: '1px solid var(--border-soft)',
+              color: 'var(--text-soft)',
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--warning)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--warning)';
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-soft)';
+              (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-soft)';
+            }}
           >
             <AlertTriangle size={14} />
             System Check

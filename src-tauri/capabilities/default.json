@@ -5,6 +5,7 @@
   "windows": ["main", "tray_panel"],
   "permissions": [
     "core:default",
+    "core:window:default",
     "dialog:default",
     "autostart:default"
   ]

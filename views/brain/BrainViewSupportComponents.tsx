@@ -252,7 +252,6 @@ const FileTreeItemReal: React.FC<FileTreeItemRealProps> = ({
 
   // Drag Handlers
   const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData('sourcePath', node.path);
     e.dataTransfer.setData('application/x-atheletia-path', node.path);
     e.dataTransfer.setData('text/plain', node.path);
     e.dataTransfer.effectAllowed = 'move';
@@ -704,7 +703,7 @@ const ChatBubbleImpl: React.FC<{
 
       {/* Main Message */}
       <div className={`
-        rounded-2xl px-4 py-3 text-sm leading-relaxed
+        rounded-2xl px-4 py-3 text-sm leading-relaxed overflow-x-auto break-words
         ${sender === 'user'
           ? 'bg-[#262626] text-gray-200 rounded-tr-sm border border-[#333] whitespace-pre-wrap'
           : 'bg-gradient-to-br from-purple-900/20 to-blue-900/10 text-gray-300 rounded-tl-sm border border-purple-500/10 chat-md-bubble'}

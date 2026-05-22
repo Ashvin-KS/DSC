@@ -105,11 +105,12 @@ export async function sendChatMessage(
   timeRange?: string,
   selectedSources?: ChatSourceId[],
   apiKey?: string,
-  requestId?: number
+  requestId?: number,
+  systemInstruction?: string
 ): Promise<ChatMessage> {
   try {
     const result = await getApi().intent?.sendChatMessage(
-      sessionId, message, model, provider, timeRange, selectedSources, undefined, apiKey, requestId
+      sessionId, message, model, provider, timeRange, selectedSources, systemInstruction, apiKey, requestId
     );
     if (!result) throw new ChatServiceError('Backend returned no response.', 'UNKNOWN');
     return result as ChatMessage;
